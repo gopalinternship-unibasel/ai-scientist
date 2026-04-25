@@ -10,7 +10,11 @@ import {
   CircleDollarSign,
   ListChecks,
   Quote,
+  Printer,
+  Share2,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 import type { ExperimentPlan } from "@/lib/samples";
 
 const Section = ({
