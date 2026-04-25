@@ -12,6 +12,8 @@ import {
   Quote,
   Printer,
   Share2,
+  Sigma,
+  ShieldAlert,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -321,8 +323,104 @@ export const ExperimentPlanView = ({ plan }: { plan: ExperimentPlan }) => {
         </div>
       </Section>
 
+      {plan.statistical_design && (
+        <Section number="07" label="Statistical design" icon={Sigma}>
+          <div className="space-y-4">
+            <div className="grid gap-3 md:grid-cols-3">
+              <KV label="N per group" value={String(plan.statistical_design.n_per_group)} />
+              <KV label="Alpha" value={String(plan.statistical_design.alpha)} />
+              <KV label="Power" value={String(plan.statistical_design.power)} />
+              <KV label="Primary test" value={plan.statistical_design.primary_test} />
+              <KV label="Effect size" value={plan.statistical_design.effect_size} />
+              <KV label="Blinding" value={plan.statistical_design.blinding} />
+            </div>
+            <KV label="Randomization" value={plan.statistical_design.randomization} />
+            <div>
+              <div className="mb-2 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                Groups
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {plan.statistical_design.groups.map((g, i) => (
+                  <span key={i} className="stamp border-border bg-secondary text-secondary-foreground">
+                    {g}
+                  </span>
+                ))}
+              </div>
+            </div>
+            {plan.statistical_design.notes && (
+              <p className="text-sm text-foreground/75">{plan.statistical_design.notes}</p>
+            )}
+          </div>
+        </Section>
+      )}
+
+      {plan.safety && (
+        <Section number="08" label="Safety & approvals" icon={ShieldAlert}>
+          <div className="space-y-4">
+            <div className="flex flex-wrap gap-2">
+              <span className="stamp border-warning/40 bg-warning/10 text-foreground">
+                {plan.safety.biosafety_level}
+              </span>
+              {plan.safety.irb_required && (
+                <span className="stamp border-destructive/40 bg-destructive/10 text-foreground">
+                  IRB required
+                </span>
+              )}
+              {plan.safety.iacuc_required && (
+                <span className="stamp border-destructive/40 bg-destructive/10 text-foreground">
+                  IACUC required
+                </span>
+              )}
+              {plan.safety.ibc_required && (
+                <span className="stamp border-destructive/40 bg-destructive/10 text-foreground">
+                  IBC required
+                </span>
+              )}
+              {plan.safety.controlled_substances && (
+                <span className="stamp border-destructive/40 bg-destructive/10 text-foreground">
+                  Controlled substances
+                </span>
+              )}
+            </div>
+            {plan.safety.hazards.length > 0 && (
+              <div>
+                <div className="mb-2 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                  Hazards
+                </div>
+                <ul className="space-y-1 text-sm text-foreground/85">
+                  {plan.safety.hazards.map((h, i) => (
+                    <li key={i} className="flex items-start gap-2">
+                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-warning" />
+                      {h}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {plan.safety.ppe.length > 0 && (
+              <div>
+                <div className="mb-2 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                  PPE
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {plan.safety.ppe.map((p, i) => (
+                    <span key={i} className="stamp border-border bg-secondary text-secondary-foreground">
+                      {p}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="grid gap-3 md:grid-cols-2">
+              <KV label="Waste handling" value={plan.safety.waste_handling} />
+              <KV label="Emergency procedure" value={plan.safety.emergency_procedure} />
+            </div>
+          </div>
+        </Section>
+      )}
+
       <div className="grid gap-6 md:grid-cols-2">
-        <Section number="07" label="Risks & mitigations" icon={AlertTriangle}>
+        <Section number="09" label="Risks & mitigations" icon={AlertTriangle}>
           <ul className="space-y-3">
             {plan.risks.map((r, i) => (
               <li key={i} className="rounded-md border border-rule p-3">
@@ -336,7 +434,7 @@ export const ExperimentPlanView = ({ plan }: { plan: ExperimentPlan }) => {
           </ul>
         </Section>
 
-        <Section number="08" label="Team" icon={Users}>
+        <Section number="10" label="Team" icon={Users}>
           <ul className="divide-y divide-rule">
             {plan.team.map((t, i) => (
               <li key={i} className="flex items-center justify-between py-2.5">
