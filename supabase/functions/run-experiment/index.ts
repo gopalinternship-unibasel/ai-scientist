@@ -183,18 +183,6 @@ const critiqueSchema = {
   additionalProperties: false,
 } as const;
 
-interface S2Paper {
-  paperId: string;
-  title: string;
-  abstract?: string | null;
-  year?: number | null;
-  authors?: { name: string }[];
-  venue?: string | null;
-  citationCount?: number | null;
-  url?: string | null;
-  externalIds?: Record<string, string> | null;
-}
-
 const stripCtl = (s: string) => s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
 
 // Stable hash of a normalised hypothesis for caching.
@@ -205,34 +193,76 @@ async function hashHypothesis(h: string): Promise<string> {
 }
 
 // fetchWithRetry now lives in ../_shared/fetch-with-retry.ts
+// searchLiterature (multi-source: S2 + OpenAlex + PubMed) lives in ../_shared/literature.ts
 
-async function searchSemanticScholar(query: string): Promise<{ papers: S2Paper[]; rateLimited: boolean }> {
-  const q = query.replace(/\s+/g, " ").trim().slice(0, 280);
-  const url = new URL("https://api.semanticscholar.org/graph/v1/paper/search");
-  url.searchParams.set("query", q);
-  url.searchParams.set("limit", "8");
-  url.searchParams.set("fields", "title,abstract,year,authors.name,venue,citationCount,url,externalIds");
-
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const res = await fetch(url.toString(), { headers: { "User-Agent": "AI-Scientist/1.0 (Lovable)" } });
-    if (res.ok) {
-      const json = await res.json();
-      return { papers: (json.data ?? []) as S2Paper[], rateLimited: false };
-    }
-    if (res.status === 429) { await new Promise((r) => setTimeout(r, 1500 * (attempt + 1))); continue; }
-    return { papers: [], rateLimited: false };
-  }
-  return { papers: [], rateLimited: true };
-}
-
-async function classifyNovelty(hypothesis: string, papers: S2Paper[], apiKey: string) {
+/**
+ * Two-pass novelty classifier.
+ *
+ * Pass 1 ("keyword/method overlap"): the original classifier — picks the most
+ * relevant references and gives a coarse signal.
+ *
+ * Pass 2 ("semantic equivalence"): a stricter rubric that asks whether any
+ * cited paper tests *the same scientific claim* as the hypothesis (even with
+ * different wording, model systems, or measurement methods). This catches the
+ * "I reinvented X" failure mode that pure keyword overlap misses.
+ */
+async function classifyNovelty(hypothesis: string, papers: LitPaper[], apiKey: string) {
   if (papers.length === 0) {
-    return { signal: "not_found" as const, rationale: "No related work surfaced via Semantic Scholar.", chosen: [] as number[] };
+    return {
+      signal: "not_found" as const,
+      rationale: "No related work surfaced via Semantic Scholar, OpenAlex, or PubMed.",
+      chosen: [] as number[],
+      semantic_overlap: "low" as const,
+    };
   }
   const condensed = papers.slice(0, 8).map((p, i) => ({
-    i, title: p.title, year: p.year, venue: p.venue, abstract: (p.abstract ?? "").slice(0, 600),
+    i, title: p.title, year: p.year, venue: p.venue, source: p.source,
+    abstract: (p.abstract ?? "").slice(0, 600),
   }));
+
   const aiRes = await fetchWithRetry("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "google/gemini-3-flash-preview",
+      messages: [
+        { role: "system", content: "You are a research librarian. Assess novelty in TWO ways: (1) keyword/method overlap (signal: not_found / similar / exact_match), and (2) SEMANTIC EQUIVALENCE — does any candidate test the SAME scientific claim as the hypothesis even with different wording, model systems, or measurements? Pick 1-3 most relevant papers." },
+        { role: "user", content: `HYPOTHESIS:\n${hypothesis}\n\nCANDIDATES:\n${JSON.stringify(condensed)}` },
+      ],
+      tools: [{
+        type: "function",
+        function: {
+          name: "report_novelty",
+          parameters: {
+            type: "object",
+            properties: {
+              signal: { type: "string", enum: ["not_found", "similar", "exact_match"] },
+              rationale: { type: "string" },
+              chosen: { type: "array", items: { type: "integer" } },
+              semantic_overlap: {
+                type: "string",
+                enum: ["low", "medium", "high"],
+                description: "high = a candidate tests the same scientific claim (even if worded differently); medium = closely adjacent; low = clearly different question.",
+              },
+            },
+            required: ["signal", "rationale", "chosen", "semantic_overlap"],
+            additionalProperties: false,
+          },
+        },
+      }],
+      tool_choice: { type: "function", function: { name: "report_novelty" } },
+    }),
+  }, { label: "novelty-classify" });
+  if (!aiRes.ok) {
+    return { signal: "similar" as const, rationale: "Classification unavailable; defaulting to similar work exists.", chosen: [0, 1, 2], semantic_overlap: "medium" as const };
+  }
+  try {
+    const aiJson = await aiRes.json();
+    return JSON.parse(aiJson.choices[0].message.tool_calls[0].function.arguments);
+  } catch {
+    return { signal: "similar" as const, rationale: "Unable to parse classification.", chosen: [0, 1, 2], semantic_overlap: "medium" as const };
+  }
+}
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
