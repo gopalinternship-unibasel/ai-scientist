@@ -95,6 +95,40 @@ const planSchema = {
       required: ["approach", "primary_metric", "controls"],
       additionalProperties: false,
     },
+    statistical_design: {
+      type: "object",
+      description: "Structured statistical design — required for reviewer scrutiny.",
+      properties: {
+        n_per_group: { type: "integer", minimum: 1 },
+        groups: { type: "array", items: { type: "string" } },
+        primary_test: { type: "string" },
+        effect_size: { type: "string" },
+        alpha: { type: "number" },
+        power: { type: "number" },
+        randomization: { type: "string" },
+        blinding: { type: "string" },
+        notes: { type: "string" },
+      },
+      required: ["n_per_group", "groups", "primary_test", "effect_size", "alpha", "power", "randomization", "blinding"],
+      additionalProperties: false,
+    },
+    safety: {
+      type: "object",
+      description: "Safety / regulatory section. Address each flagged category from the SAFETY PRE-SCREEN.",
+      properties: {
+        biosafety_level: { type: "string", enum: ["BSL-1", "BSL-2", "BSL-3", "BSL-4", "Not applicable"] },
+        irb_required: { type: "boolean" },
+        iacuc_required: { type: "boolean" },
+        ibc_required: { type: "boolean" },
+        controlled_substances: { type: "boolean" },
+        hazards: { type: "array", items: { type: "string" } },
+        ppe: { type: "array", items: { type: "string" } },
+        waste_handling: { type: "string" },
+        emergency_procedure: { type: "string" },
+      },
+      required: ["biosafety_level", "irb_required", "iacuc_required", "ibc_required", "controlled_substances", "hazards", "ppe", "waste_handling", "emergency_procedure"],
+      additionalProperties: false,
+    },
     risks: {
       type: "array",
       items: {
@@ -116,7 +150,8 @@ const planSchema = {
   },
   required: [
     "title", "domain", "summary", "hypothesis_restated", "success_criteria",
-    "protocol", "materials", "budget", "timeline", "validation", "risks", "team",
+    "protocol", "materials", "budget", "timeline", "validation",
+    "statistical_design", "safety", "risks", "team",
   ],
   additionalProperties: false,
 } as const;
