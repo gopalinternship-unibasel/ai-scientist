@@ -524,40 +524,56 @@ serve(async (req) => {
             return;
           }
 
-          // 1) Literature QC — skip when refining (reuse parent's QC).
+          // 1) Literature QC — multi-source (S2 + OpenAlex + PubMed) + semantic novelty.
+          //    Skip when refining (reuse parent's QC).
           let references: Reference[] = [];
-          let qc: { signal: string; rationale: string; references: Reference[] };
+          let qc: {
+            signal: string;
+            rationale: string;
+            references: Reference[];
+            sources_used?: { s2: boolean; openalex: boolean; pubmed: boolean };
+            semantic_overlap?: "low" | "medium" | "high";
+          };
           if (isRefinement && parentRun?.qc) {
             qc = parentRun.qc as typeof qc;
             references = qc.references ?? [];
             send("qc", qc);
             await supabase.from("runs").update({ status: "plan" }).eq("id", runId);
           } else {
-            const { papers, rateLimited } = await searchSemanticScholar(hypothesis);
-            const verdict = await classifyNovelty(hypothesis, papers, LOVABLE_API_KEY);
-            if (rateLimited && papers.length === 0) {
-              verdict.rationale = "Semantic Scholar is rate-limiting requests. Treating as unknown novelty.";
+            const lit = await searchLiterature(hypothesis);
+            const verdict = await classifyNovelty(hypothesis, lit.papers, LOVABLE_API_KEY);
+            if (lit.rateLimited && lit.papers.length === 0) {
+              verdict.rationale = "All literature sources rate-limited or unreachable. Treating as unknown novelty.";
             }
             references = (verdict.chosen ?? [])
-              .map((i: number) => papers[i]).filter(Boolean).slice(0, 3)
-              .map((p: S2Paper) => ({
+              .map((i: number) => lit.papers[i]).filter(Boolean).slice(0, 3)
+              .map((p: LitPaper) => ({
                 title: p.title,
                 year: p.year,
-                authors: (p.authors ?? []).slice(0, 4).map((a) => a.name),
+                authors: p.authors,
                 venue: p.venue,
                 citationCount: p.citationCount,
-                url: p.url ?? (p.externalIds?.DOI
-                  ? `https://doi.org/${p.externalIds.DOI}`
-                  : `https://www.semanticscholar.org/paper/${p.paperId}`),
+                url: p.url,
+                source: p.source,
               }));
-            qc = { signal: verdict.signal, rationale: verdict.rationale, references };
+            qc = {
+              signal: verdict.signal,
+              rationale: verdict.rationale,
+              references,
+              sources_used: lit.sources,
+              semantic_overlap: verdict.semantic_overlap,
+            };
             await supabase.from("runs").update({ qc, status: "plan" }).eq("id", runId);
             send("qc", qc);
           }
 
+          // Deterministic safety pre-screen — feeds into the planner prompt so
+          // the resulting plan addresses regulatory / containment requirements.
+          const safetyFlags = screenSafety(hypothesis);
+
           // 2) Plan generation (streamed)
           const refContext = references.length
-            ? `\n\nKNOWN RELATED WORK (cite inline as [1], [2], [3] in the protocol description field where relevant):\n${references.map((r: Reference, i: number) => `[${i + 1}] ${r.title} (${r.year ?? "n.d."}) — ${r.url ?? ""}`).join("\n")}`
+            ? `\n\nKNOWN RELATED WORK — use ONLY the strict canonical citation format:\n  • Bare reference:   [N]\n  • Multiple refs:    (see [N, M])\n  • DO NOT use any other form ((ref. 1), [ref. 1], (1), etc.)\n${references.map((r: Reference, i: number) => `[${i + 1}] ${r.title} (${r.year ?? "n.d."}) — ${r.url ?? ""}`).join("\n")}`
             : "";
 
           const refinementContext = isRefinement
@@ -571,12 +587,16 @@ REQUIREMENTS:
 - Materials must include real suppliers (Sigma-Aldrich, Thermo Fisher, Promega, Qiagen, IDT, ATCC, Addgene) with plausible catalog numbers.
 - Budget MUST be anchored to the REFERENCE COST CATALOG below — do not invent prices that are wildly off (>20%).
 - Budget total MUST equal the sum of line items, and line items must roughly equal materials subtotal + labour + equipment + overhead.
-- For each protocol step, where a reference [N] is relevant, append "(see [N])" to the description text. Be conservative — only cite where the reference truly supports the step.
+- CITATIONS: Use ONLY the canonical format \`[N]\` (or \`(see [N, M])\` for multiples). N must be a 1-based index into the KNOWN RELATED WORK list. Never invent reference numbers; never use prose forms like "(ref. 1)" or "(see reference 1)".
 - Timeline must be phased with explicit dependencies.
-- Validation must specify primary metric, controls, and statistical plan (n, test, alpha, power calculation).
+- The 'validation' section gives the qualitative approach.
+- The 'statistical_design' section MUST be filled with a real power calculation: n_per_group justified by effect_size, alpha (typically 0.05), power (typically 0.8), randomization scheme, blinding strategy.
+- The 'safety' section MUST be filled — biosafety_level, IRB/IACUC/IBC requirements, controlled substances, hazards, PPE, waste handling, emergency procedure. Address every category flagged in the SAFETY PRE-SCREEN below.
 - Risks must be specific, not generic.
 - Be precise. Use exact concentrations, volumes, durations.
+${safetyPromptFragment(safetyFlags)}
 ${COST_CATALOG_PROMPT}`;
+
 
           // Streaming plan generation. Retry on transient errors but only on the
           // initial connect — once tokens are flowing we cannot resume mid-stream.
