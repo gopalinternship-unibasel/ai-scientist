@@ -102,6 +102,8 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      claim_anonymous_runs: { Args: { _owner_token: string }; Returns: number }
+      cleanup_old_rate_limits: { Args: never; Returns: number }
       cleanup_stale_runs: { Args: never; Returns: number }
     }
     Enums: {
