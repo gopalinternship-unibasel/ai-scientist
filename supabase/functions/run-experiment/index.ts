@@ -413,8 +413,18 @@ serve(async (req) => {
           .limit(1)
           .maybeSingle();
         if (pending?.id) {
-          return new Response(JSON.stringify({ id: pending.id, in_flight: true }), {
-            status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          // Return as SSE so the client's stream parser handles it uniformly.
+          // Emits a single `run` event with in_flight=true, then `done`.
+          const enc = new TextEncoder();
+          const stream = new ReadableStream({
+            start(controller) {
+              controller.enqueue(enc.encode(`event: run\ndata: ${JSON.stringify({ id: pending.id, cached: false, in_flight: true })}\n\n`));
+              controller.enqueue(enc.encode(`event: done\ndata: ${JSON.stringify({ id: pending.id })}\n\n`));
+              controller.close();
+            },
+          });
+          return new Response(stream, {
+            headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
           });
         }
       }
