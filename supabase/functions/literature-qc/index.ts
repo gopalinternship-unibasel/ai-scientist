@@ -149,8 +149,11 @@ serve(async (req) => {
       });
     }
 
-    const papers = await searchSemanticScholar(hypothesis);
+    const { papers, rateLimited } = await searchSemanticScholar(hypothesis);
     const verdict = await classifyNovelty(hypothesis, papers);
+    if (rateLimited && papers.length === 0) {
+      verdict.rationale = "Semantic Scholar is rate-limiting requests. Treating as unknown novelty.";
+    }
 
     const references = (verdict.chosen ?? [])
       .map((i) => papers[i])
