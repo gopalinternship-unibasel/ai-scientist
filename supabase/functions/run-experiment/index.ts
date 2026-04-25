@@ -666,13 +666,16 @@ ${safetyPromptFragment(safetyFlags)}
 ${COST_CATALOG_PROMPT}`;
 
 
-          // Streaming plan generation. Retry on transient errors but only on the
-          // initial connect — once tokens are flowing we cannot resume mid-stream.
-          const aiRes = await fetchWithRetry("https://ai.gateway.lovable.dev/v1/chat/completions", {
-            method: "POST",
-            headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
-            body: JSON.stringify({
-              model: "google/gemini-3-flash-preview",
+          // Streaming plan generation with model fallback. Once tokens are
+          // flowing we can't switch mid-stream — but we can switch BEFORE the
+          // first byte if the primary model 5xx's on connect.
+          const { res: aiRes, modelUsed } = await callAIWithFallback({
+            apiKey: LOVABLE_API_KEY,
+            models: PLAN_MODELS,
+            label: "plan-stream",
+            timeoutMs: 90_000,
+            buildBody: (model) => ({
+              model,
               stream: true,
               temperature: 0.2,
               messages: [
@@ -689,18 +692,22 @@ ${COST_CATALOG_PROMPT}`;
               }],
               tool_choice: { type: "function", function: { name: "submit_experiment_plan" } },
             }),
-          }, { label: "plan-stream", retries: 2 });
+          });
+          console.log(JSON.stringify({ run_id: runId, step: "plan_model_chosen", model: modelUsed }));
 
           if (!aiRes.ok || !aiRes.body) {
             const text = await aiRes.text().catch(() => "");
             console.error("AI gateway error", aiRes.status, text);
-            const msg = aiRes.status === 429
+            const kind: ErrorKind = classifyHttpError(aiRes.status, text);
+            const msg = kind === "RATE_LIMIT"
               ? "Rate limit reached. Please try again shortly."
-              : aiRes.status === 402
+              : kind === "CREDITS"
               ? "AI credits exhausted. Top up in workspace settings."
-              : "AI gateway error";
-            await supabase.from("runs").update({ status: "failed", error: msg }).eq("id", runId);
-            send("error", { message: msg });
+              : kind === "POLICY"
+              ? "The hypothesis was flagged by the model's safety filter."
+              : "AI gateway error — please retry.";
+            await supabase.from("runs").update({ status: "failed", error: encodeError(kind, msg) }).eq("id", runId);
+            send("error", { message: msg, kind });
             controller.close();
             return;
           }
