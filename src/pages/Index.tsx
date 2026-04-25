@@ -5,6 +5,7 @@ import { Logo } from "@/components/Logo";
 import { UserMenu } from "@/components/UserMenu";
 import { HypothesisInput } from "@/components/HypothesisInput";
 import { GenerationProgress } from "@/components/GenerationProgress";
+import { RateLimitBadge } from "@/components/RateLimitBadge";
 import { startRunStream } from "@/lib/runStream";
 import { getOwnerToken } from "@/lib/owner";
 import { trackRun } from "@/hooks/useBackgroundRunNotifier";
@@ -65,12 +66,10 @@ const Index = () => {
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-10 border-b border-rule bg-background/85 backdrop-blur">
-        <div className="container flex h-16 items-center justify-between">
+        <div className="container flex h-16 items-center justify-between gap-3">
           <Logo />
           <div className="flex items-center gap-3">
-            <span className="hidden font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground md:inline">
-              Powered by Lovable AI · Semantic Scholar
-            </span>
+            <RateLimitBadge refreshKey={submitting} />
             <UserMenu />
           </div>
         </div>
@@ -103,7 +102,14 @@ const Index = () => {
           {!submitting ? (
             <HypothesisInput onSubmit={handleSubmit} loading={submitting} />
           ) : (
-            <GenerationProgress stage="qc" />
+            <GenerationProgress
+              stage="qc"
+              onStop={() => {
+                abortRef.current?.abort();
+                setSubmitting(false);
+                toast.message("Generation stopped.");
+              }}
+            />
           )}
         </div>
       </main>

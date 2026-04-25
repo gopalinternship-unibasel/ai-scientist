@@ -68,6 +68,15 @@ export async function startRunStream({
   }
 
   const reader = resp.body.getReader();
+  // Cancel the streaming reader if the caller aborts mid-stream. Without this
+  // the loop below keeps draining bytes after `signal.abort()` fires.
+  if (signal) {
+    if (signal.aborted) {
+      try { await reader.cancel(); } catch { /* noop */ }
+      return;
+    }
+    signal.addEventListener("abort", () => { reader.cancel().catch(() => {}); }, { once: true });
+  }
   const decoder = new TextDecoder();
   let buf = "";
   let currentEvent = "message";
@@ -89,30 +98,36 @@ export async function startRunStream({
     }
   };
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
 
-    let idx: number;
-    while ((idx = buf.indexOf("\n")) !== -1) {
-      let line = buf.slice(0, idx);
-      buf = buf.slice(idx + 1);
-      if (line.endsWith("\r")) line = line.slice(0, -1);
+      let idx: number;
+      while ((idx = buf.indexOf("\n")) !== -1) {
+        let line = buf.slice(0, idx);
+        buf = buf.slice(idx + 1);
+        if (line.endsWith("\r")) line = line.slice(0, -1);
 
-      if (line === "") {
-        currentEvent = "message";
-        continue;
-      }
-      if (line.startsWith(":")) continue;
-      if (line.startsWith("event: ")) {
-        currentEvent = line.slice(7).trim();
-        continue;
-      }
-      if (line.startsWith("data: ")) {
-        dispatch(currentEvent, line.slice(6));
-        continue;
+        if (line === "") {
+          currentEvent = "message";
+          continue;
+        }
+        if (line.startsWith(":")) continue;
+        if (line.startsWith("event: ")) {
+          currentEvent = line.slice(7).trim();
+          continue;
+        }
+        if (line.startsWith("data: ")) {
+          dispatch(currentEvent, line.slice(6));
+          continue;
+        }
       }
     }
+  } catch (err) {
+    // Reader was cancelled (abort) — silent. Re-throw anything else.
+    if (signal?.aborted) return;
+    throw err;
   }
 }

@@ -296,7 +296,7 @@ async function checkRateLimit(
   kind: string,
   windowMinutes: number,
   max: number,
-): Promise<{ ok: boolean; remaining: number }> {
+): Promise<{ ok: boolean; remaining: number; used: number; limit: number }> {
   const since = new Date(Date.now() - windowMinutes * 60_000).toISOString();
   const { count } = await supabase
     .from("rate_limits")
@@ -305,9 +305,17 @@ async function checkRateLimit(
     .eq("kind", kind)
     .gte("created_at", since);
   const used = count ?? 0;
-  if (used >= max) return { ok: false, remaining: 0 };
+  if (used >= max) return { ok: false, remaining: 0, used, limit: max };
   await supabase.from("rate_limits").insert({ identifier, kind });
-  return { ok: true, remaining: max - used - 1 };
+  return { ok: true, remaining: max - used - 1, used: used + 1, limit: max };
+}
+
+function rateHeaders(rl: { used: number; limit: number; remaining: number }) {
+  return {
+    "X-RateLimit-Limit": String(rl.limit),
+    "X-RateLimit-Used": String(rl.used),
+    "X-RateLimit-Remaining": String(rl.remaining),
+  };
 }
 
 interface Reference {
@@ -327,6 +335,39 @@ serve(async (req) => {
   const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
+
+  // GET /run-experiment → return current quota for this caller without consuming one.
+  if (req.method === "GET") {
+    let userId: string | null = null;
+    const authHeader = req.headers.get("Authorization");
+    if (authHeader?.startsWith("Bearer ")) {
+      const token = authHeader.slice(7);
+      if (token && token !== ANON_KEY) {
+        const userClient = createClient(SUPABASE_URL, ANON_KEY, {
+          global: { headers: { Authorization: authHeader } },
+        });
+        const { data } = await userClient.auth.getUser();
+        userId = data.user?.id ?? null;
+      }
+    }
+    const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || "unknown";
+    const ident = userId ? `user:${userId}` : `ip:${ip}`;
+    const limit = userId ? 30 : 20;
+    const since = new Date(Date.now() - 60 * 60_000).toISOString();
+    const { count } = await supabase
+      .from("rate_limits")
+      .select("*", { count: "exact", head: true })
+      .eq("identifier", ident).eq("kind", "run").gte("created_at", since);
+    const used = count ?? 0;
+    return new Response(JSON.stringify({
+      limit, used, remaining: Math.max(0, limit - used), authenticated: !!userId,
+    }), {
+      headers: {
+        ...corsHeaders, "Content-Type": "application/json",
+        ...rateHeaders({ limit, used, remaining: Math.max(0, limit - used) }),
+      },
+    });
+  }
 
   if (!LOVABLE_API_KEY) {
     return new Response(JSON.stringify({ error: "Service not configured" }), {
@@ -391,7 +432,12 @@ serve(async (req) => {
         error: userId
           ? "You've reached the limit of 30 experiment runs per hour. Please try again later."
           : "Anonymous users are limited to 20 runs per hour. Sign in for a higher quota.",
-      }), { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }), {
+        status: 429,
+        headers: {
+          ...corsHeaders, "Content-Type": "application/json", ...rateHeaders(rl),
+        },
+      });
     }
 
     // Look up parent run (for refinement) and compute next version.

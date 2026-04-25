@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, FlaskConical, Plus, Clock, CheckCircle2, AlertCircle } from "lucide-react";
+import { ArrowLeft, FlaskConical, Plus, Clock, CheckCircle2, AlertCircle, Search } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { UserMenu } from "@/components/UserMenu";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -18,6 +19,20 @@ const MyRuns = () => {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const [runs, setRuns] = useState<RunRow[] | null>(null);
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "done" | "failed" | "in_flight">("all");
+
+  const filtered = useMemo(() => {
+    if (!runs) return null;
+    const q = query.trim().toLowerCase();
+    return runs.filter((r) => {
+      if (statusFilter === "done" && r.status !== "done") return false;
+      if (statusFilter === "failed" && r.status !== "failed") return false;
+      if (statusFilter === "in_flight" && !["pending", "qc", "plan"].includes(r.status)) return false;
+      if (q && !r.hypothesis.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [runs, query, statusFilter]);
 
   useEffect(() => {
     if (authLoading) return;
@@ -81,6 +96,36 @@ const MyRuns = () => {
           </Link>
         </div>
 
+        {runs && runs.length > 0 && (
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <div className="relative min-w-[220px] flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search hypotheses…"
+                className="pl-9"
+              />
+            </div>
+            <div className="flex gap-1 rounded-md border border-rule bg-paper p-1">
+              {(["all", "done", "in_flight", "failed"] as const).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setStatusFilter(s)}
+                  className={`rounded px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider transition-colors ${
+                    statusFilter === s
+                      ? "bg-foreground text-background"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {s === "in_flight" ? "Running" : s}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {runs === null && (
           <div className="paper-surface rounded-lg p-8 text-center text-sm text-muted-foreground">
             Loading…
@@ -102,9 +147,15 @@ const MyRuns = () => {
           </div>
         )}
 
-        {runs && runs.length > 0 && (
+        {filtered && filtered.length === 0 && runs && runs.length > 0 && (
+          <div className="paper-surface rounded-lg p-8 text-center text-sm text-muted-foreground">
+            No experiments match your filters.
+          </div>
+        )}
+
+        {filtered && filtered.length > 0 && (
           <ul className="paper-surface divide-y divide-rule rounded-lg">
-            {runs.map((r) => (
+            {filtered.map((r) => (
               <li key={r.id}>
                 <Link
                   to={`/runs/${r.id}`}

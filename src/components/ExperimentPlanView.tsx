@@ -14,10 +14,12 @@ import {
   Share2,
   Sigma,
   ShieldAlert,
+  GitCompare,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import type { ExperimentPlan } from "@/lib/samples";
+import { exportPlanToPdf } from "@/lib/exportPdf";
 
 /**
  * Plan section. On mobile (< md) the body is collapsible via a native <details>
@@ -30,12 +32,15 @@ const Section = ({
   number,
   children,
   defaultOpen = true,
+  changed = false,
 }: {
   icon: React.ElementType;
   label: string;
   number: string;
   children: React.ReactNode;
   defaultOpen?: boolean;
+  /** Render a "modified" badge when this section differs from the previous version. */
+  changed?: boolean;
 }) => {
   const header = (
     <>
@@ -46,6 +51,15 @@ const Section = ({
         § {number}
       </span>
       <h2 className="font-serif text-xl font-semibold text-foreground">{label}</h2>
+      {changed && (
+        <span
+          title="Changed from previous version"
+          className="inline-flex items-center gap-1 rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-accent"
+        >
+          <GitCompare className="h-2.5 w-2.5" />
+          Modified
+        </span>
+      )}
     </>
   );
   return (
@@ -81,10 +95,42 @@ const Section = ({
 const fmtUsd = (n: number) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n);
 
-export const ExperimentPlanView = ({ plan }: { plan: ExperimentPlan }) => {
+interface PlanViewProps {
+  plan: ExperimentPlan;
+  /** Optional: previous version's plan, used to render "modified" badges per section. */
+  previousPlan?: ExperimentPlan | null;
+  /** Hypothesis text — needed for the PDF cover sheet. */
+  hypothesis?: string;
+  /** Version number for the PDF filename / cover sheet. */
+  version?: number;
+}
+
+/** Cheap structural diff: stringify each section and compare. */
+function diffSections(a: ExperimentPlan, b: ExperimentPlan) {
+  const eq = (x: unknown, y: unknown) => JSON.stringify(x) === JSON.stringify(y);
+  return {
+    success_criteria: !eq(a.success_criteria, b.success_criteria),
+    protocol: !eq(a.protocol, b.protocol),
+    materials: !eq(a.materials, b.materials),
+    budget: !eq(a.budget, b.budget),
+    timeline: !eq(a.timeline, b.timeline),
+    validation: !eq(a.validation, b.validation),
+    statistical_design: !eq(a.statistical_design, b.statistical_design),
+    safety: !eq(a.safety, b.safety),
+    risks: !eq(a.risks, b.risks),
+    team: !eq(a.team, b.team),
+  };
+}
+
+export const ExperimentPlanView = ({ plan, previousPlan, hypothesis, version = 1 }: PlanViewProps) => {
   const materialsTotal = useMemo(
     () => plan.materials.reduce((s, m) => s + (m.total_cost_usd ?? 0), 0),
     [plan.materials]
+  );
+
+  const changed = useMemo(
+    () => previousPlan ? diffSections(plan, previousPlan) : null,
+    [plan, previousPlan],
   );
 
   const onShare = async () => {
@@ -96,14 +142,30 @@ export const ExperimentPlanView = ({ plan }: { plan: ExperimentPlan }) => {
     }
   };
 
+  const onExportPdf = () => {
+    try {
+      exportPlanToPdf(plan, hypothesis ?? plan.hypothesis_restated, version);
+      toast.success("PDF downloaded");
+    } catch (err) {
+      console.error(err);
+      toast.error("Could not export PDF");
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Toolbar */}
       <div className="no-print flex items-center justify-end gap-2">
+        {previousPlan && (
+          <span className="mr-auto inline-flex items-center gap-1.5 rounded-full border border-accent/40 bg-accent/10 px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider text-accent">
+            <GitCompare className="h-3 w-3" />
+            Comparing to v{Math.max(1, version - 1)}
+          </span>
+        )}
         <Button variant="outline" size="sm" onClick={onShare} className="gap-2">
           <Share2 className="h-3.5 w-3.5" /> Share
         </Button>
-        <Button variant="outline" size="sm" onClick={() => window.print()} className="gap-2">
+        <Button variant="outline" size="sm" onClick={onExportPdf} className="gap-2">
           <Printer className="h-3.5 w-3.5" /> Save as PDF
         </Button>
       </div>
@@ -159,7 +221,7 @@ export const ExperimentPlanView = ({ plan }: { plan: ExperimentPlan }) => {
         </div>
       </section>
 
-      <Section number="01" label="Success criteria" icon={Target}>
+      <Section number="01" label="Success criteria" icon={Target} changed={changed?.success_criteria}>
         <ul className="space-y-2">
           {plan.success_criteria.map((c, i) => (
             <li key={i} className="flex items-start gap-3">
@@ -170,7 +232,7 @@ export const ExperimentPlanView = ({ plan }: { plan: ExperimentPlan }) => {
         </ul>
       </Section>
 
-      <Section number="02" label="Protocol" icon={FlaskConical}>
+      <Section number="02" label="Protocol" icon={FlaskConical} changed={changed?.protocol}>
         <ol className="relative space-y-5 border-l border-rule pl-6">
           {plan.protocol.map((s) => (
             <li key={s.step} className="relative">
@@ -192,7 +254,7 @@ export const ExperimentPlanView = ({ plan }: { plan: ExperimentPlan }) => {
         </ol>
       </Section>
 
-      <Section number="03" label="Materials & supply chain" icon={ShoppingCart}>
+      <Section number="03" label="Materials & supply chain" icon={ShoppingCart} changed={changed?.materials}>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -240,7 +302,7 @@ export const ExperimentPlanView = ({ plan }: { plan: ExperimentPlan }) => {
         </div>
       </Section>
 
-      <Section number="04" label="Budget" icon={CircleDollarSign}>
+      <Section number="04" label="Budget" icon={CircleDollarSign} changed={changed?.budget}>
         <div className="grid gap-4 md:grid-cols-[1fr,auto]">
           <ul className="divide-y divide-rule">
             {plan.budget.line_items.map((li, i) => (
@@ -269,7 +331,7 @@ export const ExperimentPlanView = ({ plan }: { plan: ExperimentPlan }) => {
         </div>
       </Section>
 
-      <Section number="05" label="Timeline" icon={CalendarRange}>
+      <Section number="05" label="Timeline" icon={CalendarRange} changed={changed?.timeline}>
         <div className="space-y-4">
           {plan.timeline.map((p, i) => (
             <div key={i} className="grid gap-2 rounded-md border border-rule p-4 md:grid-cols-[180px,1fr]">
@@ -306,7 +368,7 @@ export const ExperimentPlanView = ({ plan }: { plan: ExperimentPlan }) => {
         </div>
       </Section>
 
-      <Section number="06" label="Validation" icon={Beaker}>
+      <Section number="06" label="Validation" icon={Beaker} changed={changed?.validation}>
         <div className="space-y-4">
           <p className="font-serif text-[15px] leading-relaxed text-foreground/90">
             {plan.validation.approach}
@@ -333,7 +395,7 @@ export const ExperimentPlanView = ({ plan }: { plan: ExperimentPlan }) => {
       </Section>
 
       {plan.statistical_design && (
-        <Section number="07" label="Statistical design" icon={Sigma}>
+        <Section number="07" label="Statistical design" icon={Sigma} changed={changed?.statistical_design}>
           <div className="space-y-4">
             <div className="grid gap-3 md:grid-cols-3">
               <KV label="N per group" value={String(plan.statistical_design.n_per_group)} />
@@ -364,7 +426,7 @@ export const ExperimentPlanView = ({ plan }: { plan: ExperimentPlan }) => {
       )}
 
       {plan.safety && (
-        <Section number="08" label="Safety & approvals" icon={ShieldAlert}>
+        <Section number="08" label="Safety & approvals" icon={ShieldAlert} changed={changed?.safety}>
           <div className="space-y-4">
             <div className="flex flex-wrap gap-2">
               <span className="stamp border-warning/40 bg-warning/10 text-foreground">
@@ -429,7 +491,7 @@ export const ExperimentPlanView = ({ plan }: { plan: ExperimentPlan }) => {
       )}
 
       <div className="grid gap-6 md:grid-cols-2">
-        <Section number="09" label="Risks & mitigations" icon={AlertTriangle}>
+        <Section number="09" label="Risks & mitigations" icon={AlertTriangle} changed={changed?.risks}>
           <ul className="space-y-3">
             {plan.risks.map((r, i) => (
               <li key={i} className="rounded-md border border-rule p-3">
@@ -443,7 +505,7 @@ export const ExperimentPlanView = ({ plan }: { plan: ExperimentPlan }) => {
           </ul>
         </Section>
 
-        <Section number="10" label="Team" icon={Users}>
+        <Section number="10" label="Team" icon={Users} changed={changed?.team}>
           <ul className="divide-y divide-rule">
             {plan.team.map((t, i) => (
               <li key={i} className="flex items-center justify-between py-2.5">

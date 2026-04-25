@@ -86,7 +86,7 @@ const RunPage = () => {
       const { data: chain } = await client
         .from("runs")
         // deno-lint-ignore no-explicit-any
-        .select("id,version,refinement_instruction,created_at,status,parent_run_id" as any)
+        .select("id,version,refinement_instruction,created_at,status,parent_run_id,plan" as any)
         .or(`id.eq.${rootId},parent_run_id.eq.${rootId}`)
         .order("version", { ascending: true });
       if (active && chain) setVersions(chain as unknown as VersionEntry[]);
@@ -293,25 +293,42 @@ const RunPage = () => {
           </div>
         )}
 
-        <div className="space-y-6">
-          {run.qc && (
-            <ErrorBoundary label="the literature review">
-              <LiteratureQCCard qc={run.qc} />
-            </ErrorBoundary>
-          )}
-          {inFlight && !run.qc && <GenerationProgress stage="qc" />}
-          {inFlight && run.qc && !run.plan && <GenerationProgress stage="plan" />}
-          {run.plan && (
-            <ErrorBoundary label="the experiment plan">
-              <ExperimentPlanView plan={run.plan} />
-            </ErrorBoundary>
-          )}
-          {run.critique && (
-            <ErrorBoundary label="the peer review">
-              <PlanCritiqueCard critique={run.critique} />
-            </ErrorBoundary>
-          )}
-        </div>
+        {(() => {
+          // Find the previous version's plan for diff badges in ExperimentPlanView.
+          const prevVersion = versions
+            .filter((v) => v.version < run.version && v.id !== run.id)
+            .sort((a, b) => b.version - a.version)[0];
+          const previousPlan = (prevVersion as unknown as { plan?: ExperimentPlan } | undefined)?.plan ?? null;
+          const refinementCtx = run.refinement_instruction && run.version > 1
+            ? { fromVersion: run.version - 1, toVersion: run.version, instruction: run.refinement_instruction }
+            : null;
+          return (
+            <div className="space-y-6">
+              {run.qc && (
+                <ErrorBoundary label="the literature review">
+                  <LiteratureQCCard qc={run.qc} />
+                </ErrorBoundary>
+              )}
+              {inFlight && !run.qc && <GenerationProgress stage="qc" refinement={refinementCtx} />}
+              {inFlight && run.qc && !run.plan && <GenerationProgress stage="plan" refinement={refinementCtx} />}
+              {run.plan && (
+                <ErrorBoundary label="the experiment plan">
+                  <ExperimentPlanView
+                    plan={run.plan}
+                    previousPlan={previousPlan}
+                    hypothesis={run.hypothesis}
+                    version={run.version}
+                  />
+                </ErrorBoundary>
+              )}
+              {run.critique && (
+                <ErrorBoundary label="the peer review">
+                  <PlanCritiqueCard critique={run.critique} />
+                </ErrorBoundary>
+              )}
+            </div>
+          );
+        })()}
       </main>
 
       {canRefine && (
