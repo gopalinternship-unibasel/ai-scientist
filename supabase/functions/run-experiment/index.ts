@@ -869,9 +869,14 @@ ${COST_CATALOG_PROMPT}`;
           //    Feed catalog-mismatch findings as extra reviewer context so the
           //    critique surfaces wrong-form / wrong-cat# materials concretely.
           try {
-            const catIssues = findCatalogIssues((planObj as { materials?: { name?: string; catalog_number?: string }[] })?.materials);
+            const catIssues = findCatalogIssues((planObj as { materials?: { name?: string; catalog_number?: string; supplier?: string }[] })?.materials);
             const extraContext = catIssues.length
-              ? `\n\nDETERMINISTIC CATALOG CHECK FOUND ${catIssues.length} MISMATCH(ES) — please raise these in 'concerns' with severity 'high':\n${catIssues.map(i => `- Material #${i.material_index + 1} declares "${i.declared_name}" with catalog number ${i.catalog_number}, but that catalog number is actually "${i.canonical_name}" (${i.reason}).`).join("\n")}`
+              ? `\n\nDETERMINISTIC CATALOG CHECK FOUND ${catIssues.length} ISSUE(S) — please raise these in 'concerns' with severity 'high':\n${catIssues.map((i) => {
+                  if (i.reason === "format_mismatch") {
+                    return `- Material #${i.material_index + 1} ("${i.declared_name}") has catalog number ${i.catalog_number}, which does NOT match the supplier's catalog format. ${i.canonical_name} Verify on the supplier site before ordering.`;
+                  }
+                  return `- Material #${i.material_index + 1} declares "${i.declared_name}" with catalog number ${i.catalog_number}, but that catalog number is actually "${i.canonical_name}" (${i.reason}).`;
+                }).join("\n")}`
               : "";
             if (catIssues.length) {
               console.log("catalog-check", JSON.stringify({ run_id: runId, issues: catIssues.length }));
