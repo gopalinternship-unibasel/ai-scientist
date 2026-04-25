@@ -10,3 +10,14 @@ export function getOwnerToken(): string {
   }
   return t;
 }
+
+/**
+ * Rotate the anonymous owner_token. Called after a successful
+ * `claim_anonymous_runs` so a stolen / leaked old token can no longer be used
+ * to read runs that have been transferred to a real account.
+ */
+export function rotateOwnerToken(): string {
+  const fresh = crypto.randomUUID();
+  localStorage.setItem(KEY, fresh);
+  return fresh;
+}
