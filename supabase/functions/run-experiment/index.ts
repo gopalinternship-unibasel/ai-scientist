@@ -336,6 +336,39 @@ serve(async (req) => {
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
+  // GET /run-experiment → return current quota for this caller without consuming one.
+  if (req.method === "GET") {
+    let userId: string | null = null;
+    const authHeader = req.headers.get("Authorization");
+    if (authHeader?.startsWith("Bearer ")) {
+      const token = authHeader.slice(7);
+      if (token && token !== ANON_KEY) {
+        const userClient = createClient(SUPABASE_URL, ANON_KEY, {
+          global: { headers: { Authorization: authHeader } },
+        });
+        const { data } = await userClient.auth.getUser();
+        userId = data.user?.id ?? null;
+      }
+    }
+    const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || "unknown";
+    const ident = userId ? `user:${userId}` : `ip:${ip}`;
+    const limit = userId ? 30 : 20;
+    const since = new Date(Date.now() - 60 * 60_000).toISOString();
+    const { count } = await supabase
+      .from("rate_limits")
+      .select("*", { count: "exact", head: true })
+      .eq("identifier", ident).eq("kind", "run").gte("created_at", since);
+    const used = count ?? 0;
+    return new Response(JSON.stringify({
+      limit, used, remaining: Math.max(0, limit - used), authenticated: !!userId,
+    }), {
+      headers: {
+        ...corsHeaders, "Content-Type": "application/json",
+        ...rateHeaders({ limit, used, remaining: Math.max(0, limit - used) }),
+      },
+    });
+  }
+
   if (!LOVABLE_API_KEY) {
     return new Response(JSON.stringify({ error: "Service not configured" }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
