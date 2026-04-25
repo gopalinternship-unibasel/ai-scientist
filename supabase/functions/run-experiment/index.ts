@@ -363,7 +363,7 @@ serve(async (req) => {
     }
     const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || "unknown";
     const ident = userId ? `user:${userId}` : `ip:${ip}`;
-    const limit = userId ? 30 : 20;
+    const limit = userId ? 100 : 100;
     const since = new Date(Date.now() - 60 * 60_000).toISOString();
     const { count } = await supabase
       .from("rate_limits")
@@ -468,15 +468,15 @@ serve(async (req) => {
       }
     }
 
-    // Rate limit: 30 runs / hour for signed-in users; 20 / hour per IP for anon.
+    // Rate limit: 100 runs / hour for both signed-in users and anon IPs.
     const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || "unknown";
     const rlIdent = userId ? `user:${userId}` : `ip:${ip}`;
-    const rl = await checkRateLimit(supabase, rlIdent, "run", 60, userId ? 30 : 20);
+    const rl = await checkRateLimit(supabase, rlIdent, "run", 60, 100);
     if (!rl.ok) {
       return new Response(JSON.stringify({
         error: userId
-          ? "You've reached the limit of 30 experiment runs per hour. Please try again later."
-          : "Anonymous users are limited to 20 runs per hour. Sign in for a higher quota.",
+          ? "You've reached the limit of 100 experiment runs per hour. Please try again later."
+          : "Anonymous users are limited to 100 runs per hour. Sign in to keep your run history.",
       }), {
         status: 429,
         headers: {
