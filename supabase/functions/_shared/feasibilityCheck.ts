@@ -28,7 +28,7 @@ const RULES: Rule[] = [
     principle: "Abbe diffraction limit",
     patterns: [
       /\b(?:resolve|image|visualize|see)\b.*\b(?:individual\s+)?atoms?\b/i,
-      /\b(?:brightfield|light|optical|fluorescence|confocal)\s+microscop/i,
+      /\b(?:brightfield|bright[-\s]?field|light|optical|fluorescence|fluorescent|confocal|widefield|wide[-\s]?field|phase[-\s]?contrast|dic|darkfield|dark[-\s]?field)\b(?:\s+\w+){0,3}\s+microscop/i,
     ],
     explanation:
       "Visible-light microscopy cannot resolve individual atoms — the Abbe diffraction limit caps optical resolution at ~200 nm, four orders of magnitude larger than an atom.",
