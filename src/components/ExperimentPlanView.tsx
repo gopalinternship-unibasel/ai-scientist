@@ -14,10 +14,12 @@ import {
   Share2,
   Sigma,
   ShieldAlert,
+  GitCompare,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import type { ExperimentPlan } from "@/lib/samples";
+import { exportPlanToPdf } from "@/lib/exportPdf";
 
 /**
  * Plan section. On mobile (< md) the body is collapsible via a native <details>
@@ -30,12 +32,15 @@ const Section = ({
   number,
   children,
   defaultOpen = true,
+  changed = false,
 }: {
   icon: React.ElementType;
   label: string;
   number: string;
   children: React.ReactNode;
   defaultOpen?: boolean;
+  /** Render a "modified" badge when this section differs from the previous version. */
+  changed?: boolean;
 }) => {
   const header = (
     <>
@@ -46,6 +51,15 @@ const Section = ({
         § {number}
       </span>
       <h2 className="font-serif text-xl font-semibold text-foreground">{label}</h2>
+      {changed && (
+        <span
+          title="Changed from previous version"
+          className="inline-flex items-center gap-1 rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-accent"
+        >
+          <GitCompare className="h-2.5 w-2.5" />
+          Modified
+        </span>
+      )}
     </>
   );
   return (
