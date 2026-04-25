@@ -418,7 +418,7 @@ REQUIREMENTS:
         ...corsHeaders,
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
-        "x-run-id": runId,
+        "x-run-id": runId ?? "",
       },
     });
   } catch (e) {
