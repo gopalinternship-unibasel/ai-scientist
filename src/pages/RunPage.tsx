@@ -303,17 +303,39 @@ const RunPage = () => {
           </div>
         )}
 
-        {run.status === "failed" && (
-          <div className="paper-surface rounded-lg p-6 mb-6">
-            <h2 className="font-serif text-lg text-destructive">Run failed</h2>
-            <p className="mt-1 text-sm text-foreground/80">{run.error ?? "Unknown error."}</p>
-            <Link to="/" className="mt-3 inline-block">
-              <Button variant="outline" size="sm" className="gap-2">
-                <RotateCcw className="h-3.5 w-3.5" /> Try again
-              </Button>
-            </Link>
-          </div>
-        )}
+        {run.status === "failed" && (() => {
+          const parsed = parseRunError(run.error);
+          const canRetry = isOwner && isRetryable(parsed.kind);
+          return (
+            <div className="paper-surface rounded-lg p-6 mb-6">
+              <div className="flex items-center gap-2">
+                <h2 className="font-serif text-lg text-destructive">Run failed</h2>
+                <span className="rounded-sm bg-destructive/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-destructive">
+                  {parsed.kind.toLowerCase().replace("_", " ")}
+                </span>
+              </div>
+              <p className="mt-2 text-sm text-foreground/80">{parsed.message}</p>
+              <p className="mt-1 text-xs text-muted-foreground">{hintForKind(parsed.kind)}</p>
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                {canRetry && (
+                  <Button size="sm" className="gap-2" onClick={onRetry} disabled={retrying}>
+                    {retrying ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <RotateCcw className="h-3.5 w-3.5" />
+                    )}
+                    {retrying ? "Retrying…" : "Retry"}
+                  </Button>
+                )}
+                <Link to="/">
+                  <Button variant="outline" size="sm" className="gap-2">
+                    New experiment
+                  </Button>
+                </Link>
+              </div>
+            </div>
+          );
+        })()}
 
         {inFlight && stalled && (
           <div className="mb-6 rounded-md border border-warning/40 bg-warning/10 p-4 no-print">
