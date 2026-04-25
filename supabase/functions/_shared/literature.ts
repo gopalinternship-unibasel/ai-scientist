@@ -126,27 +126,27 @@ async function searchPubMed(q: string): Promise<LitPaper[]> {
   if (!uRes.ok) return [];
   const uJson = await uRes.json();
   const result = uJson.result ?? {};
-  return ids
-    .map((id) => {
-      const r = result[id];
-      if (!r) return null;
-      const doi: string | undefined = (r.articleids ?? [])
-        // deno-lint-ignore no-explicit-any
-        .find((a: any) => a.idtype === "doi")?.value?.toLowerCase();
-      return {
-        source: "pubmed" as const,
-        externalId: doi ?? `pmid:${id}`,
-        title: r.title ?? "",
-        abstract: null, // esummary doesn't include abstract; fetch is expensive — skip
-        year: r.pubdate ? parseInt(String(r.pubdate).slice(0, 4), 10) || null : null,
-        // deno-lint-ignore no-explicit-any
-        authors: (r.authors ?? []).slice(0, 5).map((a: any) => a.name),
-        venue: r.fulljournalname ?? r.source ?? null,
-        citationCount: null,
-        url: doi ? `https://doi.org/${doi}` : `https://pubmed.ncbi.nlm.nih.gov/${id}/`,
-      };
-    })
-    .filter((x): x is LitPaper => x !== null);
+  const out: LitPaper[] = [];
+  for (const id of ids) {
+    const r = result[id];
+    if (!r) continue;
+    const doi: string | undefined = (r.articleids ?? [])
+      // deno-lint-ignore no-explicit-any
+      .find((a: any) => a.idtype === "doi")?.value?.toLowerCase();
+    out.push({
+      source: "pubmed",
+      externalId: doi ?? `pmid:${id}`,
+      title: r.title ?? "",
+      abstract: null,
+      year: r.pubdate ? parseInt(String(r.pubdate).slice(0, 4), 10) || null : null,
+      // deno-lint-ignore no-explicit-any
+      authors: (r.authors ?? []).slice(0, 5).map((a: any) => a.name),
+      venue: r.fulljournalname ?? r.source ?? null,
+      citationCount: null,
+      url: doi ? `https://doi.org/${doi}` : `https://pubmed.ncbi.nlm.nih.gov/${id}/`,
+    });
+  }
+  return out;
 }
 
 /** Normalise a title for fuzzy dedup keying. */
