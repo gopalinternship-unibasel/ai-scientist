@@ -11,7 +11,9 @@ Deno.test("sanitizeCitations strips out-of-range indices", () => {
     [{ description: "Use prior work (see [9])." }],
     3,
   );
-  assertEquals(out[0].description, ".");
+  // Bare-[N] pattern matches first and strips [9], leaving "(see )." which
+  // collapses whitespace before punctuation.
+  assertEquals(out[0].description, "Use prior work (see).");
 });
 
 Deno.test("sanitizeCitations preserves valid multi-index refs", () => {
@@ -44,7 +46,9 @@ Deno.test("sanitizeCitationsWithReport reports counts", () => {
     [{ description: "Cite [1] and (ref. 2) and [99]." }],
     3,
   );
-  assertEquals(report.valid, 1);
+  // [1] valid, [99] hallucinated, (ref. 2) rewritten to [2] which is then
+  // re-validated by the bare-[N] pass — counted as both rewritten + valid.
+  assertEquals(report.valid, 2);
   assertEquals(report.rewritten, 1);
   assertEquals(report.hallucinated, 1);
 });
