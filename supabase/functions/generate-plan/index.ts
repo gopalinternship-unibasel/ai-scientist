@@ -144,20 +144,50 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const { hypothesis, references } = await req.json();
-    if (!hypothesis || typeof hypothesis !== "string") {
+    const { hypothesis: rawHypothesis, references: rawReferences } = await req.json();
+    if (!rawHypothesis || typeof rawHypothesis !== "string") {
       return new Response(JSON.stringify({ error: "hypothesis is required" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+    if (rawHypothesis.length < 10 || rawHypothesis.length > 2000) {
+      return new Response(JSON.stringify({ error: "Hypothesis must be 10-2000 characters." }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const stripCtl = (s: string) => s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
+    const hypothesis = stripCtl(rawHypothesis).trim();
 
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
+    if (!LOVABLE_API_KEY) {
+      console.error("LOVABLE_API_KEY is not configured");
+      return new Response(JSON.stringify({ error: "Service is not configured" }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
-    const refContext = Array.isArray(references) && references.length
-      ? `\n\nKNOWN RELATED WORK (use to ground the protocol; cite by title in step sources where appropriate):\n${references
-          .map((r: any, i: number) => `[${i + 1}] ${r.title} (${r.year ?? "n.d."}) — ${r.url ?? ""}`)
+    // Sanitize references: cap array length, validate field shapes, truncate strings.
+    const safeReferences = Array.isArray(rawReferences)
+      ? rawReferences.slice(0, 10).flatMap((r: any) => {
+          if (!r || typeof r !== "object") return [];
+          const title = typeof r.title === "string" ? stripCtl(r.title).slice(0, 200) : "";
+          if (!title) return [];
+          const year = typeof r.year === "number" && Number.isFinite(r.year) ? r.year : null;
+          let url: string | null = null;
+          if (typeof r.url === "string") {
+            const u = stripCtl(r.url).slice(0, 500);
+            if (/^https?:\/\//i.test(u)) url = u;
+          }
+          return [{ title, year, url }];
+        })
+      : [];
+
+    const refContext = safeReferences.length
+      ? `\n\nKNOWN RELATED WORK (use to ground the protocol; cite by title in step sources where appropriate):\n${safeReferences
+          .map((r, i) => `[${i + 1}] ${r.title} (${r.year ?? "n.d."}) — ${r.url ?? ""}`)
           .join("\n")}`
       : "";
 
@@ -234,7 +264,7 @@ REQUIREMENTS:
     });
   } catch (e) {
     console.error("generate-plan error", e);
-    return new Response(JSON.stringify({ error: e instanceof Error ? e.message : "Unknown error" }), {
+    return new Response(JSON.stringify({ error: "Internal server error" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
