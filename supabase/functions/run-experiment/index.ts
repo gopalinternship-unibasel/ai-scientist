@@ -660,13 +660,20 @@ serve(async (req) => {
             // overlap floor — those are noise and would mislead the
             // classifier into surfacing irrelevant references.
             const ranked = rankByRelevance(lit.papers, hypothesis);
-            const RELEVANCE_FLOOR = 0.015; // tuned for OpenAlex title-abstract hits
+            // Canonical techniques (PCR, Western blot, ELISA, …) are by
+            // definition textbook protocols. Their full hypothesis sentence
+            // often produces low Jaccard overlap with methods papers (whose
+            // titles use formal phrasing). For these, we accept a much lower
+            // relevance floor — the canonical detector is itself the strong
+            // signal of "exact match", and we just need *some* on-topic refs.
+            const RELEVANCE_FLOOR = canon.matched ? 0.005 : 0.015;
             const filtered = ranked.filter((p) => p.relevance >= RELEVANCE_FLOOR);
             const candidates: LitPaper[] = (filtered.length > 0 ? filtered : ranked).slice(0, 8);
             console.log(JSON.stringify({
               run_id: runId, step: "lit_rerank",
               raw: lit.papers.length, kept: candidates.length,
               top_score: ranked[0]?.relevance ?? 0,
+              canonical: canon.matched ? canon.technique : null,
             }));
 
             const verdict = await classifyNovelty(hypothesis, candidates, LOVABLE_API_KEY);
@@ -674,11 +681,11 @@ serve(async (req) => {
               verdict.rationale = "All literature sources rate-limited or unreachable. Treating as unknown novelty.";
             }
 
-            // Canonical-technique override: only force `exact_match` when at
-            // least one returned paper is genuinely on-topic (top relevance
-            // above floor). Otherwise leave the classifier verdict alone.
+            // Canonical-technique override: when the technique is textbook
+            // and we have ANY literature hits at all, force `exact_match`.
+            // The references list will hold the best-ranked candidates.
             const topRelevance = ranked[0]?.relevance ?? 0;
-            if (canon.matched && topRelevance >= RELEVANCE_FLOOR && verdict.signal !== "exact_match") {
+            if (canon.matched && candidates.length > 0 && verdict.signal !== "exact_match") {
               console.log(JSON.stringify({ run_id: runId, step: "canonical_override", technique: canon.technique, prev_signal: verdict.signal, top_relevance: topRelevance }));
               verdict.signal = "exact_match";
               verdict.semantic_overlap = "high";
