@@ -79,7 +79,7 @@ const Index = () => {
             </span>
           </div>
           <div className="flex items-center gap-2">
-            {(stage === "done" || stage !== "input") && (
+            {stage !== "input" && (
               <Button variant="ghost" size="sm" onClick={reset} className="gap-2">
                 <RotateCcw className="h-3.5 w-3.5" />
                 New experiment
