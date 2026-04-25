@@ -660,7 +660,7 @@ serve(async (req) => {
             // overlap floor — those are noise and would mislead the
             // classifier into surfacing irrelevant references.
             const ranked = rankByRelevance(lit.papers, hypothesis);
-            const RELEVANCE_FLOOR = 0.04;
+            const RELEVANCE_FLOOR = 0.015; // tuned for OpenAlex title-abstract hits
             const filtered = ranked.filter((p) => p.relevance >= RELEVANCE_FLOOR);
             const candidates: LitPaper[] = (filtered.length > 0 ? filtered : ranked).slice(0, 8);
             console.log(JSON.stringify({
