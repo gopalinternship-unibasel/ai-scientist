@@ -236,7 +236,7 @@ async function classifyNovelty(hypothesis: string, papers: S2Paper[], apiKey: st
   const condensed = papers.slice(0, 8).map((p, i) => ({
     i, title: p.title, year: p.year, venue: p.venue, abstract: (p.abstract ?? "").slice(0, 600),
   }));
-  const aiRes = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+  const aiRes = await fetchWithRetry("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
