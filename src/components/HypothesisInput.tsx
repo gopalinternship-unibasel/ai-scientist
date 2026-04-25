@@ -1,9 +1,8 @@
 import { useMemo, useState } from "react";
-import { ArrowRight, Check, Loader2, Sparkles } from "lucide-react";
+import { ArrowRight, Loader2, Sparkles } from "lucide-react";
 import { SAMPLE_HYPOTHESES } from "@/lib/samples";
 import { Button } from "@/components/ui/button";
 import { checkHypothesis } from "@/lib/hypothesisValidation";
-import { cn } from "@/lib/utils";
 
 interface Props {
   onSubmit: (hypothesis: string) => void;
@@ -80,28 +79,8 @@ export const HypothesisInput = ({ onSubmit, loading }: Props) => {
         </div>
       </div>
 
-      {/* Live validation checklist — only after the user has typed something */}
-      {value.trim().length > 0 && (
-        <div className="mt-3 rounded-md border border-rule bg-paper/60 px-3.5 py-2.5">
-          <div className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-            A strong hypothesis includes
-          </div>
-          <ul className="grid gap-1 text-[12px] sm:grid-cols-2">
-            <Requirement met={check.signals.hasMultipleWords && check.signals.longEnough}>
-              A full sentence
-            </Requirement>
-            <Requirement met={check.signals.hasIntervention}>
-              An intervention or comparison
-            </Requirement>
-            <Requirement met={check.signals.hasMeasurableOutcome}>
-              A measurable outcome
-            </Requirement>
-            <Requirement met={check.ok}>Ready to generate</Requirement>
-          </ul>
-          {touched && !check.ok && check.reason && (
-            <p className="mt-2 text-[12px] text-foreground/70">{check.reason}</p>
-          )}
-        </div>
+      {touched && !check.ok && check.reason && (
+        <p className="mt-3 text-[12px] text-foreground/70">{check.reason}</p>
       )}
 
       <div className="mt-7">
@@ -135,22 +114,4 @@ export const HypothesisInput = ({ onSubmit, loading }: Props) => {
   );
 };
 
-const Requirement = ({ met, children }: { met: boolean; children: React.ReactNode }) => (
-  <li className="flex items-center gap-1.5">
-    <span
-      className={cn(
-        "flex h-3.5 w-3.5 items-center justify-center rounded-full border transition-colors",
-        met
-          ? "border-accent bg-accent/15 text-accent"
-          : "border-foreground/20 bg-transparent text-transparent",
-      )}
-      aria-hidden
-    >
-      <Check className="h-2.5 w-2.5" strokeWidth={3} />
-    </span>
-    <span className={cn("transition-colors", met ? "text-foreground" : "text-muted-foreground")}>
-      {children}
-    </span>
-  </li>
-);
 
