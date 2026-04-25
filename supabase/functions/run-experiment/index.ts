@@ -426,7 +426,7 @@ serve(async (req) => {
 
           // 2) Plan generation (streamed)
           const refContext = references.length
-            ? `\n\nKNOWN RELATED WORK:\n${references.map((r, i) => `[${i + 1}] ${r.title} (${r.year ?? "n.d."}) — ${r.url ?? ""}`).join("\n")}`
+            ? `\n\nKNOWN RELATED WORK:\n${references.map((r: Reference, i: number) => `[${i + 1}] ${r.title} (${r.year ?? "n.d."}) — ${r.url ?? ""}`).join("\n")}`
             : "";
 
           const system = `You are a senior scientist at a Contract Research Organisation. You convert a hypothesis into a complete, operationally realistic experiment plan that a real lab could pick up Monday and start running by Friday.
