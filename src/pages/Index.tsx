@@ -4,32 +4,21 @@ import { toast } from "sonner";
 import { Logo } from "@/components/Logo";
 import { UserMenu } from "@/components/UserMenu";
 import { HypothesisInput } from "@/components/HypothesisInput";
-import { LiteratureQCCard } from "@/components/LiteratureQCCard";
 import { GenerationProgress } from "@/components/GenerationProgress";
-import { StreamingPlanPreview } from "@/components/StreamingPlanPreview";
-import type { ExperimentPlan, LiteratureQC } from "@/lib/samples";
 import { startRunStream } from "@/lib/runStream";
 import { getOwnerToken } from "@/lib/owner";
-
-type Stage = "input" | "qc" | "plan";
+import { trackRun } from "@/hooks/useBackgroundRunNotifier";
 
 const Index = () => {
   const navigate = useNavigate();
-  const [stage, setStage] = useState<Stage>("input");
-  const [hypothesis, setHypothesis] = useState("");
-  const [qc, setQc] = useState<LiteratureQC | null>(null);
-  const [partialPlan, setPartialPlan] = useState<Partial<ExperimentPlan> | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   const handleSubmit = async (h: string) => {
-    setHypothesis(h);
-    setStage("qc");
-    setQc(null);
-    setPartialPlan(null);
+    setSubmitting(true);
 
     const controller = new AbortController();
     abortRef.current = controller;
-    let runId: string | null = null;
 
     try {
       await startRunStream({
@@ -39,29 +28,19 @@ const Index = () => {
         onEvent: (e) => {
           switch (e.type) {
             case "run":
-              runId = e.id;
               if (e.cached) toast.success("Found a cached plan for this hypothesis ✦");
-              // Resume on reconnect: as soon as the run row exists in the DB,
-              // navigate to its detail page. RunPage subscribes to realtime
-              // updates so the user sees identical streaming output and can
-              // safely close this tab without losing the in-flight generation.
+              // Track this run so the user gets pinged if they navigate away
+              // before it finishes (the actual stream keeps running on the server).
+              trackRun({ id: e.id, hypothesis: h });
+              // Resume on reconnect: hand off to RunPage immediately. The run
+              // continues server-side regardless of whether this tab stays open.
               navigate(`/runs/${e.id}`);
-              break;
-            case "qc":
-              setQc(e.qc);
-              setStage("plan");
-              break;
-            case "progress":
-              if (e.partial) setPartialPlan(e.partial);
-              break;
-            case "plan":
-            case "done":
-              if (runId) navigate(`/runs/${runId}`);
               break;
             case "error":
               toast.error(e.message);
-              setStage("input");
+              setSubmitting(false);
               break;
+            // qc / progress / plan / done are handled by RunPage via realtime now.
           }
         },
       });
@@ -69,12 +48,10 @@ const Index = () => {
       if ((err as Error).name !== "AbortError") {
         console.error(err);
         toast.error("Connection failed. Please retry.");
-        setStage("input");
+        setSubmitting(false);
       }
     }
   };
-
-  const loading = stage === "qc" || stage === "plan";
 
   return (
     <div className="min-h-screen bg-background">
@@ -91,7 +68,7 @@ const Index = () => {
       </header>
 
       <main className="container max-w-4xl py-8 md:py-12">
-        {stage === "input" && (
+        {!submitting && (
           <section className="mb-10 max-w-3xl animate-fade-in">
             <div className="mb-3 flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.25em] text-muted-foreground">
               <span className="h-px w-6 bg-rule" />
@@ -113,30 +90,12 @@ const Index = () => {
           </section>
         )}
 
-        {stage !== "input" && (
-          <div className="mb-6 flex items-center gap-3 text-sm">
-            <StageDot active label="Hypothesis" />
-            <Connector />
-            <StageDot active label="Literature QC" />
-            <Connector />
-            <StageDot active={stage === "plan"} label="Experiment Plan" />
-          </div>
-        )}
-
-        {stage !== "input" && hypothesis && (
-          <div className="mb-6 rounded-md border-l-2 border-accent bg-paper p-4">
-            <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-              Hypothesis
-            </div>
-            <p className="mt-1 font-serif italic text-foreground/90">{hypothesis}</p>
-          </div>
-        )}
-
         <div className="space-y-6">
-          {stage === "input" && <HypothesisInput onSubmit={handleSubmit} loading={loading} />}
-          {qc && <LiteratureQCCard qc={qc} />}
-          {stage === "qc" && !qc && <GenerationProgress stage="qc" />}
-          {stage === "plan" && qc && <StreamingPlanPreview partial={partialPlan} />}
+          {!submitting ? (
+            <HypothesisInput onSubmit={handleSubmit} loading={submitting} />
+          ) : (
+            <GenerationProgress stage="qc" />
+          )}
         </div>
       </main>
 
@@ -158,16 +117,5 @@ const Index = () => {
     </div>
   );
 };
-
-const StageDot = ({ active, label }: { active: boolean; label: string }) => (
-  <div className="flex items-center gap-2">
-    <span className={`h-2 w-2 rounded-full transition-colors ${active ? "bg-accent" : "bg-rule"}`} />
-    <span className={`font-mono text-[10px] uppercase tracking-[0.18em] ${active ? "text-foreground" : "text-muted-foreground"}`}>
-      {label}
-    </span>
-  </div>
-);
-
-const Connector = () => <span className="h-px w-8 bg-rule" />;
 
 export default Index;
