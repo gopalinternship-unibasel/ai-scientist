@@ -86,14 +86,21 @@ export async function gateHypothesis(hypothesis: string, apiKey: string): Promis
       is_hypothesis: boolean; category: string; reason?: string; suggestion?: string;
     };
 
-    // Only the clearly-bad categories are blocked. "vague_research_goal"
-    // passes through — the planner can handle it.
-    const HARD_REJECT = new Set(["personal_chatter", "off_topic", "instruction_to_ai", "gibberish"]);
+    // Block clearly-bad categories AND vague-research-goals (cannot be
+    // operationalised into a single experiment without invented scope).
+    const HARD_REJECT = new Set([
+      "personal_chatter", "off_topic", "instruction_to_ai", "gibberish", "vague_research_goal",
+    ]);
     if (!parsed.is_hypothesis && HARD_REJECT.has(parsed.category)) {
+      const isVague = parsed.category === "vague_research_goal";
       return {
         ok: false,
-        reason: parsed.reason || "That doesn't look like a testable scientific hypothesis.",
-        suggestion: parsed.suggestion || "Rewrite it as: 'In [system], applying [intervention] will produce [measurable outcome] compared to [control].'",
+        reason: parsed.reason || (isVague
+          ? "That goal is too broad to design a single experiment around."
+          : "That doesn't look like a testable scientific hypothesis."),
+        suggestion: parsed.suggestion || (isVague
+          ? "Narrow it down: pick ONE intervention (a specific drug, gene, material, or method) and ONE system (cell line, organism, model) — e.g. 'Does drug X reduce tumor growth in MCF-7 xenografts?'"
+          : "Rewrite it as: 'In [system], applying [intervention] will produce [measurable outcome] compared to [control].'"),
       };
     }
     return { ok: true };
