@@ -49,6 +49,7 @@ export type Database = {
           plan: Json | null
           qc: Json | null
           refinement_instruction: string | null
+          share_token: string | null
           status: Database["public"]["Enums"]["run_status"]
           updated_at: string
           version: number
@@ -66,6 +67,7 @@ export type Database = {
           plan?: Json | null
           qc?: Json | null
           refinement_instruction?: string | null
+          share_token?: string | null
           status?: Database["public"]["Enums"]["run_status"]
           updated_at?: string
           version?: number
@@ -83,6 +85,7 @@ export type Database = {
           plan?: Json | null
           qc?: Json | null
           refinement_instruction?: string | null
+          share_token?: string | null
           status?: Database["public"]["Enums"]["run_status"]
           updated_at?: string
           version?: number
