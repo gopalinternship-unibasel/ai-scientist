@@ -15,6 +15,7 @@ import { gateHypothesis } from "../_shared/hypothesisGate.ts";
 import { findCatalogIssues } from "../_shared/catalogCheck.ts";
 import { checkFeasibility } from "../_shared/feasibilityCheck.ts";
 import { detectCanonicalTechnique } from "../_shared/canonicalTechniques.ts";
+import { rankByRelevance } from "../_shared/relevanceRank.ts";
 
 const planSchema = {
   type: "object",
