@@ -3,8 +3,10 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { COST_CATALOG_PROMPT } from "./cost-catalog.ts";
 import { corsHeaders } from "../_shared/cors.ts";
 import { fetchWithRetry } from "../_shared/fetch-with-retry.ts";
-import { sanitizeCitations } from "../_shared/citations.ts";
+import { sanitizeCitationsWithReport } from "../_shared/citations.ts";
 import { checkHypothesis } from "../_shared/hypothesisValidation.ts";
+import { searchLiterature, type LitPaper } from "../_shared/literature.ts";
+import { screenSafety, safetyPromptFragment } from "../_shared/safety.ts";
 
 const planSchema = {
   type: "object",
@@ -93,6 +95,40 @@ const planSchema = {
       required: ["approach", "primary_metric", "controls"],
       additionalProperties: false,
     },
+    statistical_design: {
+      type: "object",
+      description: "Structured statistical design — required for reviewer scrutiny.",
+      properties: {
+        n_per_group: { type: "integer", minimum: 1 },
+        groups: { type: "array", items: { type: "string" } },
+        primary_test: { type: "string" },
+        effect_size: { type: "string" },
+        alpha: { type: "number" },
+        power: { type: "number" },
+        randomization: { type: "string" },
+        blinding: { type: "string" },
+        notes: { type: "string" },
+      },
+      required: ["n_per_group", "groups", "primary_test", "effect_size", "alpha", "power", "randomization", "blinding"],
+      additionalProperties: false,
+    },
+    safety: {
+      type: "object",
+      description: "Safety / regulatory section. Address each flagged category from the SAFETY PRE-SCREEN.",
+      properties: {
+        biosafety_level: { type: "string", enum: ["BSL-1", "BSL-2", "BSL-3", "BSL-4", "Not applicable"] },
+        irb_required: { type: "boolean" },
+        iacuc_required: { type: "boolean" },
+        ibc_required: { type: "boolean" },
+        controlled_substances: { type: "boolean" },
+        hazards: { type: "array", items: { type: "string" } },
+        ppe: { type: "array", items: { type: "string" } },
+        waste_handling: { type: "string" },
+        emergency_procedure: { type: "string" },
+      },
+      required: ["biosafety_level", "irb_required", "iacuc_required", "ibc_required", "controlled_substances", "hazards", "ppe", "waste_handling", "emergency_procedure"],
+      additionalProperties: false,
+    },
     risks: {
       type: "array",
       items: {
@@ -114,7 +150,8 @@ const planSchema = {
   },
   required: [
     "title", "domain", "summary", "hypothesis_restated", "success_criteria",
-    "protocol", "materials", "budget", "timeline", "validation", "risks", "team",
+    "protocol", "materials", "budget", "timeline", "validation",
+    "statistical_design", "safety", "risks", "team",
   ],
   additionalProperties: false,
 } as const;
@@ -146,18 +183,6 @@ const critiqueSchema = {
   additionalProperties: false,
 } as const;
 
-interface S2Paper {
-  paperId: string;
-  title: string;
-  abstract?: string | null;
-  year?: number | null;
-  authors?: { name: string }[];
-  venue?: string | null;
-  citationCount?: number | null;
-  url?: string | null;
-  externalIds?: Record<string, string> | null;
-}
-
 const stripCtl = (s: string) => s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
 
 // Stable hash of a normalised hypothesis for caching.
@@ -168,40 +193,40 @@ async function hashHypothesis(h: string): Promise<string> {
 }
 
 // fetchWithRetry now lives in ../_shared/fetch-with-retry.ts
+// searchLiterature (multi-source: S2 + OpenAlex + PubMed) lives in ../_shared/literature.ts
 
-async function searchSemanticScholar(query: string): Promise<{ papers: S2Paper[]; rateLimited: boolean }> {
-  const q = query.replace(/\s+/g, " ").trim().slice(0, 280);
-  const url = new URL("https://api.semanticscholar.org/graph/v1/paper/search");
-  url.searchParams.set("query", q);
-  url.searchParams.set("limit", "8");
-  url.searchParams.set("fields", "title,abstract,year,authors.name,venue,citationCount,url,externalIds");
-
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const res = await fetch(url.toString(), { headers: { "User-Agent": "AI-Scientist/1.0 (Lovable)" } });
-    if (res.ok) {
-      const json = await res.json();
-      return { papers: (json.data ?? []) as S2Paper[], rateLimited: false };
-    }
-    if (res.status === 429) { await new Promise((r) => setTimeout(r, 1500 * (attempt + 1))); continue; }
-    return { papers: [], rateLimited: false };
-  }
-  return { papers: [], rateLimited: true };
-}
-
-async function classifyNovelty(hypothesis: string, papers: S2Paper[], apiKey: string) {
+/**
+ * Two-pass novelty classifier.
+ *
+ * Pass 1 ("keyword/method overlap"): the original classifier — picks the most
+ * relevant references and gives a coarse signal.
+ *
+ * Pass 2 ("semantic equivalence"): a stricter rubric that asks whether any
+ * cited paper tests *the same scientific claim* as the hypothesis (even with
+ * different wording, model systems, or measurement methods). This catches the
+ * "I reinvented X" failure mode that pure keyword overlap misses.
+ */
+async function classifyNovelty(hypothesis: string, papers: LitPaper[], apiKey: string) {
   if (papers.length === 0) {
-    return { signal: "not_found" as const, rationale: "No related work surfaced via Semantic Scholar.", chosen: [] as number[] };
+    return {
+      signal: "not_found" as const,
+      rationale: "No related work surfaced via Semantic Scholar, OpenAlex, or PubMed.",
+      chosen: [] as number[],
+      semantic_overlap: "low" as const,
+    };
   }
   const condensed = papers.slice(0, 8).map((p, i) => ({
-    i, title: p.title, year: p.year, venue: p.venue, abstract: (p.abstract ?? "").slice(0, 600),
+    i, title: p.title, year: p.year, venue: p.venue, source: p.source,
+    abstract: (p.abstract ?? "").slice(0, 600),
   }));
+
   const aiRes = await fetchWithRetry("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model: "google/gemini-3-flash-preview",
       messages: [
-        { role: "system", content: "You are a research librarian assessing novelty. Choose 1-3 most relevant papers." },
+        { role: "system", content: "You are a research librarian. Assess novelty in TWO ways: (1) keyword/method overlap (signal: not_found / similar / exact_match), and (2) SEMANTIC EQUIVALENCE — does any candidate test the SAME scientific claim as the hypothesis even with different wording, model systems, or measurements? Pick 1-3 most relevant papers." },
         { role: "user", content: `HYPOTHESIS:\n${hypothesis}\n\nCANDIDATES:\n${JSON.stringify(condensed)}` },
       ],
       tools: [{
@@ -214,8 +239,13 @@ async function classifyNovelty(hypothesis: string, papers: S2Paper[], apiKey: st
               signal: { type: "string", enum: ["not_found", "similar", "exact_match"] },
               rationale: { type: "string" },
               chosen: { type: "array", items: { type: "integer" } },
+              semantic_overlap: {
+                type: "string",
+                enum: ["low", "medium", "high"],
+                description: "high = a candidate tests the same scientific claim (even if worded differently); medium = closely adjacent; low = clearly different question.",
+              },
             },
-            required: ["signal", "rationale", "chosen"],
+            required: ["signal", "rationale", "chosen", "semantic_overlap"],
             additionalProperties: false,
           },
         },
@@ -224,13 +254,13 @@ async function classifyNovelty(hypothesis: string, papers: S2Paper[], apiKey: st
     }),
   }, { label: "novelty-classify" });
   if (!aiRes.ok) {
-    return { signal: "similar" as const, rationale: "Classification unavailable; defaulting to similar work exists.", chosen: [0, 1, 2] };
+    return { signal: "similar" as const, rationale: "Classification unavailable; defaulting to similar work exists.", chosen: [0, 1, 2], semantic_overlap: "medium" as const };
   }
   try {
     const aiJson = await aiRes.json();
     return JSON.parse(aiJson.choices[0].message.tool_calls[0].function.arguments);
   } catch {
-    return { signal: "similar" as const, rationale: "Unable to parse classification.", chosen: [0, 1, 2] };
+    return { signal: "similar" as const, rationale: "Unable to parse classification.", chosen: [0, 1, 2], semantic_overlap: "medium" as const };
   }
 }
 
@@ -494,40 +524,56 @@ serve(async (req) => {
             return;
           }
 
-          // 1) Literature QC — skip when refining (reuse parent's QC).
+          // 1) Literature QC — multi-source (S2 + OpenAlex + PubMed) + semantic novelty.
+          //    Skip when refining (reuse parent's QC).
           let references: Reference[] = [];
-          let qc: { signal: string; rationale: string; references: Reference[] };
+          let qc: {
+            signal: string;
+            rationale: string;
+            references: Reference[];
+            sources_used?: { s2: boolean; openalex: boolean; pubmed: boolean };
+            semantic_overlap?: "low" | "medium" | "high";
+          };
           if (isRefinement && parentRun?.qc) {
             qc = parentRun.qc as typeof qc;
             references = qc.references ?? [];
             send("qc", qc);
             await supabase.from("runs").update({ status: "plan" }).eq("id", runId);
           } else {
-            const { papers, rateLimited } = await searchSemanticScholar(hypothesis);
-            const verdict = await classifyNovelty(hypothesis, papers, LOVABLE_API_KEY);
-            if (rateLimited && papers.length === 0) {
-              verdict.rationale = "Semantic Scholar is rate-limiting requests. Treating as unknown novelty.";
+            const lit = await searchLiterature(hypothesis);
+            const verdict = await classifyNovelty(hypothesis, lit.papers, LOVABLE_API_KEY);
+            if (lit.rateLimited && lit.papers.length === 0) {
+              verdict.rationale = "All literature sources rate-limited or unreachable. Treating as unknown novelty.";
             }
             references = (verdict.chosen ?? [])
-              .map((i: number) => papers[i]).filter(Boolean).slice(0, 3)
-              .map((p: S2Paper) => ({
+              .map((i: number) => lit.papers[i]).filter(Boolean).slice(0, 3)
+              .map((p: LitPaper) => ({
                 title: p.title,
                 year: p.year,
-                authors: (p.authors ?? []).slice(0, 4).map((a) => a.name),
+                authors: p.authors,
                 venue: p.venue,
                 citationCount: p.citationCount,
-                url: p.url ?? (p.externalIds?.DOI
-                  ? `https://doi.org/${p.externalIds.DOI}`
-                  : `https://www.semanticscholar.org/paper/${p.paperId}`),
+                url: p.url,
+                source: p.source,
               }));
-            qc = { signal: verdict.signal, rationale: verdict.rationale, references };
+            qc = {
+              signal: verdict.signal,
+              rationale: verdict.rationale,
+              references,
+              sources_used: lit.sources,
+              semantic_overlap: verdict.semantic_overlap,
+            };
             await supabase.from("runs").update({ qc, status: "plan" }).eq("id", runId);
             send("qc", qc);
           }
 
+          // Deterministic safety pre-screen — feeds into the planner prompt so
+          // the resulting plan addresses regulatory / containment requirements.
+          const safetyFlags = screenSafety(hypothesis);
+
           // 2) Plan generation (streamed)
           const refContext = references.length
-            ? `\n\nKNOWN RELATED WORK (cite inline as [1], [2], [3] in the protocol description field where relevant):\n${references.map((r: Reference, i: number) => `[${i + 1}] ${r.title} (${r.year ?? "n.d."}) — ${r.url ?? ""}`).join("\n")}`
+            ? `\n\nKNOWN RELATED WORK — use ONLY the strict canonical citation format:\n  • Bare reference:   [N]\n  • Multiple refs:    (see [N, M])\n  • DO NOT use any other form ((ref. 1), [ref. 1], (1), etc.)\n${references.map((r: Reference, i: number) => `[${i + 1}] ${r.title} (${r.year ?? "n.d."}) — ${r.url ?? ""}`).join("\n")}`
             : "";
 
           const refinementContext = isRefinement
@@ -541,12 +587,16 @@ REQUIREMENTS:
 - Materials must include real suppliers (Sigma-Aldrich, Thermo Fisher, Promega, Qiagen, IDT, ATCC, Addgene) with plausible catalog numbers.
 - Budget MUST be anchored to the REFERENCE COST CATALOG below — do not invent prices that are wildly off (>20%).
 - Budget total MUST equal the sum of line items, and line items must roughly equal materials subtotal + labour + equipment + overhead.
-- For each protocol step, where a reference [N] is relevant, append "(see [N])" to the description text. Be conservative — only cite where the reference truly supports the step.
+- CITATIONS: Use ONLY the canonical format \`[N]\` (or \`(see [N, M])\` for multiples). N must be a 1-based index into the KNOWN RELATED WORK list. Never invent reference numbers; never use prose forms like "(ref. 1)" or "(see reference 1)".
 - Timeline must be phased with explicit dependencies.
-- Validation must specify primary metric, controls, and statistical plan (n, test, alpha, power calculation).
+- The 'validation' section gives the qualitative approach.
+- The 'statistical_design' section MUST be filled with a real power calculation: n_per_group justified by effect_size, alpha (typically 0.05), power (typically 0.8), randomization scheme, blinding strategy.
+- The 'safety' section MUST be filled — biosafety_level, IRB/IACUC/IBC requirements, controlled substances, hazards, PPE, waste handling, emergency procedure. Address every category flagged in the SAFETY PRE-SCREEN below.
 - Risks must be specific, not generic.
 - Be precise. Use exact concentrations, volumes, durations.
+${safetyPromptFragment(safetyFlags)}
 ${COST_CATALOG_PROMPT}`;
+
 
           // Streaming plan generation. Retry on transient errors but only on the
           // initial connect — once tokens are flowing we cannot resume mid-stream.
@@ -640,12 +690,16 @@ ${COST_CATALOG_PROMPT}`;
             return;
           }
 
-          // Validate inline citations against the actual reference list — strip
-          // hallucinated [N] indices that don't map to a real paper.
+          // Validate + normalise inline citations against the reference list.
+          // Strips hallucinated [N] indices and rewrites prose forms to canonical [N].
           // deno-lint-ignore no-explicit-any
           const planObj = plan as any;
           if (planObj && Array.isArray(planObj.protocol)) {
-            planObj.protocol = sanitizeCitations(planObj.protocol, references.length);
+            const { steps, report } = sanitizeCitationsWithReport(planObj.protocol, references.length);
+            planObj.protocol = steps;
+            if (report.hallucinated > 0 || report.rewritten > 0) {
+              console.log("citation-sanitize", JSON.stringify({ run_id: runId, ...report, refs: references.length }));
+            }
           }
 
           await supabase.from("runs").update({ plan: planObj, status: "done" }).eq("id", runId);

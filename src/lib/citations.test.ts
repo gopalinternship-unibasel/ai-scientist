@@ -20,7 +20,7 @@ describe("sanitizeCitations", () => {
 
   it("strips citations that exceed the literature count", () => {
     const steps = [{ description: "Bogus claim (see [9])." }];
-    expect(sanitizeCitations(steps, 3)[0].description).toBe("Bogus claim .");
+    expect(sanitizeCitations(steps, 3)[0].description).toBe("Bogus claim.");
   });
 
   it("filters partially valid groups, keeping only in-range indices", () => {
@@ -30,7 +30,7 @@ describe("sanitizeCitations", () => {
 
   it("ignores non-numeric junk inside brackets", () => {
     const steps = [{ description: "Claim (see [foo, bar])." }];
-    expect(sanitizeCitations(steps, 3)[0].description).toBe("Claim .");
+    expect(sanitizeCitations(steps, 3)[0].description).toBe("Claim.");
   });
 
   it("leaves steps without a description untouched", () => {
@@ -41,5 +41,22 @@ describe("sanitizeCitations", () => {
   it("collapses runs of whitespace left by stripped citations", () => {
     const steps = [{ description: "Before  (see [99])  after." }];
     expect(sanitizeCitations(steps, 1)[0].description).toBe("Before after.");
+  });
+
+  it("rewrites prose '(ref. N)' into canonical [N]", () => {
+    const steps = [{ description: "As shown (ref. 2)." }];
+    expect(sanitizeCitations(steps, 3)[0].description).toBe("As shown [2].");
+  });
+
+  it("rewrites '[refs 1-3]' into a multi-index '(see [..])' form", () => {
+    const steps = [{ description: "Across [refs 1-3] studies." }];
+    expect(sanitizeCitations(steps, 3)[0].description).toBe(
+      "Across (see [1, 2, 3]) studies.",
+    );
+  });
+
+  it("validates bare '[N]' citations", () => {
+    const steps = [{ description: "Per [1] and [99]." }];
+    expect(sanitizeCitations(steps, 3)[0].description).toBe("Per [1] and.");
   });
 });

@@ -58,6 +58,36 @@ export type ExperimentPlan = {
     controls: string[];
     statistical_plan?: string;
   };
+  /**
+   * NEW (Batch B): structured statistical design so reviewers can sanity-check
+   * power before the experiment runs.
+   */
+  statistical_design?: {
+    n_per_group: number;
+    groups: string[];
+    primary_test: string;          // e.g. "two-sample t-test", "one-way ANOVA"
+    effect_size: string;           // e.g. "Cohen's d = 0.8"
+    alpha: number;
+    power: number;                 // 0-1
+    randomization: string;         // e.g. "block randomization, blocks of 4"
+    blinding: string;              // e.g. "single-blind", "double-blind", "open-label"
+    notes?: string;
+  };
+  /**
+   * NEW (Batch B): safety / regulatory section. Always present; flags map to
+   * the deterministic pre-screen done server-side.
+   */
+  safety?: {
+    biosafety_level: "BSL-1" | "BSL-2" | "BSL-3" | "BSL-4" | "Not applicable";
+    irb_required: boolean;
+    iacuc_required: boolean;
+    ibc_required: boolean;
+    controlled_substances: boolean;
+    hazards: string[];             // chemical / radiological / biological hazards
+    ppe: string[];                 // required PPE per step
+    waste_handling: string;
+    emergency_procedure: string;
+  };
   risks: { risk: string; mitigation: string }[];
   team: { role: string; fte: number }[];
 };
@@ -65,6 +95,10 @@ export type ExperimentPlan = {
 export type LiteratureQC = {
   signal: "not_found" | "similar" | "exact_match";
   rationale: string;
+  /** NEW (Batch B): which sources actually returned results for this query. */
+  sources_used?: { s2: boolean; openalex: boolean; pubmed: boolean };
+  /** NEW (Batch B): semantic-novelty signal computed independently of keyword overlap. */
+  semantic_overlap?: "low" | "medium" | "high";
   references: {
     title: string;
     year?: number | null;
@@ -72,6 +106,8 @@ export type LiteratureQC = {
     venue?: string | null;
     citationCount?: number | null;
     url?: string;
+    /** NEW (Batch B): which source surfaced this paper. */
+    source?: "s2" | "openalex" | "pubmed";
   }[];
 };
 
