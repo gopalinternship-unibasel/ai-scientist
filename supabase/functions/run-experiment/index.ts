@@ -15,6 +15,7 @@ import { gateHypothesis } from "../_shared/hypothesisGate.ts";
 import { findCatalogIssues } from "../_shared/catalogCheck.ts";
 import { checkFeasibility } from "../_shared/feasibilityCheck.ts";
 import { detectCanonicalTechnique } from "../_shared/canonicalTechniques.ts";
+import { rankByRelevance } from "../_shared/relevanceRank.ts";
 
 const planSchema = {
   type: "object",
@@ -235,8 +236,8 @@ async function classifyNovelty(hypothesis: string, papers: LitPaper[], apiKey: s
     buildBody: (model) => ({
       model,
       messages: [
-        { role: "system", content: "You are a research librarian. Assess novelty in TWO ways: (1) keyword/method overlap (signal: not_found / similar / exact_match), and (2) SEMANTIC EQUIVALENCE — does any candidate test the SAME scientific claim as the hypothesis even with different wording, model systems, or measurements? Pick 1-3 most relevant papers." },
-        { role: "user", content: `HYPOTHESIS:\n${hypothesis}\n\nCANDIDATES:\n${JSON.stringify(condensed)}` },
+        { role: "system", content: "You are a research librarian assessing whether a hypothesis has prior art. Use this rubric:\n  • exact_match  — at least one candidate tests essentially the same claim (same intervention + same system + same outcome direction), even with minor wording differences.\n  • similar     — at least one candidate shares the technique AND topic area but differs on system, organism, or specific intervention. Default to this when in doubt and any candidate is on-topic.\n  • not_found   — every candidate is clearly off-topic (different field, different question).\nAlso report semantic_overlap (low/medium/high). Pick 1–3 most-relevant indices in `chosen`. ONLY pick papers that are genuinely on-topic; if none of the candidates are relevant, return chosen:[] and signal:not_found." },
+        { role: "user", content: `HYPOTHESIS:\n${hypothesis}\n\nCANDIDATES (already pre-ranked by token overlap; index 0 is most overlapping):\n${JSON.stringify(condensed)}` },
       ],
       tools: [{
         type: "function",
@@ -646,31 +647,49 @@ serve(async (req) => {
             send("qc", qc);
             await supabase.from("runs").update({ status: "plan" }).eq("id", runId);
           } else {
-            const lit = await searchLiterature(hypothesis);
-            const verdict = await classifyNovelty(hypothesis, lit.papers, LOVABLE_API_KEY);
+            // For canonical techniques, prepend the technique name to bias
+            // the literature search toward methods papers.
+            const canon = detectCanonicalTechnique(hypothesis);
+            const litQuery = canon.matched
+              ? `${canon.technique} ${hypothesis}`
+              : hypothesis;
+            const lit = await searchLiterature(litQuery);
+
+            // Re-rank candidates by token overlap with the hypothesis BEFORE
+            // sending to the classifier. Drop anything below a minimum
+            // overlap floor — those are noise and would mislead the
+            // classifier into surfacing irrelevant references.
+            const ranked = rankByRelevance(lit.papers, hypothesis);
+            const RELEVANCE_FLOOR = 0.015; // tuned for OpenAlex title-abstract hits
+            const filtered = ranked.filter((p) => p.relevance >= RELEVANCE_FLOOR);
+            const candidates: LitPaper[] = (filtered.length > 0 ? filtered : ranked).slice(0, 8);
+            console.log(JSON.stringify({
+              run_id: runId, step: "lit_rerank",
+              raw: lit.papers.length, kept: candidates.length,
+              top_score: ranked[0]?.relevance ?? 0,
+            }));
+
+            const verdict = await classifyNovelty(hypothesis, candidates, LOVABLE_API_KEY);
             if (lit.rateLimited && lit.papers.length === 0) {
               verdict.rationale = "All literature sources rate-limited or unreachable. Treating as unknown novelty.";
             }
 
-            // Canonical-technique override: if the hypothesis describes a
-            // textbook protocol (PCR, Western blot, etc.) AND we got at least
-            // one literature hit, force `exact_match`. The LLM classifier
-            // tends to return `not_found` for these because no paper has the
-            // exact wording — but they're obviously not novel.
-            const canon = detectCanonicalTechnique(hypothesis);
-            if (canon.matched && lit.papers.length > 0 && verdict.signal !== "exact_match") {
-              console.log(JSON.stringify({ run_id: runId, step: "canonical_override", technique: canon.technique, prev_signal: verdict.signal }));
+            // Canonical-technique override: only force `exact_match` when at
+            // least one returned paper is genuinely on-topic (top relevance
+            // above floor). Otherwise leave the classifier verdict alone.
+            const topRelevance = ranked[0]?.relevance ?? 0;
+            if (canon.matched && topRelevance >= RELEVANCE_FLOOR && verdict.signal !== "exact_match") {
+              console.log(JSON.stringify({ run_id: runId, step: "canonical_override", technique: canon.technique, prev_signal: verdict.signal, top_relevance: topRelevance }));
               verdict.signal = "exact_match";
               verdict.semantic_overlap = "high";
               verdict.rationale = `${canon.rationale} ${verdict.rationale}`.trim();
-              // Ensure at least the top references are surfaced.
               if (!verdict.chosen || verdict.chosen.length === 0) {
-                verdict.chosen = lit.papers.slice(0, 3).map((_: LitPaper, i: number) => i);
+                verdict.chosen = candidates.slice(0, 3).map((_, i) => i);
               }
             }
 
             references = (verdict.chosen ?? [])
-              .map((i: number) => lit.papers[i]).filter(Boolean).slice(0, 3)
+              .map((i: number) => candidates[i]).filter(Boolean).slice(0, 3)
               .map((p: LitPaper) => ({
                 title: p.title,
                 year: p.year,
