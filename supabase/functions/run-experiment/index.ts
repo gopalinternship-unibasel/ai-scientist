@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { COST_CATALOG_PROMPT } from "./cost-catalog.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -306,7 +307,11 @@ serve(async (req) => {
 
   let runId: string | null = null;
   try {
-    const { hypothesis: rawHypothesis, owner_token } = await req.json();
+    const body = await req.json();
+    const { hypothesis: rawHypothesis, owner_token } = body;
+    const rawParentId: unknown = body.parent_run_id;
+    const rawRefinement: unknown = body.refinement_instruction;
+
     if (!rawHypothesis || typeof rawHypothesis !== "string") {
       return new Response(JSON.stringify({ error: "hypothesis is required" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -319,6 +324,13 @@ serve(async (req) => {
     }
     const hypothesis = stripCtl(rawHypothesis).trim();
     const ownerToken = typeof owner_token === "string" ? stripCtl(owner_token).slice(0, 100) : null;
+
+    // Optional refinement parameters (when refining a previous plan).
+    const parentRunId = typeof rawParentId === "string" && /^[0-9a-f-]{36}$/i.test(rawParentId)
+      ? rawParentId : null;
+    const refinementInstruction = typeof rawRefinement === "string" && rawRefinement.trim().length > 0
+      ? stripCtl(rawRefinement).trim().slice(0, 500) : null;
+    const isRefinement = !!(parentRunId && refinementInstruction);
 
     // Resolve user (optional)
     let userId: string | null = null;
@@ -347,13 +359,36 @@ serve(async (req) => {
       }), { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // Cache: if a previous run with the same hypothesis is done, return it as a new shareable run.
+    // Look up parent run (for refinement) and compute next version.
+    let parentRun: { plan: unknown; qc: unknown; version: number } | null = null;
+    let nextVersion = 1;
+    if (isRefinement) {
+      const { data: parent } = await supabase
+        .from("runs")
+        .select("plan, qc, version, hypothesis_hash")
+        .eq("id", parentRunId)
+        .maybeSingle();
+      if (parent && parent.plan) {
+        parentRun = { plan: parent.plan, qc: parent.qc, version: parent.version ?? 1 };
+        // Find max version in the chain (root + descendants).
+        const { data: siblings } = await supabase
+          .from("runs")
+          .select("version")
+          .or(`id.eq.${parentRunId},parent_run_id.eq.${parentRunId}`)
+          .order("version", { ascending: false })
+          .limit(1);
+        nextVersion = ((siblings?.[0]?.version as number | undefined) ?? parentRun.version) + 1;
+      }
+    }
+
+    // Cache: skip cache lookup for refinements (they should always re-generate).
     const hHash = await hashHypothesis(hypothesis);
-    const { data: cached } = await supabase
+    const { data: cached } = isRefinement ? { data: null } : await supabase
       .from("runs")
       .select("id, qc, plan, critique")
       .eq("hypothesis_hash", hHash)
       .eq("status", "done")
+      .is("parent_run_id", null)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -367,9 +402,12 @@ serve(async (req) => {
         owner_user_id: userId,
         hypothesis_hash: hHash,
         status: cached ? "done" : "qc",
-        qc: cached?.qc ?? null,
+        qc: cached?.qc ?? (isRefinement ? parentRun?.qc ?? null : null),
         plan: cached?.plan ?? null,
         critique: cached?.critique ?? null,
+        parent_run_id: isRefinement ? parentRunId : null,
+        version: nextVersion,
+        refinement_instruction: refinementInstruction,
       })
       .select("id")
       .single();
@@ -402,43 +440,59 @@ serve(async (req) => {
             return;
           }
 
-          // 1) Literature QC
-          const { papers, rateLimited } = await searchSemanticScholar(hypothesis);
-          const verdict = await classifyNovelty(hypothesis, papers, LOVABLE_API_KEY);
-          if (rateLimited && papers.length === 0) {
-            verdict.rationale = "Semantic Scholar is rate-limiting requests. Treating as unknown novelty.";
+          // 1) Literature QC — skip when refining (reuse parent's QC).
+          let references: Reference[] = [];
+          let qc: { signal: string; rationale: string; references: Reference[] };
+          if (isRefinement && parentRun?.qc) {
+            qc = parentRun.qc as typeof qc;
+            references = qc.references ?? [];
+            send("qc", qc);
+            await supabase.from("runs").update({ status: "plan" }).eq("id", runId);
+          } else {
+            const { papers, rateLimited } = await searchSemanticScholar(hypothesis);
+            const verdict = await classifyNovelty(hypothesis, papers, LOVABLE_API_KEY);
+            if (rateLimited && papers.length === 0) {
+              verdict.rationale = "Semantic Scholar is rate-limiting requests. Treating as unknown novelty.";
+            }
+            references = (verdict.chosen ?? [])
+              .map((i: number) => papers[i]).filter(Boolean).slice(0, 3)
+              .map((p: S2Paper) => ({
+                title: p.title,
+                year: p.year,
+                authors: (p.authors ?? []).slice(0, 4).map((a) => a.name),
+                venue: p.venue,
+                citationCount: p.citationCount,
+                url: p.url ?? (p.externalIds?.DOI
+                  ? `https://doi.org/${p.externalIds.DOI}`
+                  : `https://www.semanticscholar.org/paper/${p.paperId}`),
+              }));
+            qc = { signal: verdict.signal, rationale: verdict.rationale, references };
+            await supabase.from("runs").update({ qc, status: "plan" }).eq("id", runId);
+            send("qc", qc);
           }
-          const references: Reference[] = (verdict.chosen ?? [])
-            .map((i: number) => papers[i]).filter(Boolean).slice(0, 3)
-            .map((p: S2Paper) => ({
-              title: p.title,
-              year: p.year,
-              authors: (p.authors ?? []).slice(0, 4).map((a) => a.name),
-              venue: p.venue,
-              citationCount: p.citationCount,
-              url: p.url ?? (p.externalIds?.DOI
-                ? `https://doi.org/${p.externalIds.DOI}`
-                : `https://www.semanticscholar.org/paper/${p.paperId}`),
-            }));
-          const qc = { signal: verdict.signal, rationale: verdict.rationale, references };
-          await supabase.from("runs").update({ qc, status: "plan" }).eq("id", runId);
-          send("qc", qc);
 
           // 2) Plan generation (streamed)
           const refContext = references.length
-            ? `\n\nKNOWN RELATED WORK:\n${references.map((r: Reference, i: number) => `[${i + 1}] ${r.title} (${r.year ?? "n.d."}) — ${r.url ?? ""}`).join("\n")}`
+            ? `\n\nKNOWN RELATED WORK (cite inline as [1], [2], [3] in the protocol description field where relevant):\n${references.map((r: Reference, i: number) => `[${i + 1}] ${r.title} (${r.year ?? "n.d."}) — ${r.url ?? ""}`).join("\n")}`
+            : "";
+
+          const refinementContext = isRefinement
+            ? `\n\nREFINEMENT REQUEST — the user has an existing plan and wants you to revise it according to this instruction. Honour it strictly while keeping everything else operationally sound:\n"""${refinementInstruction}"""\n\nPREVIOUS PLAN (for context — do not repeat verbatim, produce a NEW complete plan reflecting the refinement):\n${JSON.stringify(parentRun?.plan).slice(0, 8000)}`
             : "";
 
           const system = `You are a senior scientist at a Contract Research Organisation. You convert a hypothesis into a complete, operationally realistic experiment plan that a real lab could pick up Monday and start running by Friday.
 
 REQUIREMENTS:
 - Ground the protocol in real, published methods (protocols.io, Bio-protocol, Nature Protocols, JOVE, OpenWetWare).
-- Materials must include real suppliers (Sigma-Aldrich, Thermo Fisher, Promega, Qiagen, IDT, ATCC, Addgene) with plausible catalog numbers and unit costs in USD.
-- Budget must be realistic and itemised; total must equal sum of line items.
+- Materials must include real suppliers (Sigma-Aldrich, Thermo Fisher, Promega, Qiagen, IDT, ATCC, Addgene) with plausible catalog numbers.
+- Budget MUST be anchored to the REFERENCE COST CATALOG below — do not invent prices that are wildly off (>20%).
+- Budget total MUST equal the sum of line items, and line items must roughly equal materials subtotal + labour + equipment + overhead.
+- For each protocol step, where a reference [N] is relevant, append "(see [N])" to the description text. Be conservative — only cite where the reference truly supports the step.
 - Timeline must be phased with explicit dependencies.
-- Validation must specify primary metric, controls, and statistical plan (n, test, alpha, power).
+- Validation must specify primary metric, controls, and statistical plan (n, test, alpha, power calculation).
 - Risks must be specific, not generic.
-- Be precise. Use exact concentrations, volumes, durations.`;
+- Be precise. Use exact concentrations, volumes, durations.
+${COST_CATALOG_PROMPT}`;
 
           const aiRes = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
             method: "POST",
@@ -449,7 +503,7 @@ REQUIREMENTS:
               temperature: 0.2,
               messages: [
                 { role: "system", content: system },
-                { role: "user", content: `HYPOTHESIS:\n${hypothesis}${refContext}\n\nProduce the full experiment plan.` },
+                { role: "user", content: `HYPOTHESIS:\n${hypothesis}${refContext}${refinementContext}\n\nProduce the full experiment plan.` },
               ],
               tools: [{
                 type: "function",
