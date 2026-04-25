@@ -108,11 +108,12 @@ const SUPPLIER_FORMATS: Array<{ match: RegExp; cat: RegExp; canonical: string }>
   { match: /thermo|invitrogen|gibco|fisher/i,
     cat: /^(?:\d{7,9}|[A-Z]\d{6,7}|[A-Z]{1,2}\d{4,6})$/,
     canonical: "Thermo Fisher/Invitrogen catalog numbers are typically 7–9 digits (e.g. 11965092) or letter+digits (e.g. A3160401)." },
-  // IDT — Alt-R Cas9 reagents are 7 digits in the 108xxxx range; primers are
-  // usually "Custom". Numeric IDs outside that range are suspicious.
+  // IDT — Alt-R catalog numbers are documented in the 108xxxx series. Custom
+  // synthesised oligos are catalogued as "Custom". 7-digit numbers outside
+  // 108xxxx are almost always hallucinated.
   { match: /^idt$|integrated\s+dna/i,
-    cat: /^(?:Custom|\d{7})$/i,
-    canonical: "IDT catalog numbers are 7 digits (e.g. 1081058) or 'Custom' for synthesised oligos." },
+    cat: /^(?:Custom|108\d{4})$/i,
+    canonical: "IDT Alt-R catalog numbers are in the 108xxxx series (e.g. 1081058, 1072558 for tracrRNA). Use 'Custom' for synthesised oligos." },
   // ATCC: letters + dash + digits (CRL-3216, CCL-2, HTB-22) or pure digits
   { match: /^atcc$/i,
     cat: /^(?:[A-Z]{2,4}-\d{1,5}|\d{4,6}|VR-\d{2,5})$/,
