@@ -45,6 +45,9 @@ const RunPage = () => {
     if (!id) return;
     let active = true;
 
+    // Stop the background notifier from firing for this run while we view it.
+    untrackRun(id);
+
     const load = async () => {
       // The new columns aren't yet in the generated TS types; cast through unknown.
       const { data, error } = await supabase
