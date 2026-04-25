@@ -141,13 +141,21 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const { hypothesis } = await req.json();
-    if (!hypothesis || typeof hypothesis !== "string" || hypothesis.length < 10) {
+    const { hypothesis: rawHypothesis } = await req.json();
+    if (!rawHypothesis || typeof rawHypothesis !== "string" || rawHypothesis.length < 10) {
       return new Response(JSON.stringify({ error: "Provide a hypothesis (min 10 chars)." }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+    if (rawHypothesis.length > 2000) {
+      return new Response(JSON.stringify({ error: "Hypothesis must be 2000 characters or fewer." }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    // Strip control chars that could be used for prompt injection.
+    const hypothesis = rawHypothesis.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "").trim();
 
     const { papers, rateLimited } = await searchSemanticScholar(hypothesis);
     const verdict = await classifyNovelty(hypothesis, papers);
