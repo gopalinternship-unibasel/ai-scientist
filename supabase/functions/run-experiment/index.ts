@@ -596,8 +596,16 @@ ${COST_CATALOG_PROMPT}`;
             return;
           }
 
-          await supabase.from("runs").update({ plan, status: "done" }).eq("id", runId);
-          send("plan", plan);
+          // Validate inline citations against the actual reference list — strip
+          // hallucinated [N] indices that don't map to a real paper.
+          // deno-lint-ignore no-explicit-any
+          const planObj = plan as any;
+          if (planObj && Array.isArray(planObj.protocol)) {
+            planObj.protocol = sanitizeCitations(planObj.protocol, references.length);
+          }
+
+          await supabase.from("runs").update({ plan: planObj, status: "done" }).eq("id", runId);
+          send("plan", planObj);
           send("done", { id: runId });
 
           // 3) Reviewer critique pass (best-effort, fire-and-forget after main plan is sent).
