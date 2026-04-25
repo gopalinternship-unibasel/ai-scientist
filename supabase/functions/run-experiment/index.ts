@@ -263,7 +263,7 @@ async function classifyNovelty(hypothesis: string, papers: S2Paper[], apiKey: st
       }],
       tool_choice: { type: "function", function: { name: "report_novelty" } },
     }),
-  });
+  }, { label: "novelty-classify" });
   if (!aiRes.ok) {
     return { signal: "similar" as const, rationale: "Classification unavailable; defaulting to similar work exists.", chosen: [0, 1, 2] };
   }
