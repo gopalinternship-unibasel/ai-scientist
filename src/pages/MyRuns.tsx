@@ -24,7 +24,7 @@ const MyRuns = () => {
     if (!user) { navigate("/auth", { replace: true }); return; }
 
     let active = true;
-    (async () => {
+    const load = async () => {
       const { data } = await supabase
         .from("runs")
         .select("id,hypothesis,status,created_at")
@@ -32,8 +32,20 @@ const MyRuns = () => {
         .order("created_at", { ascending: false })
         .limit(50);
       if (active) setRuns((data ?? []) as RunRow[]);
-    })();
-    return () => { active = false; };
+    };
+    load();
+
+    // Realtime: refresh the list whenever any of this user's runs change.
+    const channel = supabase
+      .channel(`my-runs:${user.id}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "runs", filter: `owner_user_id=eq.${user.id}` },
+        () => { if (active) load(); },
+      )
+      .subscribe();
+
+    return () => { active = false; supabase.removeChannel(channel); };
   }, [user, authLoading, navigate]);
 
   return (
