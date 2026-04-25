@@ -224,11 +224,12 @@ async function classifyNovelty(hypothesis: string, papers: LitPaper[], apiKey: s
     abstract: (p.abstract ?? "").slice(0, 600),
   }));
 
-  const aiRes = await fetchWithRetry("https://ai.gateway.lovable.dev/v1/chat/completions", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "google/gemini-3-flash-preview",
+  const { res: aiRes } = await callAIWithFallback({
+    apiKey,
+    models: FAST_MODELS,
+    label: "novelty-classify",
+    buildBody: (model) => ({
+      model,
       messages: [
         { role: "system", content: "You are a research librarian. Assess novelty in TWO ways: (1) keyword/method overlap (signal: not_found / similar / exact_match), and (2) SEMANTIC EQUIVALENCE — does any candidate test the SAME scientific claim as the hypothesis even with different wording, model systems, or measurements? Pick 1-3 most relevant papers." },
         { role: "user", content: `HYPOTHESIS:\n${hypothesis}\n\nCANDIDATES:\n${JSON.stringify(condensed)}` },
@@ -256,7 +257,7 @@ async function classifyNovelty(hypothesis: string, papers: LitPaper[], apiKey: s
       }],
       tool_choice: { type: "function", function: { name: "report_novelty" } },
     }),
-  }, { label: "novelty-classify" });
+  });
   if (!aiRes.ok) {
     return { signal: "similar" as const, rationale: "Classification unavailable; defaulting to similar work exists.", chosen: [0, 1, 2], semantic_overlap: "medium" as const };
   }
