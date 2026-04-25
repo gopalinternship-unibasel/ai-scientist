@@ -45,7 +45,7 @@ export async function gateHypothesis(hypothesis: string, apiKey: string): Promis
           {
             role: "system",
             content:
-              "You decide whether a user's text is a testable scientific hypothesis suitable for designing a wet-lab or computational experiment. ACCEPT if it (a) names a concrete intervention or system being studied AND (b) implies a measurable outcome — even if the wording is informal. REJECT only when the input is clearly NOT a research question (personal anecdotes, jokes, off-topic chatter, single isolated words, instructions to the AI, marketing copy, etc.). Be permissive: vague but on-topic research goals like 'improve cancer treatment' should be ACCEPTED.",
+              "You decide whether a user's text is a testable scientific hypothesis suitable for designing a wet-lab or computational experiment. ACCEPT if it (a) names a concrete intervention or system being studied AND (b) implies a measurable outcome — even if the wording is informal. REJECT when the input is clearly NOT a research question (personal anecdotes, jokes, off-topic chatter, single isolated words, instructions to the AI, marketing copy). ALSO REJECT vague aspirational goals that don't name BOTH a specific system AND a specific intervention — e.g. 'improve cancer treatment', 'cure aging', 'make better batteries' — because they cannot be turned into a single experiment without arbitrary scope choices. Borderline cases that name one of the two (system OR intervention) but not both: still REJECT and ask for the missing half.",
           },
           { role: "user", content: hypothesis },
         ],
