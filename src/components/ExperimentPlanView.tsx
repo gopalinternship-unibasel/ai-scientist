@@ -221,7 +221,7 @@ export const ExperimentPlanView = ({ plan, previousPlan, hypothesis, version = 1
         </div>
       </section>
 
-      <Section number="01" label="Success criteria" icon={Target}>
+      <Section number="01" label="Success criteria" icon={Target} changed={changed?.success_criteria}>
         <ul className="space-y-2">
           {plan.success_criteria.map((c, i) => (
             <li key={i} className="flex items-start gap-3">
@@ -232,7 +232,7 @@ export const ExperimentPlanView = ({ plan, previousPlan, hypothesis, version = 1
         </ul>
       </Section>
 
-      <Section number="02" label="Protocol" icon={FlaskConical}>
+      <Section number="02" label="Protocol" icon={FlaskConical} changed={changed?.protocol}>
         <ol className="relative space-y-5 border-l border-rule pl-6">
           {plan.protocol.map((s) => (
             <li key={s.step} className="relative">
@@ -254,7 +254,7 @@ export const ExperimentPlanView = ({ plan, previousPlan, hypothesis, version = 1
         </ol>
       </Section>
 
-      <Section number="03" label="Materials & supply chain" icon={ShoppingCart}>
+      <Section number="03" label="Materials & supply chain" icon={ShoppingCart} changed={changed?.materials}>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -302,7 +302,7 @@ export const ExperimentPlanView = ({ plan, previousPlan, hypothesis, version = 1
         </div>
       </Section>
 
-      <Section number="04" label="Budget" icon={CircleDollarSign}>
+      <Section number="04" label="Budget" icon={CircleDollarSign} changed={changed?.budget}>
         <div className="grid gap-4 md:grid-cols-[1fr,auto]">
           <ul className="divide-y divide-rule">
             {plan.budget.line_items.map((li, i) => (
@@ -331,7 +331,7 @@ export const ExperimentPlanView = ({ plan, previousPlan, hypothesis, version = 1
         </div>
       </Section>
 
-      <Section number="05" label="Timeline" icon={CalendarRange}>
+      <Section number="05" label="Timeline" icon={CalendarRange} changed={changed?.timeline}>
         <div className="space-y-4">
           {plan.timeline.map((p, i) => (
             <div key={i} className="grid gap-2 rounded-md border border-rule p-4 md:grid-cols-[180px,1fr]">
@@ -368,7 +368,7 @@ export const ExperimentPlanView = ({ plan, previousPlan, hypothesis, version = 1
         </div>
       </Section>
 
-      <Section number="06" label="Validation" icon={Beaker}>
+      <Section number="06" label="Validation" icon={Beaker} changed={changed?.validation}>
         <div className="space-y-4">
           <p className="font-serif text-[15px] leading-relaxed text-foreground/90">
             {plan.validation.approach}
@@ -395,7 +395,7 @@ export const ExperimentPlanView = ({ plan, previousPlan, hypothesis, version = 1
       </Section>
 
       {plan.statistical_design && (
-        <Section number="07" label="Statistical design" icon={Sigma}>
+        <Section number="07" label="Statistical design" icon={Sigma} changed={changed?.statistical_design}>
           <div className="space-y-4">
             <div className="grid gap-3 md:grid-cols-3">
               <KV label="N per group" value={String(plan.statistical_design.n_per_group)} />
@@ -426,7 +426,7 @@ export const ExperimentPlanView = ({ plan, previousPlan, hypothesis, version = 1
       )}
 
       {plan.safety && (
-        <Section number="08" label="Safety & approvals" icon={ShieldAlert}>
+        <Section number="08" label="Safety & approvals" icon={ShieldAlert} changed={changed?.safety}>
           <div className="space-y-4">
             <div className="flex flex-wrap gap-2">
               <span className="stamp border-warning/40 bg-warning/10 text-foreground">
@@ -491,7 +491,7 @@ export const ExperimentPlanView = ({ plan, previousPlan, hypothesis, version = 1
       )}
 
       <div className="grid gap-6 md:grid-cols-2">
-        <Section number="09" label="Risks & mitigations" icon={AlertTriangle}>
+        <Section number="09" label="Risks & mitigations" icon={AlertTriangle} changed={changed?.risks}>
           <ul className="space-y-3">
             {plan.risks.map((r, i) => (
               <li key={i} className="rounded-md border border-rule p-3">
@@ -505,7 +505,7 @@ export const ExperimentPlanView = ({ plan, previousPlan, hypothesis, version = 1
           </ul>
         </Section>
 
-        <Section number="10" label="Team" icon={Users}>
+        <Section number="10" label="Team" icon={Users} changed={changed?.team}>
           <ul className="divide-y divide-rule">
             {plan.team.map((t, i) => (
               <li key={i} className="flex items-center justify-between py-2.5">
