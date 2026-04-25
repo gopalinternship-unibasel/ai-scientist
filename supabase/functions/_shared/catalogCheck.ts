@@ -92,7 +92,54 @@ export interface CatalogIssue {
   catalog_number: string;
   declared_name: string;
   canonical_name: string;
-  reason: "name_mismatch" | "form_mismatch";
+  reason: "name_mismatch" | "form_mismatch" | "format_mismatch";
+}
+
+// Supplier-specific catalog-number formats. We use these as a structural
+// sanity check: a "Sigma-Aldrich" item with catalog number "ABC123XYZ" or a
+// random 7-digit string is almost certainly hallucinated. These regexes are
+// deliberately permissive — only blatant format violations get flagged.
+const SUPPLIER_FORMATS: Array<{ match: RegExp; cat: RegExp; canonical: string }> = [
+  // Sigma-Aldrich / MilliporeSigma: 1-2 letters + 3-7 digits, optional pack-size suffix
+  { match: /sigma|millipore|aldrich|supelco/i,
+    cat: /^[A-Z]{1,3}\d{3,7}(?:[-\s]?\d{1,4}\s?[A-Z]{0,4})?$/,
+    canonical: "Sigma SKUs are typically 1–2 letters followed by 3–7 digits (e.g. T9531, PHR1084-1G)." },
+  // Thermo Fisher / Invitrogen / Gibco: 7-9 digits, OR letter + 6-7 digits
+  { match: /thermo|invitrogen|gibco|fisher/i,
+    cat: /^(?:\d{7,9}|[A-Z]\d{6,7}|[A-Z]{1,2}\d{4,6})$/,
+    canonical: "Thermo Fisher/Invitrogen catalog numbers are typically 7–9 digits (e.g. 11965092) or letter+digits (e.g. A3160401)." },
+  // IDT — Alt-R Cas9 reagents are 7 digits in the 108xxxx range; primers are
+  // usually "Custom". Numeric IDs outside that range are suspicious.
+  { match: /^idt$|integrated\s+dna/i,
+    cat: /^(?:Custom|\d{7})$/i,
+    canonical: "IDT catalog numbers are 7 digits (e.g. 1081058) or 'Custom' for synthesised oligos." },
+  // ATCC: letters + dash + digits (CRL-3216, CCL-2, HTB-22) or pure digits
+  { match: /^atcc$/i,
+    cat: /^(?:[A-Z]{2,4}-\d{1,5}|\d{4,6}|VR-\d{2,5})$/,
+    canonical: "ATCC catalog numbers are letters-dash-digits (e.g. CRL-3216, CCL-2, HTB-22)." },
+  // Promega: letter + 4 digits (G3041, G7572) or letter + 4 digits + letter
+  { match: /promega/i,
+    cat: /^[A-Z]\d{3,4}[A-Z]?$/,
+    canonical: "Promega catalog numbers are a letter followed by 3–4 digits (e.g. G3041)." },
+  // NEB: letter + 4 digits + size suffix (M0491S, B7202S)
+  { match: /^neb$|new\s+england/i,
+    cat: /^[A-Z]\d{3,4}[A-Z]?$/,
+    canonical: "NEB catalog numbers are letter + 4 digits + size suffix (e.g. M0491S)." },
+  // Qiagen: 5 digits (69504, 74104)
+  { match: /qiagen/i,
+    cat: /^\d{4,6}$/,
+    canonical: "Qiagen catalog numbers are 4–6 digits (e.g. 69504, 74104)." },
+];
+
+function looksLikeFormatViolation(supplier: string, cat: string):
+  { violated: true; canonical: string } | { violated: false } {
+  if (!supplier || !cat) return { violated: false };
+  // Skip vendor-agnostic "Custom" entries — common for synthesised oligos.
+  if (/^custom/i.test(cat)) return { violated: false };
+  const rule = SUPPLIER_FORMATS.find((r) => r.match.test(supplier));
+  if (!rule) return { violated: false };
+  if (rule.cat.test(cat)) return { violated: false };
+  return { violated: true, canonical: rule.canonical };
 }
 
 /**
@@ -101,7 +148,7 @@ export interface CatalogIssue {
  */
 export function findCatalogIssues(
   // deno-lint-ignore no-explicit-any
-  materials: Array<{ name?: string; catalog_number?: string }> | undefined,
+  materials: Array<{ name?: string; catalog_number?: string; supplier?: string }> | undefined,
 ): CatalogIssue[] {
   if (!Array.isArray(materials)) return [];
   const out: CatalogIssue[] = [];
@@ -110,36 +157,42 @@ export function findCatalogIssues(
     const m = materials[i];
     const cat = (m?.catalog_number ?? "").toString().trim();
     const name = (m?.name ?? "").toString();
+    const supplier = (m?.supplier ?? "").toString();
     if (!cat || !name) continue;
 
     // Try exact, then upper-cased lookup.
     const entry = CATALOG[cat] ?? CATALOG[cat.toUpperCase()];
-    if (!entry) continue;
+    if (entry) {
+      const lowerName = name.toLowerCase();
 
-    const lowerName = name.toLowerCase();
+      // Definite-mismatch substrings get priority — clearer signal.
+      if (entry.mismatches?.some((m) => lowerName.includes(m.toLowerCase()))) {
+        out.push({
+          material_index: i, catalog_number: cat, declared_name: name,
+          canonical_name: entry.name, reason: "form_mismatch",
+        });
+        if (out.length >= 8) break;
+        continue;
+      }
 
-    // Definite-mismatch substrings get priority — clearer signal.
-    if (entry.mismatches?.some((m) => lowerName.includes(m.toLowerCase()))) {
-      out.push({
-        material_index: i,
-        catalog_number: cat,
-        declared_name: name,
-        canonical_name: entry.name,
-        reason: "form_mismatch",
-      });
-      if (out.length >= 8) break;
+      // Otherwise require AT LEAST ONE expected substring to be present.
+      const matchesExpected = entry.expects.some((e) => lowerName.includes(e.toLowerCase()));
+      if (!matchesExpected) {
+        out.push({
+          material_index: i, catalog_number: cat, declared_name: name,
+          canonical_name: entry.name, reason: "name_mismatch",
+        });
+        if (out.length >= 8) break;
+      }
       continue;
     }
 
-    // Otherwise require AT LEAST ONE expected substring to be present.
-    const matchesExpected = entry.expects.some((e) => lowerName.includes(e.toLowerCase()));
-    if (!matchesExpected) {
+    // Fall through: catalog number not in dictionary. Run the format guard.
+    const fmt = looksLikeFormatViolation(supplier, cat);
+    if (fmt.violated) {
       out.push({
-        material_index: i,
-        catalog_number: cat,
-        declared_name: name,
-        canonical_name: entry.name,
-        reason: "name_mismatch",
+        material_index: i, catalog_number: cat, declared_name: name,
+        canonical_name: fmt.canonical, reason: "format_mismatch",
       });
       if (out.length >= 8) break;
     }
