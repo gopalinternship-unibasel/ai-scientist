@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
-import { useParams, useSearchParams, Link } from "react-router-dom";
-import { ArrowLeft, RotateCcw, Sparkles, Share2, Check } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useParams, useSearchParams, Link, useNavigate } from "react-router-dom";
+import { ArrowLeft, RotateCcw, Sparkles, Share2, Check, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { createScopedClient } from "@/lib/supabaseScoped";
@@ -15,7 +15,10 @@ import { VersionSwitcher, type VersionEntry } from "@/components/VersionSwitcher
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
-import { untrackRun } from "@/hooks/useBackgroundRunNotifier";
+import { untrackRun, trackRun } from "@/hooks/useBackgroundRunNotifier";
+import { startRunStream } from "@/lib/runStream";
+import { getOwnerToken } from "@/lib/owner";
+import { parseRunError, hintForKind, isRetryable } from "@/lib/runErrors";
 import type { ExperimentPlan, LiteratureQC, PlanCritique } from "@/lib/samples";
 
 type Status = "pending" | "qc" | "plan" | "done" | "failed";
@@ -46,6 +49,7 @@ const STALL_THRESHOLD_MS = 90_000;
 const RunPage = () => {
   const { id } = useParams<{ id: string }>();
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const shareToken = searchParams.get("t");
   const [run, setRun] = useState<Run | null>(null);
@@ -54,6 +58,8 @@ const RunPage = () => {
   const [refineOpen, setRefineOpen] = useState(false);
   const [stalled, setStalled] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const retryAbortRef = useRef<AbortController | null>(null);
 
   // Pick a client whose RLS context can read this run:
   // - signed-in user → default supabase client (their JWT is enough)
@@ -156,6 +162,39 @@ const RunPage = () => {
     setShareCopied(true);
     toast.success("Share link copied to clipboard.");
     setTimeout(() => setShareCopied(false), 2000);
+  };
+
+  // Retry a failed run: re-submit the same hypothesis (and refinement instruction
+  // if this was a refinement) as a fresh run. Cheaper than asking the user to
+  // retype, and preserves intent.
+  const onRetry = async () => {
+    if (!run || retrying) return;
+    setRetrying(true);
+    const controller = new AbortController();
+    retryAbortRef.current = controller;
+    try {
+      await startRunStream({
+        hypothesis: run.hypothesis,
+        ownerToken: getOwnerToken(),
+        signal: controller.signal,
+        parentRunId: run.parent_run_id ?? undefined,
+        refinementInstruction: run.refinement_instruction ?? undefined,
+        onEvent: (e) => {
+          if (e.type === "run") {
+            trackRun({ id: e.id, hypothesis: run.hypothesis });
+            navigate(`/runs/${e.id}`);
+          } else if (e.type === "error") {
+            toast.error(e.message);
+            setRetrying(false);
+          }
+        },
+      });
+    } catch (err) {
+      if ((err as Error).name !== "AbortError") {
+        toast.error("Retry failed. Please try again.");
+        setRetrying(false);
+      }
+    }
   };
 
   if (notFound) {
@@ -264,17 +303,39 @@ const RunPage = () => {
           </div>
         )}
 
-        {run.status === "failed" && (
-          <div className="paper-surface rounded-lg p-6 mb-6">
-            <h2 className="font-serif text-lg text-destructive">Run failed</h2>
-            <p className="mt-1 text-sm text-foreground/80">{run.error ?? "Unknown error."}</p>
-            <Link to="/" className="mt-3 inline-block">
-              <Button variant="outline" size="sm" className="gap-2">
-                <RotateCcw className="h-3.5 w-3.5" /> Try again
-              </Button>
-            </Link>
-          </div>
-        )}
+        {run.status === "failed" && (() => {
+          const parsed = parseRunError(run.error);
+          const canRetry = isOwner && isRetryable(parsed.kind);
+          return (
+            <div className="paper-surface rounded-lg p-6 mb-6">
+              <div className="flex items-center gap-2">
+                <h2 className="font-serif text-lg text-destructive">Run failed</h2>
+                <span className="rounded-sm bg-destructive/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-destructive">
+                  {parsed.kind.toLowerCase().replace("_", " ")}
+                </span>
+              </div>
+              <p className="mt-2 text-sm text-foreground/80">{parsed.message}</p>
+              <p className="mt-1 text-xs text-muted-foreground">{hintForKind(parsed.kind)}</p>
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                {canRetry && (
+                  <Button size="sm" className="gap-2" onClick={onRetry} disabled={retrying}>
+                    {retrying ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <RotateCcw className="h-3.5 w-3.5" />
+                    )}
+                    {retrying ? "Retrying…" : "Retry"}
+                  </Button>
+                )}
+                <Link to="/">
+                  <Button variant="outline" size="sm" className="gap-2">
+                    New experiment
+                  </Button>
+                </Link>
+              </div>
+            </div>
+          );
+        })()}
 
         {inFlight && stalled && (
           <div className="mb-6 rounded-md border border-warning/40 bg-warning/10 p-4 no-print">

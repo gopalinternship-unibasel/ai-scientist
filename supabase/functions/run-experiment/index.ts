@@ -7,6 +7,10 @@ import { sanitizeCitationsWithReport } from "../_shared/citations.ts";
 import { checkHypothesis } from "../_shared/hypothesisValidation.ts";
 import { searchLiterature, type LitPaper } from "../_shared/literature.ts";
 import { screenSafety, safetyPromptFragment } from "../_shared/safety.ts";
+import {
+  callAIWithFallback, PLAN_MODELS, FAST_MODELS,
+  classifyHttpError, encodeError, type ErrorKind,
+} from "../_shared/ai-fallback.ts";
 
 const planSchema = {
   type: "object",
@@ -220,11 +224,12 @@ async function classifyNovelty(hypothesis: string, papers: LitPaper[], apiKey: s
     abstract: (p.abstract ?? "").slice(0, 600),
   }));
 
-  const aiRes = await fetchWithRetry("https://ai.gateway.lovable.dev/v1/chat/completions", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "google/gemini-3-flash-preview",
+  const { res: aiRes } = await callAIWithFallback({
+    apiKey,
+    models: FAST_MODELS,
+    label: "novelty-classify",
+    buildBody: (model) => ({
+      model,
       messages: [
         { role: "system", content: "You are a research librarian. Assess novelty in TWO ways: (1) keyword/method overlap (signal: not_found / similar / exact_match), and (2) SEMANTIC EQUIVALENCE — does any candidate test the SAME scientific claim as the hypothesis even with different wording, model systems, or measurements? Pick 1-3 most relevant papers." },
         { role: "user", content: `HYPOTHESIS:\n${hypothesis}\n\nCANDIDATES:\n${JSON.stringify(condensed)}` },
@@ -252,7 +257,7 @@ async function classifyNovelty(hypothesis: string, papers: LitPaper[], apiKey: s
       }],
       tool_choice: { type: "function", function: { name: "report_novelty" } },
     }),
-  }, { label: "novelty-classify" });
+  });
   if (!aiRes.ok) {
     return { signal: "similar" as const, rationale: "Classification unavailable; defaulting to similar work exists.", chosen: [0, 1, 2], semantic_overlap: "medium" as const };
   }
@@ -265,11 +270,12 @@ async function classifyNovelty(hypothesis: string, papers: LitPaper[], apiKey: s
 }
 
 async function critiquePlan(hypothesis: string, plan: unknown, apiKey: string) {
-  const aiRes = await fetchWithRetry("https://ai.gateway.lovable.dev/v1/chat/completions", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "google/gemini-3-flash-preview",
+  const { res: aiRes } = await callAIWithFallback({
+    apiKey,
+    models: FAST_MODELS,
+    label: "critique",
+    buildBody: (model) => ({
+      model,
       messages: [
         { role: "system", content: "You are a senior peer reviewer for an experimental biology / chemistry journal. Critically evaluate the proposed experiment plan for: missing controls, weak statistical power, ethical/safety oversights, unrealistic budgets or timelines, and gaps between hypothesis and protocol. Be specific and actionable." },
         { role: "user", content: `HYPOTHESIS:\n${hypothesis}\n\nPROPOSED PLAN:\n${JSON.stringify(plan).slice(0, 12000)}` },
@@ -280,7 +286,7 @@ async function critiquePlan(hypothesis: string, plan: unknown, apiKey: string) {
       }],
       tool_choice: { type: "function", function: { name: "submit_critique" } },
     }),
-  }, { label: "critique", retries: 2 });
+  });
   if (!aiRes.ok) return null;
   try {
     const aiJson = await aiRes.json();
@@ -660,13 +666,16 @@ ${safetyPromptFragment(safetyFlags)}
 ${COST_CATALOG_PROMPT}`;
 
 
-          // Streaming plan generation. Retry on transient errors but only on the
-          // initial connect — once tokens are flowing we cannot resume mid-stream.
-          const aiRes = await fetchWithRetry("https://ai.gateway.lovable.dev/v1/chat/completions", {
-            method: "POST",
-            headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
-            body: JSON.stringify({
-              model: "google/gemini-3-flash-preview",
+          // Streaming plan generation with model fallback. Once tokens are
+          // flowing we can't switch mid-stream — but we can switch BEFORE the
+          // first byte if the primary model 5xx's on connect.
+          const { res: aiRes, modelUsed } = await callAIWithFallback({
+            apiKey: LOVABLE_API_KEY,
+            models: PLAN_MODELS,
+            label: "plan-stream",
+            timeoutMs: 90_000,
+            buildBody: (model) => ({
+              model,
               stream: true,
               temperature: 0.2,
               messages: [
@@ -683,18 +692,22 @@ ${COST_CATALOG_PROMPT}`;
               }],
               tool_choice: { type: "function", function: { name: "submit_experiment_plan" } },
             }),
-          }, { label: "plan-stream", retries: 2 });
+          });
+          console.log(JSON.stringify({ run_id: runId, step: "plan_model_chosen", model: modelUsed }));
 
           if (!aiRes.ok || !aiRes.body) {
             const text = await aiRes.text().catch(() => "");
             console.error("AI gateway error", aiRes.status, text);
-            const msg = aiRes.status === 429
+            const kind: ErrorKind = classifyHttpError(aiRes.status, text);
+            const msg = kind === "RATE_LIMIT"
               ? "Rate limit reached. Please try again shortly."
-              : aiRes.status === 402
+              : kind === "CREDITS"
               ? "AI credits exhausted. Top up in workspace settings."
-              : "AI gateway error";
-            await supabase.from("runs").update({ status: "failed", error: msg }).eq("id", runId);
-            send("error", { message: msg });
+              : kind === "POLICY"
+              ? "The hypothesis was flagged by the model's safety filter."
+              : "AI gateway error — please retry.";
+            await supabase.from("runs").update({ status: "failed", error: encodeError(kind, msg) }).eq("id", runId);
+            send("error", { message: msg, kind });
             controller.close();
             return;
           }
@@ -746,8 +759,8 @@ ${COST_CATALOG_PROMPT}`;
             plan = JSON.parse(argsAccum);
           } catch (e) {
             console.error("Failed to parse plan JSON", e);
-            await supabase.from("runs").update({ status: "failed", error: "Model returned malformed plan." }).eq("id", runId);
-            send("error", { message: "Model returned malformed plan." });
+            await supabase.from("runs").update({ status: "failed", error: encodeError("PARSE", "Model returned malformed plan.") }).eq("id", runId);
+            send("error", { message: "Model returned malformed plan.", kind: "PARSE" });
             controller.close();
             return;
           }
@@ -783,9 +796,9 @@ ${COST_CATALOG_PROMPT}`;
         } catch (e) {
           console.error("stream error", e);
           if (runId) {
-            await supabase.from("runs").update({ status: "failed", error: "Internal error" }).eq("id", runId);
+            await supabase.from("runs").update({ status: "failed", error: encodeError("INTERNAL", "Internal error") }).eq("id", runId);
           }
-          try { send("error", { message: "Internal error" }); } catch { /* noop */ }
+          try { send("error", { message: "Internal error", kind: "INTERNAL" }); } catch { /* noop */ }
           controller.close();
         }
       },
