@@ -18,8 +18,7 @@ interface S2Paper {
   externalIds?: Record<string, string> | null;
 }
 
-async function searchSemanticScholar(query: string): Promise<S2Paper[]> {
-  // Trim and shorten the query — S2 prefers concise keyword queries.
+async function searchSemanticScholar(query: string): Promise<{ papers: S2Paper[]; rateLimited: boolean }> {
   const q = query.replace(/\s+/g, " ").trim().slice(0, 280);
   const url = new URL("https://api.semanticscholar.org/graph/v1/paper/search");
   url.searchParams.set("query", q);
@@ -29,15 +28,24 @@ async function searchSemanticScholar(query: string): Promise<S2Paper[]> {
     "title,abstract,year,authors.name,venue,citationCount,url,externalIds"
   );
 
-  const res = await fetch(url.toString(), {
-    headers: { "User-Agent": "AI-Scientist/1.0 (Lovable)" },
-  });
-  if (!res.ok) {
+  // Retry up to 3 times with backoff for 429s.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const res = await fetch(url.toString(), {
+      headers: { "User-Agent": "AI-Scientist/1.0 (Lovable)" },
+    });
+    if (res.ok) {
+      const json = await res.json();
+      return { papers: (json.data ?? []) as S2Paper[], rateLimited: false };
+    }
+    if (res.status === 429) {
+      console.warn(`S2 rate limited, attempt ${attempt + 1}`);
+      await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+      continue;
+    }
     console.error("Semantic Scholar error", res.status, await res.text());
-    return [];
+    return { papers: [], rateLimited: false };
   }
-  const json = await res.json();
-  return (json.data ?? []) as S2Paper[];
+  return { papers: [], rateLimited: true };
 }
 
 async function classifyNovelty(
