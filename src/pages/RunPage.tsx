@@ -164,6 +164,39 @@ const RunPage = () => {
     setTimeout(() => setShareCopied(false), 2000);
   };
 
+  // Retry a failed run: re-submit the same hypothesis (and refinement instruction
+  // if this was a refinement) as a fresh run. Cheaper than asking the user to
+  // retype, and preserves intent.
+  const onRetry = async () => {
+    if (!run || retrying) return;
+    setRetrying(true);
+    const controller = new AbortController();
+    retryAbortRef.current = controller;
+    try {
+      await startRunStream({
+        hypothesis: run.hypothesis,
+        ownerToken: getOwnerToken(),
+        signal: controller.signal,
+        parentRunId: run.parent_run_id ?? undefined,
+        refinementInstruction: run.refinement_instruction ?? undefined,
+        onEvent: (e) => {
+          if (e.type === "run") {
+            trackRun({ id: e.id, hypothesis: run.hypothesis });
+            navigate(`/runs/${e.id}`);
+          } else if (e.type === "error") {
+            toast.error(e.message);
+            setRetrying(false);
+          }
+        },
+      });
+    } catch (err) {
+      if ((err as Error).name !== "AbortError") {
+        toast.error("Retry failed. Please try again.");
+        setRetrying(false);
+      }
+    }
+  };
+
   if (notFound) {
     return (
       <div className="min-h-screen bg-background">
