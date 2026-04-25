@@ -416,6 +416,23 @@ serve(async (req) => {
       ? stripCtl(rawRefinement).trim().slice(0, 500) : null;
     const isRefinement = !!(parentRunId && refinementInstruction);
 
+    // LLM-backed gate: reject inputs that clearly aren't hypotheses (jokes,
+    // chatter, gibberish) BEFORE we burn rate-limit quota or AI credits.
+    // Skipped for refinements — those have a validated parent.
+    if (!isRefinement) {
+      const verdict = await gateHypothesis(hypothesis, LOVABLE_API_KEY);
+      if (!verdict.ok) {
+        return new Response(JSON.stringify({
+          error: verdict.reason,
+          suggestion: verdict.suggestion,
+          kind: "VALIDATION",
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+    }
+
     // Resolve user (optional)
     let userId: string | null = null;
     const authHeader = req.headers.get("Authorization");
