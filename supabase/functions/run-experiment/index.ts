@@ -99,10 +99,7 @@ const planSchema = {
       type: "array",
       items: {
         type: "object",
-        properties: {
-          risk: { type: "string" },
-          mitigation: { type: "string" },
-        },
+        properties: { risk: { type: "string" }, mitigation: { type: "string" } },
         required: ["risk", "mitigation"],
         additionalProperties: false,
       },
@@ -111,10 +108,7 @@ const planSchema = {
       type: "array",
       items: {
         type: "object",
-        properties: {
-          role: { type: "string" },
-          fte: { type: "number" },
-        },
+        properties: { role: { type: "string" }, fte: { type: "number" } },
         required: ["role", "fte"],
         additionalProperties: false,
       },
@@ -124,6 +118,33 @@ const planSchema = {
     "title", "domain", "summary", "hypothesis_restated", "success_criteria",
     "protocol", "materials", "budget", "timeline", "validation", "risks", "team",
   ],
+  additionalProperties: false,
+} as const;
+
+const critiqueSchema = {
+  type: "object",
+  properties: {
+    overall_score: { type: "integer", minimum: 1, maximum: 10 },
+    strengths: { type: "array", items: { type: "string" } },
+    concerns: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          severity: { type: "string", enum: ["low", "medium", "high"] },
+          area: { type: "string" },
+          issue: { type: "string" },
+          suggestion: { type: "string" },
+        },
+        required: ["severity", "area", "issue", "suggestion"],
+        additionalProperties: false,
+      },
+    },
+    missing_controls: { type: "array", items: { type: "string" } },
+    statistical_notes: { type: "string" },
+    ethical_notes: { type: "string" },
+  },
+  required: ["overall_score", "strengths", "concerns", "missing_controls", "statistical_notes"],
   additionalProperties: false,
 } as const;
 
@@ -141,6 +162,13 @@ interface S2Paper {
 
 const stripCtl = (s: string) => s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
 
+// Stable hash of a normalised hypothesis for caching.
+async function hashHypothesis(h: string): Promise<string> {
+  const norm = h.toLowerCase().replace(/\s+/g, " ").trim();
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(norm));
+  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 async function searchSemanticScholar(query: string): Promise<{ papers: S2Paper[]; rateLimited: boolean }> {
   const q = query.replace(/\s+/g, " ").trim().slice(0, 280);
   const url = new URL("https://api.semanticscholar.org/graph/v1/paper/search");
@@ -149,36 +177,24 @@ async function searchSemanticScholar(query: string): Promise<{ papers: S2Paper[]
   url.searchParams.set("fields", "title,abstract,year,authors.name,venue,citationCount,url,externalIds");
 
   for (let attempt = 0; attempt < 3; attempt++) {
-    const res = await fetch(url.toString(), {
-      headers: { "User-Agent": "AI-Scientist/1.0 (Lovable)" },
-    });
+    const res = await fetch(url.toString(), { headers: { "User-Agent": "AI-Scientist/1.0 (Lovable)" } });
     if (res.ok) {
       const json = await res.json();
       return { papers: (json.data ?? []) as S2Paper[], rateLimited: false };
     }
-    if (res.status === 429) {
-      await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
-      continue;
-    }
-    console.error("Semantic Scholar error", res.status);
+    if (res.status === 429) { await new Promise((r) => setTimeout(r, 1500 * (attempt + 1))); continue; }
     return { papers: [], rateLimited: false };
   }
   return { papers: [], rateLimited: true };
 }
 
-async function classifyNovelty(
-  hypothesis: string,
-  papers: S2Paper[],
-  apiKey: string,
-): Promise<{ signal: "not_found" | "similar" | "exact_match"; rationale: string; chosen: number[] }> {
+async function classifyNovelty(hypothesis: string, papers: S2Paper[], apiKey: string) {
   if (papers.length === 0) {
-    return { signal: "not_found", rationale: "No related work surfaced via Semantic Scholar.", chosen: [] };
+    return { signal: "not_found" as const, rationale: "No related work surfaced via Semantic Scholar.", chosen: [] as number[] };
   }
   const condensed = papers.slice(0, 8).map((p, i) => ({
-    i, title: p.title, year: p.year, venue: p.venue,
-    abstract: (p.abstract ?? "").slice(0, 600),
+    i, title: p.title, year: p.year, venue: p.venue, abstract: (p.abstract ?? "").slice(0, 600),
   }));
-
   const aiRes = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
@@ -207,16 +223,70 @@ async function classifyNovelty(
       tool_choice: { type: "function", function: { name: "report_novelty" } },
     }),
   });
-
   if (!aiRes.ok) {
-    return { signal: "similar", rationale: "Classification unavailable; defaulting to similar work exists.", chosen: [0, 1, 2] };
+    return { signal: "similar" as const, rationale: "Classification unavailable; defaulting to similar work exists.", chosen: [0, 1, 2] };
   }
   try {
     const aiJson = await aiRes.json();
     return JSON.parse(aiJson.choices[0].message.tool_calls[0].function.arguments);
   } catch {
-    return { signal: "similar", rationale: "Unable to parse classification.", chosen: [0, 1, 2] };
+    return { signal: "similar" as const, rationale: "Unable to parse classification.", chosen: [0, 1, 2] };
   }
+}
+
+async function critiquePlan(hypothesis: string, plan: unknown, apiKey: string) {
+  const aiRes = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "google/gemini-3-flash-preview",
+      messages: [
+        { role: "system", content: "You are a senior peer reviewer for an experimental biology / chemistry journal. Critically evaluate the proposed experiment plan for: missing controls, weak statistical power, ethical/safety oversights, unrealistic budgets or timelines, and gaps between hypothesis and protocol. Be specific and actionable." },
+        { role: "user", content: `HYPOTHESIS:\n${hypothesis}\n\nPROPOSED PLAN:\n${JSON.stringify(plan).slice(0, 12000)}` },
+      ],
+      tools: [{
+        type: "function",
+        function: { name: "submit_critique", description: "Reviewer critique.", parameters: critiqueSchema },
+      }],
+      tool_choice: { type: "function", function: { name: "submit_critique" } },
+    }),
+  });
+  if (!aiRes.ok) return null;
+  try {
+    const aiJson = await aiRes.json();
+    return JSON.parse(aiJson.choices[0].message.tool_calls[0].function.arguments);
+  } catch { return null; }
+}
+
+// Per-identifier rate limit (rolling window).
+// deno-lint-ignore no-explicit-any
+async function checkRateLimit(
+  supabase: any,
+  identifier: string,
+  kind: string,
+  windowMinutes: number,
+  max: number,
+): Promise<{ ok: boolean; remaining: number }> {
+  const since = new Date(Date.now() - windowMinutes * 60_000).toISOString();
+  const { count } = await supabase
+    .from("rate_limits")
+    .select("*", { count: "exact", head: true })
+    .eq("identifier", identifier)
+    .eq("kind", kind)
+    .gte("created_at", since);
+  const used = count ?? 0;
+  if (used >= max) return { ok: false, remaining: 0 };
+  await supabase.from("rate_limits").insert({ identifier, kind });
+  return { ok: true, remaining: max - used - 1 };
+}
+
+interface Reference {
+  title: string;
+  year?: number | null;
+  authors?: string[];
+  venue?: string | null;
+  citationCount?: number | null;
+  url?: string;
 }
 
 serve(async (req) => {
@@ -224,6 +294,7 @@ serve(async (req) => {
 
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
   const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
@@ -249,12 +320,60 @@ serve(async (req) => {
     const hypothesis = stripCtl(rawHypothesis).trim();
     const ownerToken = typeof owner_token === "string" ? stripCtl(owner_token).slice(0, 100) : null;
 
-    // 1) Create run row
+    // Resolve user (optional)
+    let userId: string | null = null;
+    const authHeader = req.headers.get("Authorization");
+    if (authHeader?.startsWith("Bearer ")) {
+      const token = authHeader.slice(7);
+      // The anon key is also a Bearer token — only attempt user lookup for non-anon JWTs.
+      if (token && token !== ANON_KEY) {
+        const userClient = createClient(SUPABASE_URL, ANON_KEY, {
+          global: { headers: { Authorization: authHeader } },
+        });
+        const { data } = await userClient.auth.getUser();
+        userId = data.user?.id ?? null;
+      }
+    }
+
+    // Rate limit: 5 runs / hour for signed-in users; 3 / hour per IP for anon.
+    const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || "unknown";
+    const rlIdent = userId ? `user:${userId}` : `ip:${ip}`;
+    const rl = await checkRateLimit(supabase, rlIdent, "run", 60, userId ? 5 : 3);
+    if (!rl.ok) {
+      return new Response(JSON.stringify({
+        error: userId
+          ? "You've reached the limit of 5 experiment runs per hour. Please try again later."
+          : "Anonymous users are limited to 3 runs per hour. Sign in for a higher quota.",
+      }), { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // Cache: if a previous run with the same hypothesis is done, return it as a new shareable run.
+    const hHash = await hashHypothesis(hypothesis);
+    const { data: cached } = await supabase
+      .from("runs")
+      .select("id, qc, plan, critique")
+      .eq("hypothesis_hash", hHash)
+      .eq("status", "done")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    // Create run row (always create new row for ownership / share semantics, even when reusing data)
     const { data: created, error: createErr } = await supabase
       .from("runs")
-      .insert({ hypothesis, owner_token: ownerToken, status: "qc" })
+      .insert({
+        hypothesis,
+        owner_token: ownerToken,
+        owner_user_id: userId,
+        hypothesis_hash: hHash,
+        status: cached ? "done" : "qc",
+        qc: cached?.qc ?? null,
+        plan: cached?.plan ?? null,
+        critique: cached?.critique ?? null,
+      })
       .select("id")
       .single();
+
     if (createErr || !created) {
       console.error("create run failed", createErr);
       return new Response(JSON.stringify({ error: "Could not start run" }), {
@@ -263,27 +382,35 @@ serve(async (req) => {
     }
     runId = created.id;
 
-    // SSE response
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       async start(controller) {
         const send = (event: string, data: unknown) => {
           controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
         };
-        try {
-          send("run", { id: runId });
 
-          // 2) Literature QC
+        try {
+          send("run", { id: runId, cached: !!cached });
+
+          // Cache hit — replay events instantly.
+          if (cached) {
+            send("qc", cached.qc);
+            send("plan", cached.plan);
+            if (cached.critique) send("critique", cached.critique);
+            send("done", { id: runId });
+            controller.close();
+            return;
+          }
+
+          // 1) Literature QC
           const { papers, rateLimited } = await searchSemanticScholar(hypothesis);
           const verdict = await classifyNovelty(hypothesis, papers, LOVABLE_API_KEY);
           if (rateLimited && papers.length === 0) {
             verdict.rationale = "Semantic Scholar is rate-limiting requests. Treating as unknown novelty.";
           }
-          const references = (verdict.chosen ?? [])
-            .map((i) => papers[i])
-            .filter(Boolean)
-            .slice(0, 3)
-            .map((p) => ({
+          const references: Reference[] = (verdict.chosen ?? [])
+            .map((i: number) => papers[i]).filter(Boolean).slice(0, 3)
+            .map((p: S2Paper) => ({
               title: p.title,
               year: p.year,
               authors: (p.authors ?? []).slice(0, 4).map((a) => a.name),
@@ -294,13 +421,12 @@ serve(async (req) => {
                 : `https://www.semanticscholar.org/paper/${p.paperId}`),
             }));
           const qc = { signal: verdict.signal, rationale: verdict.rationale, references };
-
           await supabase.from("runs").update({ qc, status: "plan" }).eq("id", runId);
           send("qc", qc);
 
-          // 3) Plan generation (streamed)
+          // 2) Plan generation (streamed)
           const refContext = references.length
-            ? `\n\nKNOWN RELATED WORK:\n${references.map((r, i) => `[${i + 1}] ${r.title} (${r.year ?? "n.d."}) — ${r.url ?? ""}`).join("\n")}`
+            ? `\n\nKNOWN RELATED WORK:\n${references.map((r: Reference, i: number) => `[${i + 1}] ${r.title} (${r.year ?? "n.d."}) — ${r.url ?? ""}`).join("\n")}`
             : "";
 
           const system = `You are a senior scientist at a Contract Research Organisation. You convert a hypothesis into a complete, operationally realistic experiment plan that a real lab could pick up Monday and start running by Friday.
@@ -320,6 +446,7 @@ REQUIREMENTS:
             body: JSON.stringify({
               model: "google/gemini-3-flash-preview",
               stream: true,
+              temperature: 0.2,
               messages: [
                 { role: "system", content: system },
                 { role: "user", content: `HYPOTHESIS:\n${hypothesis}${refContext}\n\nProduce the full experiment plan.` },
@@ -342,7 +469,7 @@ REQUIREMENTS:
             const msg = aiRes.status === 429
               ? "Rate limit reached. Please try again shortly."
               : aiRes.status === 402
-              ? "Lovable AI credits exhausted. Add credits in Settings → Workspace → Usage."
+              ? "AI credits exhausted. Top up in workspace settings."
               : "AI gateway error";
             await supabase.from("runs").update({ status: "failed", error: msg }).eq("id", runId);
             send("error", { message: msg });
@@ -350,7 +477,7 @@ REQUIREMENTS:
             return;
           }
 
-          // Stream and accumulate tool-call arguments
+          // Stream tokens; emit a partial-plan parse periodically so the UI can render sections progressively.
           const reader = aiRes.body.getReader();
           const decoder = new TextDecoder();
           let buf = "";
@@ -370,20 +497,17 @@ REQUIREMENTS:
               if (payload === "[DONE]") break;
               try {
                 const parsed = JSON.parse(payload);
-                const delta = parsed.choices?.[0]?.delta;
-                const argsDelta = delta?.tool_calls?.[0]?.function?.arguments;
+                const argsDelta = parsed.choices?.[0]?.delta?.tool_calls?.[0]?.function?.arguments;
                 if (typeof argsDelta === "string") {
                   argsAccum += argsDelta;
-                  // Throttle progress events to ~5/sec
                   const now = Date.now();
-                  if (now - lastEmit > 200) {
+                  if (now - lastEmit > 250) {
                     lastEmit = now;
-                    send("progress", { chars: argsAccum.length });
+                    const partial = tryParsePartial(argsAccum);
+                    send("progress", { chars: argsAccum.length, partial });
                   }
                 }
-              } catch {
-                // partial chunk; ignore
-              }
+              } catch { /* partial chunk */ }
             }
           }
 
@@ -391,7 +515,7 @@ REQUIREMENTS:
           try {
             plan = JSON.parse(argsAccum);
           } catch (e) {
-            console.error("Failed to parse plan JSON", e, argsAccum.slice(0, 500));
+            console.error("Failed to parse plan JSON", e);
             await supabase.from("runs").update({ status: "failed", error: "Model returned malformed plan." }).eq("id", runId);
             send("error", { message: "Model returned malformed plan." });
             controller.close();
@@ -401,6 +525,18 @@ REQUIREMENTS:
           await supabase.from("runs").update({ plan, status: "done" }).eq("id", runId);
           send("plan", plan);
           send("done", { id: runId });
+
+          // 3) Reviewer critique pass (best-effort, fire-and-forget after main plan is sent).
+          try {
+            const critique = await critiquePlan(hypothesis, plan, LOVABLE_API_KEY);
+            if (critique) {
+              await supabase.from("runs").update({ critique }).eq("id", runId);
+              send("critique", critique);
+            }
+          } catch (e) {
+            console.error("critique failed", e);
+          }
+
           controller.close();
         } catch (e) {
           console.error("stream error", e);
@@ -428,3 +564,38 @@ REQUIREMENTS:
     });
   }
 });
+
+// Best-effort partial JSON parse: trims to the last balanced point so the client can show
+// already-completed plan sections while later ones stream in.
+function tryParsePartial(s: string): Record<string, unknown> | null {
+  if (!s.trim().startsWith("{")) return null;
+  let depth = 0, inStr = false, esc = false, lastValid = -1;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === "{" || c === "[") depth++;
+    else if (c === "}" || c === "]") { depth--; if (depth === 0) lastValid = i; }
+  }
+  // Try progressively shorter candidates.
+  const candidates = [s];
+  if (lastValid > 0) candidates.push(s.slice(0, lastValid + 1));
+  // Close any unclosed strings/objects/arrays naively.
+  let trial = s;
+  if (inStr) trial += '"';
+  // Remove trailing comma if present
+  trial = trial.replace(/,\s*$/, "");
+  // Try to close braces/brackets:
+  let toClose = depth;
+  while (toClose-- > 0) trial += "}";
+  candidates.push(trial);
+  for (const c of candidates) {
+    try { return JSON.parse(c); } catch { /* try next */ }
+  }
+  return null;
+}

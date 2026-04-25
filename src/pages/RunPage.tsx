@@ -3,11 +3,13 @@ import { useParams, Link } from "react-router-dom";
 import { ArrowLeft, RotateCcw } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Logo } from "@/components/Logo";
+import { UserMenu } from "@/components/UserMenu";
 import { LiteratureQCCard } from "@/components/LiteratureQCCard";
 import { ExperimentPlanView } from "@/components/ExperimentPlanView";
 import { GenerationProgress } from "@/components/GenerationProgress";
+import { PlanCritiqueCard } from "@/components/PlanCritiqueCard";
 import { Button } from "@/components/ui/button";
-import type { ExperimentPlan, LiteratureQC } from "@/lib/samples";
+import type { ExperimentPlan, LiteratureQC, PlanCritique } from "@/lib/samples";
 
 type Status = "pending" | "qc" | "plan" | "done" | "failed";
 
@@ -17,6 +19,7 @@ interface Run {
   status: Status;
   qc: LiteratureQC | null;
   plan: ExperimentPlan | null;
+  critique: PlanCritique | null;
   error: string | null;
   created_at: string;
 }
@@ -33,7 +36,7 @@ const RunPage = () => {
     const load = async () => {
       const { data, error } = await supabase
         .from("runs")
-        .select("id,hypothesis,status,qc,plan,error,created_at")
+        .select("id,hypothesis,status,qc,plan,critique,error,created_at")
         .eq("id", id)
         .maybeSingle();
       if (!active) return;
@@ -42,14 +45,11 @@ const RunPage = () => {
     };
     load();
 
-    // Realtime updates while a run is still in flight
     const channel = supabase
       .channel(`run:${id}`)
       .on("postgres_changes",
         { event: "UPDATE", schema: "public", table: "runs", filter: `id=eq.${id}` },
-        (payload) => {
-          if (active) setRun(payload.new as unknown as Run);
-        })
+        (payload) => { if (active) setRun(payload.new as unknown as Run); })
       .subscribe();
 
     return () => { active = false; supabase.removeChannel(channel); };
@@ -83,12 +83,15 @@ const RunPage = () => {
       <header className="sticky top-0 z-10 border-b border-rule bg-background/85 backdrop-blur no-print">
         <div className="container flex h-16 items-center justify-between">
           <Logo />
-          <Link to="/">
-            <Button variant="ghost" size="sm" className="gap-2">
-              <ArrowLeft className="h-3.5 w-3.5" />
-              New experiment
-            </Button>
-          </Link>
+          <div className="flex items-center gap-2">
+            <Link to="/">
+              <Button variant="ghost" size="sm" className="gap-2">
+                <ArrowLeft className="h-3.5 w-3.5" />
+                New experiment
+              </Button>
+            </Link>
+            <UserMenu />
+          </div>
         </div>
       </header>
 
@@ -117,6 +120,7 @@ const RunPage = () => {
           {inFlight && !run.qc && <GenerationProgress stage="qc" />}
           {inFlight && run.qc && !run.plan && <GenerationProgress stage="plan" />}
           {run.plan && <ExperimentPlanView plan={run.plan} />}
+          {run.critique && <PlanCritiqueCard critique={run.critique} />}
         </div>
       </main>
     </div>

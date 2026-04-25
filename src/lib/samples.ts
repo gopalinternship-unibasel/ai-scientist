@@ -74,3 +74,17 @@ export type LiteratureQC = {
     url?: string;
   }[];
 };
+
+export type PlanCritique = {
+  overall_score: number;
+  strengths: string[];
+  concerns: {
+    severity: "low" | "medium" | "high";
+    area: string;
+    issue: string;
+    suggestion: string;
+  }[];
+  missing_controls: string[];
+  statistical_notes: string;
+  ethical_notes?: string;
+};

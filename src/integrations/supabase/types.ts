@@ -14,13 +14,37 @@ export type Database = {
   }
   public: {
     Tables: {
+      rate_limits: {
+        Row: {
+          created_at: string
+          id: string
+          identifier: string
+          kind: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          identifier: string
+          kind: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          identifier?: string
+          kind?: string
+        }
+        Relationships: []
+      }
       runs: {
         Row: {
           created_at: string
+          critique: Json | null
           error: string | null
           hypothesis: string
+          hypothesis_hash: string | null
           id: string
           owner_token: string | null
+          owner_user_id: string | null
           plan: Json | null
           qc: Json | null
           status: Database["public"]["Enums"]["run_status"]
@@ -28,10 +52,13 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          critique?: Json | null
           error?: string | null
           hypothesis: string
+          hypothesis_hash?: string | null
           id?: string
           owner_token?: string | null
+          owner_user_id?: string | null
           plan?: Json | null
           qc?: Json | null
           status?: Database["public"]["Enums"]["run_status"]
@@ -39,10 +66,13 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          critique?: Json | null
           error?: string | null
           hypothesis?: string
+          hypothesis_hash?: string | null
           id?: string
           owner_token?: string | null
+          owner_user_id?: string | null
           plan?: Json | null
           qc?: Json | null
           status?: Database["public"]["Enums"]["run_status"]
