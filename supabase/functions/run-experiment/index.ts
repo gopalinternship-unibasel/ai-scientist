@@ -11,6 +11,8 @@ import {
   callAIWithFallback, PLAN_MODELS, FAST_MODELS,
   classifyHttpError, encodeError, type ErrorKind,
 } from "../_shared/ai-fallback.ts";
+import { gateHypothesis } from "../_shared/hypothesisGate.ts";
+import { findCatalogIssues } from "../_shared/catalogCheck.ts";
 
 const planSchema = {
   type: "object",
