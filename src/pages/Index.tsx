@@ -41,6 +41,11 @@ const Index = () => {
             case "run":
               runId = e.id;
               if (e.cached) toast.success("Found a cached plan for this hypothesis ✦");
+              // Resume on reconnect: as soon as the run row exists in the DB,
+              // navigate to its detail page. RunPage subscribes to realtime
+              // updates so the user sees identical streaming output and can
+              // safely close this tab without losing the in-flight generation.
+              navigate(`/runs/${e.id}`);
               break;
             case "qc":
               setQc(e.qc);
