@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
-import { useParams, Link } from "react-router-dom";
-import { ArrowLeft, RotateCcw, Sparkles } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { useParams, useSearchParams, Link } from "react-router-dom";
+import { ArrowLeft, RotateCcw, Sparkles, Share2, Check } from "lucide-react";
+import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { createScopedClient } from "@/lib/supabaseScoped";
 import { Logo } from "@/components/Logo";
 import { UserMenu } from "@/components/UserMenu";
 import { LiteratureQCCard } from "@/components/LiteratureQCCard";
@@ -12,6 +14,7 @@ import { RefineDialog } from "@/components/RefineDialog";
 import { VersionSwitcher, type VersionEntry } from "@/components/VersionSwitcher";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@/hooks/useAuth";
 import { untrackRun } from "@/hooks/useBackgroundRunNotifier";
 import type { ExperimentPlan, LiteratureQC, PlanCritique } from "@/lib/samples";
 
@@ -29,28 +32,45 @@ interface Run {
   parent_run_id: string | null;
   version: number;
   refinement_instruction: string | null;
+  share_token: string | null;
+  owner_user_id: string | null;
+  updated_at: string;
 }
 
 const RUN_COLUMNS =
-  "id,hypothesis,status,qc,plan,critique,error,created_at,parent_run_id,version,refinement_instruction";
+  "id,hypothesis,status,qc,plan,critique,error,created_at,parent_run_id,version,refinement_instruction,share_token,owner_user_id,updated_at";
+
+// Stall threshold: warn the user if no progress for 90s on an in-flight run.
+const STALL_THRESHOLD_MS = 90_000;
 
 const RunPage = () => {
   const { id } = useParams<{ id: string }>();
+  const { user } = useAuth();
+  const [searchParams] = useSearchParams();
+  const shareToken = searchParams.get("t");
   const [run, setRun] = useState<Run | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [versions, setVersions] = useState<VersionEntry[]>([]);
   const [refineOpen, setRefineOpen] = useState(false);
+  const [stalled, setStalled] = useState(false);
+  const [shareCopied, setShareCopied] = useState(false);
+
+  // Pick a client whose RLS context can read this run:
+  // - signed-in user → default supabase client (their JWT is enough)
+  // - anonymous owner or share link → scoped client with x-owner-token / x-share-token
+  const client = useMemo(() => {
+    if (user) return supabase;
+    return createScopedClient({ shareToken });
+  }, [user, shareToken]);
 
   useEffect(() => {
     if (!id) return;
     let active = true;
 
-    // Stop the background notifier from firing for this run while we view it.
     untrackRun(id);
 
     const load = async () => {
-      // The new columns aren't yet in the generated TS types; cast through unknown.
-      const { data, error } = await supabase
+      const { data, error } = await client
         .from("runs")
         // deno-lint-ignore no-explicit-any
         .select(RUN_COLUMNS as any)
@@ -63,7 +83,7 @@ const RunPage = () => {
 
       // Load all versions in this refinement chain (root + descendants).
       const rootId = r.parent_run_id ?? r.id;
-      const { data: chain } = await supabase
+      const { data: chain } = await client
         .from("runs")
         // deno-lint-ignore no-explicit-any
         .select("id,version,refinement_instruction,created_at,status,parent_run_id" as any)
@@ -73,21 +93,79 @@ const RunPage = () => {
     };
     load();
 
-    const channel = supabase
-      .channel(`run:${id}`)
-      .on("postgres_changes",
-        { event: "UPDATE", schema: "public", table: "runs", filter: `id=eq.${id}` },
-        (payload) => { if (active) setRun(payload.new as unknown as Run); })
-      .subscribe();
+    // Realtime: subscribe via the default client so the user's auth context
+    // applies to the realtime.messages RLS policies. Anonymous viewers fall
+    // back to polling on a short interval.
+    const useRealtime = !!user || !!shareToken === false;
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
 
-    return () => { active = false; supabase.removeChannel(channel); };
-  }, [id]);
+    if (useRealtime) {
+      channel = supabase
+        .channel(`run:${id}`)
+        .on("postgres_changes",
+          { event: "UPDATE", schema: "public", table: "runs", filter: `id=eq.${id}` },
+          (payload) => { if (active) setRun(payload.new as unknown as Run); })
+        .subscribe();
+    } else {
+      // Share-link viewers: poll every 5s while in-flight.
+      pollTimer = setInterval(load, 5000);
+    }
+
+    return () => {
+      active = false;
+      if (channel) supabase.removeChannel(channel);
+      if (pollTimer) clearInterval(pollTimer);
+    };
+  }, [id, client, user, shareToken]);
+
+  // Stall detection: if status is in-flight and updated_at hasn't moved in 90s,
+  // surface a warning so the user can retry instead of staring at a spinner.
+  useEffect(() => {
+    if (!run) return;
+    const inFlight = run.status === "pending" || run.status === "qc" || run.status === "plan";
+    if (!inFlight) { setStalled(false); return; }
+    const tick = () => {
+      const last = new Date(run.updated_at).getTime();
+      setStalled(Date.now() - last > STALL_THRESHOLD_MS);
+    };
+    tick();
+    const t = setInterval(tick, 5000);
+    return () => clearInterval(t);
+  }, [run]);
+
+  const onShare = async () => {
+    if (!run) return;
+    let token = run.share_token;
+    if (!token) {
+      // Mint a share token (only the owner can do this via RLS UPDATE policy).
+      token = crypto.randomUUID().replace(/-/g, "");
+      const { error } = await supabase
+        .from("runs")
+        // deno-lint-ignore no-explicit-any
+        .update({ share_token: token } as any)
+        .eq("id", run.id);
+      if (error) {
+        toast.error("Could not create share link.");
+        return;
+      }
+      setRun({ ...run, share_token: token });
+    }
+    const url = `${window.location.origin}/runs/${run.id}?t=${token}`;
+    await navigator.clipboard.writeText(url);
+    setShareCopied(true);
+    toast.success("Share link copied to clipboard.");
+    setTimeout(() => setShareCopied(false), 2000);
+  };
 
   if (notFound) {
     return (
       <div className="min-h-screen bg-background">
         <div className="container max-w-2xl py-20 text-center">
           <h1 className="font-serif text-2xl">Run not found</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            This experiment may be private or the link may be invalid.
+          </p>
           <Link to="/" className="ink-link mt-4 inline-block">← Back to home</Link>
         </div>
       </div>
