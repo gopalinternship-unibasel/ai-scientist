@@ -276,7 +276,7 @@ async function classifyNovelty(hypothesis: string, papers: S2Paper[], apiKey: st
 }
 
 async function critiquePlan(hypothesis: string, plan: unknown, apiKey: string) {
-  const aiRes = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+  const aiRes = await fetchWithRetry("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -291,7 +291,7 @@ async function critiquePlan(hypothesis: string, plan: unknown, apiKey: string) {
       }],
       tool_choice: { type: "function", function: { name: "submit_critique" } },
     }),
-  });
+  }, { label: "critique", retries: 2 });
   if (!aiRes.ok) return null;
   try {
     const aiJson = await aiRes.json();
