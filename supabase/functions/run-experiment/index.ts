@@ -7,6 +7,10 @@ import { sanitizeCitationsWithReport } from "../_shared/citations.ts";
 import { checkHypothesis } from "../_shared/hypothesisValidation.ts";
 import { searchLiterature, type LitPaper } from "../_shared/literature.ts";
 import { screenSafety, safetyPromptFragment } from "../_shared/safety.ts";
+import {
+  callAIWithFallback, PLAN_MODELS, FAST_MODELS,
+  classifyHttpError, encodeError, type ErrorKind,
+} from "../_shared/ai-fallback.ts";
 
 const planSchema = {
   type: "object",
