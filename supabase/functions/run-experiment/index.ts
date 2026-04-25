@@ -651,6 +651,24 @@ serve(async (req) => {
             if (lit.rateLimited && lit.papers.length === 0) {
               verdict.rationale = "All literature sources rate-limited or unreachable. Treating as unknown novelty.";
             }
+
+            // Canonical-technique override: if the hypothesis describes a
+            // textbook protocol (PCR, Western blot, etc.) AND we got at least
+            // one literature hit, force `exact_match`. The LLM classifier
+            // tends to return `not_found` for these because no paper has the
+            // exact wording — but they're obviously not novel.
+            const canon = detectCanonicalTechnique(hypothesis);
+            if (canon.matched && lit.papers.length > 0 && verdict.signal !== "exact_match") {
+              console.log(JSON.stringify({ run_id: runId, step: "canonical_override", technique: canon.technique, prev_signal: verdict.signal }));
+              verdict.signal = "exact_match";
+              verdict.semantic_overlap = "high";
+              verdict.rationale = `${canon.rationale} ${verdict.rationale}`.trim();
+              // Ensure at least the top references are surfaced.
+              if (!verdict.chosen || verdict.chosen.length === 0) {
+                verdict.chosen = lit.papers.slice(0, 3).map((_: LitPaper, i: number) => i);
+              }
+            }
+
             references = (verdict.chosen ?? [])
               .map((i: number) => lit.papers[i]).filter(Boolean).slice(0, 3)
               .map((p: LitPaper) => ({
