@@ -408,7 +408,7 @@ serve(async (req) => {
           if (rateLimited && papers.length === 0) {
             verdict.rationale = "Semantic Scholar is rate-limiting requests. Treating as unknown novelty.";
           }
-          const references = (verdict.chosen ?? [])
+          const references: Reference[] = (verdict.chosen ?? [])
             .map((i: number) => papers[i]).filter(Boolean).slice(0, 3)
             .map((p: S2Paper) => ({
               title: p.title,
