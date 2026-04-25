@@ -382,7 +382,7 @@ serve(async (req) => {
       }
     }
 
-    // Rate limit: 5 runs / hour for signed-in users; 3 / hour per IP for anon.
+    // Rate limit: 30 runs / hour for signed-in users; 20 / hour per IP for anon.
     const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || "unknown";
     const rlIdent = userId ? `user:${userId}` : `ip:${ip}`;
     const rl = await checkRateLimit(supabase, rlIdent, "run", 60, userId ? 5 : 3);
