@@ -5,6 +5,14 @@
 // All three sources are best-effort: a failure or rate-limit on one source
 // just contributes zero rows. We surface which sources actually returned
 // results so the caller can degrade gracefully.
+//
+// QUERY DEGRADATION: when the first attempt (full hypothesis) returns 0 hits
+// across every source, we retry with progressively broader keyword queries
+// before giving up. This fixes the case where a perfectly cite-able topic
+// (e.g. "PCR amplification of GAPDH") returns nothing because the full
+// sentence happens to match no paper title verbatim.
+
+import { degradedQueries } from "./queryDegradation.ts";
 
 export interface LitPaper {
   source: "s2" | "openalex" | "pubmed";
