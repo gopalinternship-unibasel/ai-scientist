@@ -478,23 +478,38 @@ serve(async (req) => {
       .maybeSingle();
 
     // Create run row (always create new row for ownership / share semantics, even when reusing data)
-    const { data: created, error: createErr } = await supabase
+    const baseInsert = {
+      hypothesis,
+      owner_token: ownerToken,
+      owner_user_id: userId,
+      hypothesis_hash: hHash as string | null,
+      status: (cached ? "done" : "qc") as "done" | "qc",
+      qc: cached?.qc ?? (isRefinement ? parentRun?.qc ?? null : null),
+      plan: cached?.plan ?? null,
+      critique: cached?.critique ?? null,
+      parent_run_id: isRefinement ? parentRunId : null,
+      version: nextVersion,
+      refinement_instruction: refinementInstruction,
+    };
+
+    let { data: created, error: createErr } = await supabase
       .from("runs")
-      .insert({
-        hypothesis,
-        owner_token: ownerToken,
-        owner_user_id: userId,
-        hypothesis_hash: hHash,
-        status: cached ? "done" : "qc",
-        qc: cached?.qc ?? (isRefinement ? parentRun?.qc ?? null : null),
-        plan: cached?.plan ?? null,
-        critique: cached?.critique ?? null,
-        parent_run_id: isRefinement ? parentRunId : null,
-        version: nextVersion,
-        refinement_instruction: refinementInstruction,
-      })
+      .insert(baseInsert)
       .select("id")
       .single();
+
+    // A partial unique index on (hypothesis_hash) where status='done' can trip
+    // when we're inserting a cached copy for a different owner. Retry once
+    // without the hash — dedup is preserved on the original row.
+    if (createErr && (createErr as { code?: string }).code === "23505") {
+      const retry = await supabase
+        .from("runs")
+        .insert({ ...baseInsert, hypothesis_hash: null })
+        .select("id")
+        .single();
+      created = retry.data;
+      createErr = retry.error;
+    }
 
     if (createErr || !created) {
       console.error("create run failed", createErr);
@@ -503,6 +518,7 @@ serve(async (req) => {
       });
     }
     runId = created.id;
+
 
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
