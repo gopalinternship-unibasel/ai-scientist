@@ -579,6 +579,7 @@ ${COST_CATALOG_PROMPT}`;
           let buf = "";
           let argsAccum = "";
           let lastEmit = 0;
+          let lastHeartbeat = Date.now();
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
@@ -601,6 +602,13 @@ ${COST_CATALOG_PROMPT}`;
                     lastEmit = now;
                     const partial = tryParsePartial(argsAccum);
                     send("progress", { chars: argsAccum.length, partial });
+                  }
+                  // Heartbeat: bump updated_at every ~60s so the stale-run
+                  // cleanup cron doesn't kill an actively-streaming generation.
+                  if (now - lastHeartbeat > 60_000) {
+                    lastHeartbeat = now;
+                    supabase.from("runs").update({ updated_at: new Date().toISOString() })
+                      .eq("id", runId).then(() => {/* fire-and-forget */});
                   }
                 }
               } catch { /* partial chunk */ }
