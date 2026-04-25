@@ -259,8 +259,9 @@ async function critiquePlan(hypothesis: string, plan: unknown, apiKey: string) {
 }
 
 // Per-identifier rate limit (rolling window).
+// deno-lint-ignore no-explicit-any
 async function checkRateLimit(
-  supabase: ReturnType<typeof createClient>,
+  supabase: any,
   identifier: string,
   kind: string,
   windowMinutes: number,
@@ -277,6 +278,15 @@ async function checkRateLimit(
   if (used >= max) return { ok: false, remaining: 0 };
   await supabase.from("rate_limits").insert({ identifier, kind });
   return { ok: true, remaining: max - used - 1 };
+}
+
+interface Reference {
+  title: string;
+  year?: number | null;
+  authors?: string[];
+  venue?: string | null;
+  citationCount?: number | null;
+  url?: string;
 }
 
 serve(async (req) => {
