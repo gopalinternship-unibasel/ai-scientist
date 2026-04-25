@@ -184,6 +184,7 @@ const RunPage = () => {
 
   const inFlight = run.status === "pending" || run.status === "qc" || run.status === "plan";
   const canRefine = run.status === "done" && !!run.plan;
+  const isOwner = !!user && run.owner_user_id === user.id;
 
   return (
     <div className="min-h-screen bg-background">
@@ -227,16 +228,33 @@ const RunPage = () => {
                 </div>
               )}
             </div>
-            {canRefine && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="no-print gap-1.5 flex-shrink-0"
-                onClick={() => setRefineOpen(true)}
-              >
-                <Sparkles className="h-3.5 w-3.5" /> Refine
-              </Button>
-            )}
+            <div className="flex flex-shrink-0 flex-wrap items-center justify-end gap-2 no-print">
+              {isOwner && run.status === "done" && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={onShare}
+                >
+                  {shareCopied ? (
+                    <Check className="h-3.5 w-3.5 text-success" />
+                  ) : (
+                    <Share2 className="h-3.5 w-3.5" />
+                  )}
+                  {shareCopied ? "Copied" : "Share"}
+                </Button>
+              )}
+              {canRefine && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={() => setRefineOpen(true)}
+                >
+                  <Sparkles className="h-3.5 w-3.5" /> Refine
+                </Button>
+              )}
+            </div>
           </div>
         </div>
 
@@ -253,6 +271,23 @@ const RunPage = () => {
             <Link to="/" className="mt-3 inline-block">
               <Button variant="outline" size="sm" className="gap-2">
                 <RotateCcw className="h-3.5 w-3.5" /> Try again
+              </Button>
+            </Link>
+          </div>
+        )}
+
+        {inFlight && stalled && (
+          <div className="mb-6 rounded-md border border-warning/40 bg-warning/10 p-4 no-print">
+            <h2 className="font-mono text-[11px] uppercase tracking-wider text-warning">
+              Generation stalled
+            </h2>
+            <p className="mt-1 text-sm text-foreground/80">
+              No progress for over 90 seconds. The model may have hung. You can wait a bit
+              longer or start over.
+            </p>
+            <Link to="/" className="mt-3 inline-block">
+              <Button variant="outline" size="sm" className="gap-2">
+                <RotateCcw className="h-3.5 w-3.5" /> Start a new run
               </Button>
             </Link>
           </div>
