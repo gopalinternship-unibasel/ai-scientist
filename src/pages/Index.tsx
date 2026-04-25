@@ -1,12 +1,13 @@
 import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Github } from "lucide-react";
 import { Logo } from "@/components/Logo";
+import { UserMenu } from "@/components/UserMenu";
 import { HypothesisInput } from "@/components/HypothesisInput";
 import { LiteratureQCCard } from "@/components/LiteratureQCCard";
 import { GenerationProgress } from "@/components/GenerationProgress";
-import type { LiteratureQC } from "@/lib/samples";
+import { StreamingPlanPreview } from "@/components/StreamingPlanPreview";
+import type { ExperimentPlan, LiteratureQC } from "@/lib/samples";
 import { startRunStream } from "@/lib/runStream";
 import { getOwnerToken } from "@/lib/owner";
 
@@ -17,12 +18,14 @@ const Index = () => {
   const [stage, setStage] = useState<Stage>("input");
   const [hypothesis, setHypothesis] = useState("");
   const [qc, setQc] = useState<LiteratureQC | null>(null);
+  const [partialPlan, setPartialPlan] = useState<Partial<ExperimentPlan> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   const handleSubmit = async (h: string) => {
     setHypothesis(h);
     setStage("qc");
     setQc(null);
+    setPartialPlan(null);
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -37,10 +40,14 @@ const Index = () => {
           switch (e.type) {
             case "run":
               runId = e.id;
+              if (e.cached) toast.success("Found a cached plan for this hypothesis ✦");
               break;
             case "qc":
               setQc(e.qc);
               setStage("plan");
+              break;
+            case "progress":
+              if (e.partial) setPartialPlan(e.partial);
               break;
             case "plan":
             case "done":
@@ -69,12 +76,12 @@ const Index = () => {
       <header className="sticky top-0 z-10 border-b border-rule bg-background/85 backdrop-blur">
         <div className="container flex h-16 items-center justify-between">
           <Logo />
-          <div className="hidden items-center gap-2 md:flex">
-            <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+          <div className="flex items-center gap-3">
+            <span className="hidden font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground md:inline">
               Powered by Lovable AI · Semantic Scholar
             </span>
+            <UserMenu />
           </div>
-          <div />
         </div>
       </header>
 
@@ -107,7 +114,7 @@ const Index = () => {
             <Connector />
             <StageDot active label="Literature QC" />
             <Connector />
-            <StageDot active={false} label="Experiment Plan" />
+            <StageDot active={stage === "plan"} label="Experiment Plan" />
           </div>
         )}
 
@@ -124,7 +131,7 @@ const Index = () => {
           {stage === "input" && <HypothesisInput onSubmit={handleSubmit} loading={loading} />}
           {qc && <LiteratureQCCard qc={qc} />}
           {stage === "qc" && !qc && <GenerationProgress stage="qc" />}
-          {stage === "plan" && qc && <GenerationProgress stage="plan" />}
+          {stage === "plan" && qc && <StreamingPlanPreview partial={partialPlan} />}
         </div>
       </main>
 
