@@ -4,6 +4,7 @@ import { COST_CATALOG_PROMPT } from "./cost-catalog.ts";
 import { corsHeaders } from "../_shared/cors.ts";
 import { fetchWithRetry } from "../_shared/fetch-with-retry.ts";
 import { sanitizeCitations } from "../_shared/citations.ts";
+import { checkHypothesis } from "../_shared/hypothesisValidation.ts";
 
 const planSchema = {
   type: "object",
@@ -315,8 +316,14 @@ serve(async (req) => {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-    if (rawHypothesis.length < 10 || rawHypothesis.length > 2000) {
-      return new Response(JSON.stringify({ error: "Hypothesis must be 10-2000 characters." }), {
+    if (rawHypothesis.length > 2000) {
+      return new Response(JSON.stringify({ error: "Hypothesis must be under 2000 characters." }), {
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const validation = checkHypothesis(rawHypothesis);
+    if (!validation.ok) {
+      return new Response(JSON.stringify({ error: validation.reason }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
