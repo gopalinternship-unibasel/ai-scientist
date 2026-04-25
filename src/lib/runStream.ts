@@ -17,11 +17,22 @@ interface StartArgs {
   ownerToken: string;
   signal?: AbortSignal;
   onEvent: (e: RunStreamEvent) => void;
+  /** Optional: parent run ID when refining a previous plan. */
+  parentRunId?: string;
+  /** Optional: natural-language refinement instruction. */
+  refinementInstruction?: string;
 }
 
 const URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/run-experiment`;
 
-export async function startRunStream({ hypothesis, ownerToken, signal, onEvent }: StartArgs) {
+export async function startRunStream({
+  hypothesis,
+  ownerToken,
+  signal,
+  onEvent,
+  parentRunId,
+  refinementInstruction,
+}: StartArgs) {
   // Use the user's session token if available so the edge function can attribute the run.
   const { data: { session } } = await supabase.auth.getSession();
   const bearer = session?.access_token ?? import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
@@ -33,7 +44,12 @@ export async function startRunStream({ hypothesis, ownerToken, signal, onEvent }
       apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
       Authorization: `Bearer ${bearer}`,
     },
-    body: JSON.stringify({ hypothesis, owner_token: ownerToken }),
+    body: JSON.stringify({
+      hypothesis,
+      owner_token: ownerToken,
+      parent_run_id: parentRunId ?? null,
+      refinement_instruction: refinementInstruction ?? null,
+    }),
     signal,
   });
 
