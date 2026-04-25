@@ -12,6 +12,7 @@ import { RefineDialog } from "@/components/RefineDialog";
 import { VersionSwitcher, type VersionEntry } from "@/components/VersionSwitcher";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Button } from "@/components/ui/button";
+import { untrackRun } from "@/hooks/useBackgroundRunNotifier";
 import type { ExperimentPlan, LiteratureQC, PlanCritique } from "@/lib/samples";
 
 type Status = "pending" | "qc" | "plan" | "done" | "failed";
