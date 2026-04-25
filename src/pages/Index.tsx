@@ -5,6 +5,7 @@ import { Logo } from "@/components/Logo";
 import { UserMenu } from "@/components/UserMenu";
 import { HypothesisInput } from "@/components/HypothesisInput";
 import { GenerationProgress } from "@/components/GenerationProgress";
+import { RateLimitBadge } from "@/components/RateLimitBadge";
 import { startRunStream } from "@/lib/runStream";
 import { getOwnerToken } from "@/lib/owner";
 import { trackRun } from "@/hooks/useBackgroundRunNotifier";
