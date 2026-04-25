@@ -76,6 +76,20 @@ const RULES: Rule[] = [
     suggestion:
       "Pick a target temperature in the millikelvin range, which is achievable with dilution refrigerators.",
   },
+  {
+    // Catches "expose adult zebrafish to 4 K bath", "cool mice to liquid
+    // helium temperature", etc. Vertebrate tissue freezes solid well above
+    // even liquid-nitrogen temperatures, never mind 4 K.
+    principle: "Cryogenic exposure of living vertebrates",
+    patterns: [
+      /\b(?:zebrafish|mice|mouse|rat|rats|axolotl|xenopus|frog|fish|vertebrate|mammal|human|patient|animal|organism|in\s+vivo|live)\b/i,
+      /\b(?:4\s*K|4\s*kelvin|liquid\s+helium|liquid\s+nitrogen|cryogenic|sub[-\s]?zero|near\s+absolute\s+zero)\b/i,
+    ],
+    explanation:
+      "Living vertebrates cannot survive cryogenic exposure (≤ ~−20 °C); tissue ice formation is lethal long before liquid-helium temperatures.",
+    suggestion:
+      "Use ex vivo tissue, isolated cells, or a cryopreservation protocol with vitrification agents — and study the nanomaterial behaviour separately at 4 K.",
+  },
 ];
 
 export function checkFeasibility(hypothesis: string): FeasibilityResult {
