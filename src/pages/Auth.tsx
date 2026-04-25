@@ -1,31 +1,98 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/hooks/useAuth";
+import { supabase } from "@/integrations/supabase/client";
 import { lovable } from "@/integrations/lovable";
 
 const Auth = () => {
   const { user, loading } = useAuth();
   const navigate = useNavigate();
+  const [busy, setBusy] = useState(false);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [name, setName] = useState("");
 
   useEffect(() => {
     if (!loading && user) navigate("/my-runs", { replace: true });
   }, [user, loading, navigate]);
 
   const onGoogle = async () => {
+    setBusy(true);
     const result = await lovable.auth.signInWithOAuth("google", {
       redirect_uri: `${window.location.origin}/my-runs`,
     });
     if (result.error) {
       toast.error("Could not start Google sign-in. Please try again.");
+      setBusy(false);
       return;
     }
     if (result.redirected) return;
     navigate("/my-runs");
   };
+
+  const onSignIn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    setBusy(false);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    navigate("/my-runs");
+  };
+
+  const onSignUp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    const { error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        emailRedirectTo: `${window.location.origin}/my-runs`,
+        data: name ? { full_name: name } : undefined,
+      },
+    });
+    setBusy(false);
+    if (error) {
+      // Surface HIBP / weak-password errors clearly.
+      toast.error(error.message);
+      return;
+    }
+    toast.success("Check your email to confirm your account.");
+  };
+
+  const onForgot = async () => {
+    if (!email) {
+      toast.error("Enter your email first, then click Forgot password.");
+      return;
+    }
+    setBusy(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    });
+    setBusy(false);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success("Password reset email sent.");
+  };
+
+  if (loading) {
+    return (
+      <div className="grid min-h-screen place-items-center bg-background">
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -53,9 +120,109 @@ const Auth = () => {
             run quota, and pick up where you left off across devices.
           </p>
 
-          <Button onClick={onGoogle} size="lg" className="mt-8 w-full gap-3">
+          <Button
+            onClick={onGoogle}
+            disabled={busy}
+            size="lg"
+            className="mt-8 w-full gap-3"
+          >
             <GoogleIcon /> Continue with Google
           </Button>
+
+          <div className="my-6 flex items-center gap-3">
+            <div className="h-px flex-1 bg-rule" />
+            <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+              or
+            </span>
+            <div className="h-px flex-1 bg-rule" />
+          </div>
+
+          <Tabs defaultValue="signin">
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="signin">Sign in</TabsTrigger>
+              <TabsTrigger value="signup">Create account</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="signin" className="mt-4">
+              <form onSubmit={onSignIn} className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="si-email">Email</Label>
+                  <Input
+                    id="si-email"
+                    type="email"
+                    autoComplete="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="si-pw">Password</Label>
+                  <Input
+                    id="si-pw"
+                    type="password"
+                    autoComplete="current-password"
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
+                </div>
+                <Button type="submit" disabled={busy} className="w-full">
+                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Sign in"}
+                </Button>
+                <button
+                  type="button"
+                  onClick={onForgot}
+                  className="block w-full text-center text-xs text-muted-foreground hover:text-foreground"
+                >
+                  Forgot password?
+                </button>
+              </form>
+            </TabsContent>
+
+            <TabsContent value="signup" className="mt-4">
+              <form onSubmit={onSignUp} className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="su-name">Name (optional)</Label>
+                  <Input
+                    id="su-name"
+                    autoComplete="name"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="su-email">Email</Label>
+                  <Input
+                    id="su-email"
+                    type="email"
+                    autoComplete="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="su-pw">Password</Label>
+                  <Input
+                    id="su-pw"
+                    type="password"
+                    autoComplete="new-password"
+                    required
+                    minLength={8}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    Min 8 characters. Common breached passwords are blocked.
+                  </p>
+                </div>
+                <Button type="submit" disabled={busy} className="w-full">
+                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Create account"}
+                </Button>
+              </form>
+            </TabsContent>
+          </Tabs>
 
           <p className="mt-6 text-center text-[11px] text-muted-foreground">
             Anonymous browsing keeps working — sign-in is optional.

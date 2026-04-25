@@ -7,6 +7,7 @@ import { useBackgroundRunNotifier } from "@/hooks/useBackgroundRunNotifier";
 import Index from "./pages/Index.tsx";
 import RunPage from "./pages/RunPage.tsx";
 import Auth from "./pages/Auth.tsx";
+import ResetPassword from "./pages/ResetPassword.tsx";
 import MyRuns from "./pages/MyRuns.tsx";
 import NotFound from "./pages/NotFound.tsx";
 
@@ -18,6 +19,7 @@ const InnerApp = () => {
     <Routes>
       <Route path="/" element={<Index />} />
       <Route path="/auth" element={<Auth />} />
+      <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/my-runs" element={<MyRuns />} />
       <Route path="/runs/:id" element={<RunPage />} />
       {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
