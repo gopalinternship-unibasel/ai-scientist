@@ -118,7 +118,7 @@ const Index = () => {
           <div className="mb-6 flex items-center gap-3 text-sm">
             <StageDot active label="Hypothesis" />
             <Connector />
-            <StageDot active={stage !== "input"} label="Literature QC" />
+            <StageDot active label="Literature QC" />
             <Connector />
             <StageDot active={stage === "done"} label="Experiment Plan" />
           </div>
