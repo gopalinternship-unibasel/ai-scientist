@@ -236,8 +236,8 @@ async function classifyNovelty(hypothesis: string, papers: LitPaper[], apiKey: s
     buildBody: (model) => ({
       model,
       messages: [
-        { role: "system", content: "You are a research librarian. Assess novelty in TWO ways: (1) keyword/method overlap (signal: not_found / similar / exact_match), and (2) SEMANTIC EQUIVALENCE — does any candidate test the SAME scientific claim as the hypothesis even with different wording, model systems, or measurements? Pick 1-3 most relevant papers." },
-        { role: "user", content: `HYPOTHESIS:\n${hypothesis}\n\nCANDIDATES:\n${JSON.stringify(condensed)}` },
+        { role: "system", content: "You are a research librarian assessing whether a hypothesis has prior art. Use this rubric:\n  • exact_match  — at least one candidate tests essentially the same claim (same intervention + same system + same outcome direction), even with minor wording differences.\n  • similar     — at least one candidate shares the technique AND topic area but differs on system, organism, or specific intervention. Default to this when in doubt and any candidate is on-topic.\n  • not_found   — every candidate is clearly off-topic (different field, different question).\nAlso report semantic_overlap (low/medium/high). Pick 1–3 most-relevant indices in `chosen`. ONLY pick papers that are genuinely on-topic; if none of the candidates are relevant, return chosen:[] and signal:not_found." },
+        { role: "user", content: `HYPOTHESIS:\n${hypothesis}\n\nCANDIDATES (already pre-ranked by token overlap; index 0 is most overlapping):\n${JSON.stringify(condensed)}` },
       ],
       tools: [{
         type: "function",
