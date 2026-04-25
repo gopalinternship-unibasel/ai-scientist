@@ -736,7 +736,7 @@ serve(async (req) => {
 
 REQUIREMENTS:
 - Ground the protocol in real, published methods (protocols.io, Bio-protocol, Nature Protocols, JOVE, OpenWetWare).
-- Materials must include real suppliers (Sigma-Aldrich, Thermo Fisher, Promega, Qiagen, IDT, ATCC, Addgene) with plausible catalog numbers.
+- Materials must include real suppliers (Sigma-Aldrich, Thermo Fisher, Promega, Qiagen, IDT, ATCC, Addgene). Catalog numbers MUST be ones you are confident exist on the supplier's site — if you are uncertain, set catalog_number to "Custom" or omit it. Do NOT fabricate plausible-looking SKUs. Sigma SKUs follow patterns like T9531, PHR1084-1G; Thermo Fisher uses 7–9 digit numbers (11965092) or letter+digits (A3160401); IDT Alt-R reagents are 1081xxx; ATCC uses CCL-2, CRL-3216, HTB-22.
 - Budget MUST be anchored to the REFERENCE COST CATALOG below — do not invent prices that are wildly off (>20%).
 - Budget total MUST equal the sum of line items, and line items must roughly equal materials subtotal + labour + equipment + overhead.
 - CITATIONS: Use ONLY the canonical format \`[N]\` (or \`(see [N, M])\` for multiples). N must be a 1-based index into the KNOWN RELATED WORK list. Never invent reference numbers; never use prose forms like "(ref. 1)" or "(see reference 1)".
@@ -869,9 +869,14 @@ ${COST_CATALOG_PROMPT}`;
           //    Feed catalog-mismatch findings as extra reviewer context so the
           //    critique surfaces wrong-form / wrong-cat# materials concretely.
           try {
-            const catIssues = findCatalogIssues((planObj as { materials?: { name?: string; catalog_number?: string }[] })?.materials);
+            const catIssues = findCatalogIssues((planObj as { materials?: { name?: string; catalog_number?: string; supplier?: string }[] })?.materials);
             const extraContext = catIssues.length
-              ? `\n\nDETERMINISTIC CATALOG CHECK FOUND ${catIssues.length} MISMATCH(ES) — please raise these in 'concerns' with severity 'high':\n${catIssues.map(i => `- Material #${i.material_index + 1} declares "${i.declared_name}" with catalog number ${i.catalog_number}, but that catalog number is actually "${i.canonical_name}" (${i.reason}).`).join("\n")}`
+              ? `\n\nDETERMINISTIC CATALOG CHECK FOUND ${catIssues.length} ISSUE(S) — please raise these in 'concerns' with severity 'high':\n${catIssues.map((i) => {
+                  if (i.reason === "format_mismatch") {
+                    return `- Material #${i.material_index + 1} ("${i.declared_name}") has catalog number ${i.catalog_number}, which does NOT match the supplier's catalog format. ${i.canonical_name} Verify on the supplier site before ordering.`;
+                  }
+                  return `- Material #${i.material_index + 1} declares "${i.declared_name}" with catalog number ${i.catalog_number}, but that catalog number is actually "${i.canonical_name}" (${i.reason}).`;
+                }).join("\n")}`
               : "";
             if (catIssues.length) {
               console.log("catalog-check", JSON.stringify({ run_id: runId, issues: catIssues.length }));
