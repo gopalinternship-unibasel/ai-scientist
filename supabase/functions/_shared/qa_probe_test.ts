@@ -19,7 +19,7 @@ async function probe(label: string, h: string) {
   if (!feas.ok) return;
   // 2) canonical
   const canon = detectCanonicalTechnique(h);
-  console.log("canonical:", canon.matched ? canon.name : "no");
+  console.log("canonical:", canon.matched ? canon.technique : "no");
   // 3) literature
   const lit = await searchLiterature(h);
   console.log(`literature: ${lit.papers.length} papers (s2:${lit.sources.s2} oa:${lit.sources.openalex} pm:${lit.sources.pubmed})`);
