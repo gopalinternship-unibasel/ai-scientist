@@ -145,3 +145,21 @@
     @apply underline decoration-from-font underline-offset-4 decoration-foreground/40 hover:decoration-foreground transition-colors;
   }
 }
+
+/* Print styles for PDF export */
+@media print {
+  @page { margin: 14mm; size: A4; }
+  body { background: white !important; }
+  .no-print { display: none !important; }
+  header.sticky { display: none !important; }
+  footer { display: none !important; }
+  .paper-surface {
+    box-shadow: none !important;
+    border: 1px solid hsl(var(--rule)) !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  section { break-inside: avoid; page-break-inside: avoid; }
+  h1, h2, h3 { break-after: avoid; page-break-after: avoid; }
+  a { color: hsl(var(--foreground)) !important; text-decoration: underline; }
+}
