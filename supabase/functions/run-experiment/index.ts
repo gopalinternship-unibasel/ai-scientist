@@ -801,8 +801,17 @@ ${COST_CATALOG_PROMPT}`;
           send("done", { id: runId });
 
           // 3) Reviewer critique pass (best-effort, fire-and-forget after main plan is sent).
+          //    Feed catalog-mismatch findings as extra reviewer context so the
+          //    critique surfaces wrong-form / wrong-cat# materials concretely.
           try {
-            const critique = await critiquePlan(hypothesis, plan, LOVABLE_API_KEY);
+            const catIssues = findCatalogIssues((planObj as { materials?: { name?: string; catalog_number?: string }[] })?.materials);
+            const extraContext = catIssues.length
+              ? `\n\nDETERMINISTIC CATALOG CHECK FOUND ${catIssues.length} MISMATCH(ES) — please raise these in 'concerns' with severity 'high':\n${catIssues.map(i => `- Material #${i.material_index + 1} declares "${i.declared_name}" with catalog number ${i.catalog_number}, but that catalog number is actually "${i.canonical_name}" (${i.reason}).`).join("\n")}`
+              : "";
+            if (catIssues.length) {
+              console.log("catalog-check", JSON.stringify({ run_id: runId, issues: catIssues.length }));
+            }
+            const critique = await critiquePlan(hypothesis, plan, LOVABLE_API_KEY, extraContext);
             if (critique) {
               await supabase.from("runs").update({ critique }).eq("id", runId);
               send("critique", critique);
