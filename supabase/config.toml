@@ -5,3 +5,6 @@ verify_jwt = false
 
 [functions.generate-plan]
 verify_jwt = false
+
+[functions.run-experiment]
+verify_jwt = false
