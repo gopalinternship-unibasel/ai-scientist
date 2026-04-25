@@ -296,7 +296,7 @@ async function checkRateLimit(
   kind: string,
   windowMinutes: number,
   max: number,
-): Promise<{ ok: boolean; remaining: number }> {
+): Promise<{ ok: boolean; remaining: number; used: number; limit: number }> {
   const since = new Date(Date.now() - windowMinutes * 60_000).toISOString();
   const { count } = await supabase
     .from("rate_limits")
@@ -305,9 +305,17 @@ async function checkRateLimit(
     .eq("kind", kind)
     .gte("created_at", since);
   const used = count ?? 0;
-  if (used >= max) return { ok: false, remaining: 0 };
+  if (used >= max) return { ok: false, remaining: 0, used, limit: max };
   await supabase.from("rate_limits").insert({ identifier, kind });
-  return { ok: true, remaining: max - used - 1 };
+  return { ok: true, remaining: max - used - 1, used: used + 1, limit: max };
+}
+
+function rateHeaders(rl: { used: number; limit: number; remaining: number }) {
+  return {
+    "X-RateLimit-Limit": String(rl.limit),
+    "X-RateLimit-Used": String(rl.used),
+    "X-RateLimit-Remaining": String(rl.remaining),
+  };
 }
 
 interface Reference {
