@@ -759,8 +759,8 @@ ${COST_CATALOG_PROMPT}`;
             plan = JSON.parse(argsAccum);
           } catch (e) {
             console.error("Failed to parse plan JSON", e);
-            await supabase.from("runs").update({ status: "failed", error: "Model returned malformed plan." }).eq("id", runId);
-            send("error", { message: "Model returned malformed plan." });
+            await supabase.from("runs").update({ status: "failed", error: encodeError("PARSE", "Model returned malformed plan.") }).eq("id", runId);
+            send("error", { message: "Model returned malformed plan.", kind: "PARSE" });
             controller.close();
             return;
           }
@@ -796,9 +796,9 @@ ${COST_CATALOG_PROMPT}`;
         } catch (e) {
           console.error("stream error", e);
           if (runId) {
-            await supabase.from("runs").update({ status: "failed", error: "Internal error" }).eq("id", runId);
+            await supabase.from("runs").update({ status: "failed", error: encodeError("INTERNAL", "Internal error") }).eq("id", runId);
           }
-          try { send("error", { message: "Internal error" }); } catch { /* noop */ }
+          try { send("error", { message: "Internal error", kind: "INTERNAL" }); } catch { /* noop */ }
           controller.close();
         }
       },
