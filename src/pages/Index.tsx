@@ -36,10 +36,19 @@ const Index = () => {
               // continues server-side regardless of whether this tab stays open.
               navigate(`/runs/${e.id}`);
               break;
-            case "error":
-              toast.error(e.message);
+            case "error": {
+              const isRateLimit = /limited to|per hour|sign in/i.test(e.message);
+              if (isRateLimit) {
+                toast.error(e.message, {
+                  action: { label: "Sign in", onClick: () => navigate("/auth") },
+                  duration: 8000,
+                });
+              } else {
+                toast.error(e.message);
+              }
               setSubmitting(false);
               break;
+            }
             // qc / progress / plan / done are handled by RunPage via realtime now.
           }
         },
