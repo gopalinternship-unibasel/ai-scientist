@@ -534,7 +534,9 @@ REQUIREMENTS:
 - Be precise. Use exact concentrations, volumes, durations.
 ${COST_CATALOG_PROMPT}`;
 
-          const aiRes = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+          // Streaming plan generation. Retry on transient errors but only on the
+          // initial connect — once tokens are flowing we cannot resume mid-stream.
+          const aiRes = await fetchWithRetry("https://ai.gateway.lovable.dev/v1/chat/completions", {
             method: "POST",
             headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -555,7 +557,7 @@ ${COST_CATALOG_PROMPT}`;
               }],
               tool_choice: { type: "function", function: { name: "submit_experiment_plan" } },
             }),
-          });
+          }, { label: "plan-stream", retries: 2 });
 
           if (!aiRes.ok || !aiRes.body) {
             const text = await aiRes.text().catch(() => "");
