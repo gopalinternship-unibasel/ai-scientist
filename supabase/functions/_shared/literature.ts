@@ -5,6 +5,14 @@
 // All three sources are best-effort: a failure or rate-limit on one source
 // just contributes zero rows. We surface which sources actually returned
 // results so the caller can degrade gracefully.
+//
+// QUERY DEGRADATION: when the first attempt (full hypothesis) returns 0 hits
+// across every source, we retry with progressively broader keyword queries
+// before giving up. This fixes the case where a perfectly cite-able topic
+// (e.g. "PCR amplification of GAPDH") returns nothing because the full
+// sentence happens to match no paper title verbatim.
+
+import { degradedQueries } from "./queryDegradation.ts";
 
 export interface LitPaper {
   source: "s2" | "openalex" | "pubmed";
@@ -154,16 +162,40 @@ function titleKey(t: string): string {
   return t.toLowerCase().replace(/[^a-z0-9 ]+/g, "").replace(/\s+/g, " ").trim().slice(0, 80);
 }
 
-export async function searchLiterature(query: string): Promise<LitResult> {
-  const q = query.replace(/\s+/g, " ").trim().slice(0, 280);
+/** Run S2 + OpenAlex + PubMed in parallel for a single query string. */
+async function runOnce(q: string) {
   const [s2, oa, pm] = await Promise.allSettled([
     searchS2(q),
     searchOpenAlex(q),
     searchPubMed(q),
   ]);
-  const s2Papers = s2.status === "fulfilled" ? s2.value : [];
-  const oaPapers = oa.status === "fulfilled" ? oa.value : [];
-  const pmPapers = pm.status === "fulfilled" ? pm.value : [];
+  return {
+    s2: s2.status === "fulfilled" ? s2.value : [],
+    oa: oa.status === "fulfilled" ? oa.value : [],
+    pm: pm.status === "fulfilled" ? pm.value : [],
+    s2Status: s2.status, oaStatus: oa.status, pmStatus: pm.status,
+  };
+}
+
+export async function searchLiterature(query: string): Promise<LitResult> {
+  // Try the full hypothesis first; if it returns nothing across all sources,
+  // back off to progressively-broader keyword queries (e.g. "PCR GAPDH human"
+  // → "PCR GAPDH"). This rescues the common failure mode where a precisely
+  // worded sentence finds zero keyword matches in any database.
+  const queries = degradedQueries(query);
+  let attempt: Awaited<ReturnType<typeof runOnce>> | null = null;
+  let usedQueryIdx = 0;
+  for (let i = 0; i < queries.length; i++) {
+    attempt = await runOnce(queries[i]);
+    const total = attempt.s2.length + attempt.oa.length + attempt.pm.length;
+    if (total > 0) { usedQueryIdx = i; break; }
+    usedQueryIdx = i;
+  }
+  // attempt is non-null because queries always has ≥1 entry
+  const { s2: s2Papers, oa: oaPapers, pm: pmPapers, s2Status, oaStatus, pmStatus } = attempt!;
+  if (usedQueryIdx > 0) {
+    console.log(`[literature] degraded query #${usedQueryIdx}: "${queries[usedQueryIdx]}" recovered ${s2Papers.length + oaPapers.length + pmPapers.length} hits`);
+  }
 
   // Dedup priority: prefer the source with abstract (S2 / OpenAlex over PubMed).
   const merged: LitPaper[] = [];
@@ -191,13 +223,13 @@ export async function searchLiterature(query: string): Promise<LitResult> {
   return {
     papers: merged.slice(0, 10),
     sources: {
-      s2: s2.status === "fulfilled" && s2Papers.length > 0,
-      openalex: oa.status === "fulfilled" && oaPapers.length > 0,
-      pubmed: pm.status === "fulfilled" && pmPapers.length > 0,
+      s2: s2Status === "fulfilled" && s2Papers.length > 0,
+      openalex: oaStatus === "fulfilled" && oaPapers.length > 0,
+      pubmed: pmStatus === "fulfilled" && pmPapers.length > 0,
     },
     // If everyone returned 0 AND at least one rejected, treat as rate-limited.
     rateLimited:
       merged.length === 0 &&
-      [s2, oa, pm].some((r) => r.status === "rejected"),
+      [s2Status, oaStatus, pmStatus].some((s) => s === "rejected"),
   };
 }

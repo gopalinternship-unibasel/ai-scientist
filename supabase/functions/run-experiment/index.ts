@@ -11,6 +11,8 @@ import {
   callAIWithFallback, PLAN_MODELS, FAST_MODELS,
   classifyHttpError, encodeError, type ErrorKind,
 } from "../_shared/ai-fallback.ts";
+import { gateHypothesis } from "../_shared/hypothesisGate.ts";
+import { findCatalogIssues } from "../_shared/catalogCheck.ts";
 
 const planSchema = {
   type: "object",
@@ -269,7 +271,7 @@ async function classifyNovelty(hypothesis: string, papers: LitPaper[], apiKey: s
   }
 }
 
-async function critiquePlan(hypothesis: string, plan: unknown, apiKey: string) {
+async function critiquePlan(hypothesis: string, plan: unknown, apiKey: string, extraContext = "") {
   const { res: aiRes } = await callAIWithFallback({
     apiKey,
     models: FAST_MODELS,
@@ -277,8 +279,8 @@ async function critiquePlan(hypothesis: string, plan: unknown, apiKey: string) {
     buildBody: (model) => ({
       model,
       messages: [
-        { role: "system", content: "You are a senior peer reviewer for an experimental biology / chemistry journal. Critically evaluate the proposed experiment plan for: missing controls, weak statistical power, ethical/safety oversights, unrealistic budgets or timelines, and gaps between hypothesis and protocol. Be specific and actionable." },
-        { role: "user", content: `HYPOTHESIS:\n${hypothesis}\n\nPROPOSED PLAN:\n${JSON.stringify(plan).slice(0, 12000)}` },
+        { role: "system", content: "You are a senior peer reviewer for an experimental biology / chemistry journal. Critically evaluate the proposed experiment plan for: missing controls, weak statistical power, ethical/safety oversights, unrealistic budgets or timelines, supplier/catalog inconsistencies, and gaps between hypothesis and protocol. Be specific and actionable." },
+        { role: "user", content: `HYPOTHESIS:\n${hypothesis}\n\nPROPOSED PLAN:\n${JSON.stringify(plan).slice(0, 12000)}${extraContext}` },
       ],
       tools: [{
         type: "function",
@@ -413,6 +415,23 @@ serve(async (req) => {
     const refinementInstruction = typeof rawRefinement === "string" && rawRefinement.trim().length > 0
       ? stripCtl(rawRefinement).trim().slice(0, 500) : null;
     const isRefinement = !!(parentRunId && refinementInstruction);
+
+    // LLM-backed gate: reject inputs that clearly aren't hypotheses (jokes,
+    // chatter, gibberish) BEFORE we burn rate-limit quota or AI credits.
+    // Skipped for refinements — those have a validated parent.
+    if (!isRefinement) {
+      const verdict = await gateHypothesis(hypothesis, LOVABLE_API_KEY);
+      if (!verdict.ok) {
+        return new Response(JSON.stringify({
+          error: verdict.reason,
+          suggestion: verdict.suggestion,
+          kind: "VALIDATION",
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+    }
 
     // Resolve user (optional)
     let userId: string | null = null;
@@ -782,8 +801,17 @@ ${COST_CATALOG_PROMPT}`;
           send("done", { id: runId });
 
           // 3) Reviewer critique pass (best-effort, fire-and-forget after main plan is sent).
+          //    Feed catalog-mismatch findings as extra reviewer context so the
+          //    critique surfaces wrong-form / wrong-cat# materials concretely.
           try {
-            const critique = await critiquePlan(hypothesis, plan, LOVABLE_API_KEY);
+            const catIssues = findCatalogIssues((planObj as { materials?: { name?: string; catalog_number?: string }[] })?.materials);
+            const extraContext = catIssues.length
+              ? `\n\nDETERMINISTIC CATALOG CHECK FOUND ${catIssues.length} MISMATCH(ES) — please raise these in 'concerns' with severity 'high':\n${catIssues.map(i => `- Material #${i.material_index + 1} declares "${i.declared_name}" with catalog number ${i.catalog_number}, but that catalog number is actually "${i.canonical_name}" (${i.reason}).`).join("\n")}`
+              : "";
+            if (catIssues.length) {
+              console.log("catalog-check", JSON.stringify({ run_id: runId, issues: catIssues.length }));
+            }
+            const critique = await critiquePlan(hypothesis, plan, LOVABLE_API_KEY, extraContext);
             if (critique) {
               await supabase.from("runs").update({ critique }).eq("id", runId);
               send("critique", critique);
