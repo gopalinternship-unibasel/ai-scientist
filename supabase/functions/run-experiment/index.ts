@@ -271,7 +271,7 @@ async function classifyNovelty(hypothesis: string, papers: LitPaper[], apiKey: s
   }
 }
 
-async function critiquePlan(hypothesis: string, plan: unknown, apiKey: string) {
+async function critiquePlan(hypothesis: string, plan: unknown, apiKey: string, extraContext = "") {
   const { res: aiRes } = await callAIWithFallback({
     apiKey,
     models: FAST_MODELS,
@@ -279,8 +279,8 @@ async function critiquePlan(hypothesis: string, plan: unknown, apiKey: string) {
     buildBody: (model) => ({
       model,
       messages: [
-        { role: "system", content: "You are a senior peer reviewer for an experimental biology / chemistry journal. Critically evaluate the proposed experiment plan for: missing controls, weak statistical power, ethical/safety oversights, unrealistic budgets or timelines, and gaps between hypothesis and protocol. Be specific and actionable." },
-        { role: "user", content: `HYPOTHESIS:\n${hypothesis}\n\nPROPOSED PLAN:\n${JSON.stringify(plan).slice(0, 12000)}` },
+        { role: "system", content: "You are a senior peer reviewer for an experimental biology / chemistry journal. Critically evaluate the proposed experiment plan for: missing controls, weak statistical power, ethical/safety oversights, unrealistic budgets or timelines, supplier/catalog inconsistencies, and gaps between hypothesis and protocol. Be specific and actionable." },
+        { role: "user", content: `HYPOTHESIS:\n${hypothesis}\n\nPROPOSED PLAN:\n${JSON.stringify(plan).slice(0, 12000)}${extraContext}` },
       ],
       tools: [{
         type: "function",
