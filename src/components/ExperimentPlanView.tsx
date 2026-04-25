@@ -95,10 +95,42 @@ const Section = ({
 const fmtUsd = (n: number) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n);
 
-export const ExperimentPlanView = ({ plan }: { plan: ExperimentPlan }) => {
+interface PlanViewProps {
+  plan: ExperimentPlan;
+  /** Optional: previous version's plan, used to render "modified" badges per section. */
+  previousPlan?: ExperimentPlan | null;
+  /** Hypothesis text — needed for the PDF cover sheet. */
+  hypothesis?: string;
+  /** Version number for the PDF filename / cover sheet. */
+  version?: number;
+}
+
+/** Cheap structural diff: stringify each section and compare. */
+function diffSections(a: ExperimentPlan, b: ExperimentPlan) {
+  const eq = (x: unknown, y: unknown) => JSON.stringify(x) === JSON.stringify(y);
+  return {
+    success_criteria: !eq(a.success_criteria, b.success_criteria),
+    protocol: !eq(a.protocol, b.protocol),
+    materials: !eq(a.materials, b.materials),
+    budget: !eq(a.budget, b.budget),
+    timeline: !eq(a.timeline, b.timeline),
+    validation: !eq(a.validation, b.validation),
+    statistical_design: !eq(a.statistical_design, b.statistical_design),
+    safety: !eq(a.safety, b.safety),
+    risks: !eq(a.risks, b.risks),
+    team: !eq(a.team, b.team),
+  };
+}
+
+export const ExperimentPlanView = ({ plan, previousPlan, hypothesis, version = 1 }: PlanViewProps) => {
   const materialsTotal = useMemo(
     () => plan.materials.reduce((s, m) => s + (m.total_cost_usd ?? 0), 0),
     [plan.materials]
+  );
+
+  const changed = useMemo(
+    () => previousPlan ? diffSections(plan, previousPlan) : null,
+    [plan, previousPlan],
   );
 
   const onShare = async () => {
@@ -110,14 +142,30 @@ export const ExperimentPlanView = ({ plan }: { plan: ExperimentPlan }) => {
     }
   };
 
+  const onExportPdf = () => {
+    try {
+      exportPlanToPdf(plan, hypothesis ?? plan.hypothesis_restated, version);
+      toast.success("PDF downloaded");
+    } catch (err) {
+      console.error(err);
+      toast.error("Could not export PDF");
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Toolbar */}
       <div className="no-print flex items-center justify-end gap-2">
+        {previousPlan && (
+          <span className="mr-auto inline-flex items-center gap-1.5 rounded-full border border-accent/40 bg-accent/10 px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider text-accent">
+            <GitCompare className="h-3 w-3" />
+            Comparing to v{Math.max(1, version - 1)}
+          </span>
+        )}
         <Button variant="outline" size="sm" onClick={onShare} className="gap-2">
           <Share2 className="h-3.5 w-3.5" /> Share
         </Button>
-        <Button variant="outline" size="sm" onClick={() => window.print()} className="gap-2">
+        <Button variant="outline" size="sm" onClick={onExportPdf} className="gap-2">
           <Printer className="h-3.5 w-3.5" /> Save as PDF
         </Button>
       </div>
