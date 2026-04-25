@@ -263,43 +263,6 @@ async function classifyNovelty(hypothesis: string, papers: LitPaper[], apiKey: s
     return { signal: "similar" as const, rationale: "Unable to parse classification.", chosen: [0, 1, 2], semantic_overlap: "medium" as const };
   }
 }
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "google/gemini-3-flash-preview",
-      messages: [
-        { role: "system", content: "You are a research librarian assessing novelty. Choose 1-3 most relevant papers." },
-        { role: "user", content: `HYPOTHESIS:\n${hypothesis}\n\nCANDIDATES:\n${JSON.stringify(condensed)}` },
-      ],
-      tools: [{
-        type: "function",
-        function: {
-          name: "report_novelty",
-          parameters: {
-            type: "object",
-            properties: {
-              signal: { type: "string", enum: ["not_found", "similar", "exact_match"] },
-              rationale: { type: "string" },
-              chosen: { type: "array", items: { type: "integer" } },
-            },
-            required: ["signal", "rationale", "chosen"],
-            additionalProperties: false,
-          },
-        },
-      }],
-      tool_choice: { type: "function", function: { name: "report_novelty" } },
-    }),
-  }, { label: "novelty-classify" });
-  if (!aiRes.ok) {
-    return { signal: "similar" as const, rationale: "Classification unavailable; defaulting to similar work exists.", chosen: [0, 1, 2] };
-  }
-  try {
-    const aiJson = await aiRes.json();
-    return JSON.parse(aiJson.choices[0].message.tool_calls[0].function.arguments);
-  } catch {
-    return { signal: "similar" as const, rationale: "Unable to parse classification.", chosen: [0, 1, 2] };
-  }
-}
 
 async function critiquePlan(hypothesis: string, plan: unknown, apiKey: string) {
   const aiRes = await fetchWithRetry("https://ai.gateway.lovable.dev/v1/chat/completions", {
