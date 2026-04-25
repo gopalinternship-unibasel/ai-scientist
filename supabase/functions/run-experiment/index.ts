@@ -3,8 +3,10 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { COST_CATALOG_PROMPT } from "./cost-catalog.ts";
 import { corsHeaders } from "../_shared/cors.ts";
 import { fetchWithRetry } from "../_shared/fetch-with-retry.ts";
-import { sanitizeCitations } from "../_shared/citations.ts";
+import { sanitizeCitationsWithReport } from "../_shared/citations.ts";
 import { checkHypothesis } from "../_shared/hypothesisValidation.ts";
+import { searchLiterature, type LitPaper } from "../_shared/literature.ts";
+import { screenSafety, safetyPromptFragment } from "../_shared/safety.ts";
 
 const planSchema = {
   type: "object",
