@@ -393,6 +393,33 @@ serve(async (req) => {
 
     // Cache: skip cache lookup for refinements (they should always re-generate).
     const hHash = await hashHypothesis(hypothesis);
+
+    // Idempotency: if THIS owner already has an in-flight run for the same
+    // hypothesis, return that run instead of starting a duplicate. Catches
+    // double-clicks and racing browser tabs.
+    if (!isRefinement) {
+      const ownerFilter = userId
+        ? { col: "owner_user_id", val: userId }
+        : ownerToken ? { col: "owner_token", val: ownerToken } : null;
+      if (ownerFilter) {
+        const { data: pending } = await supabase
+          .from("runs")
+          .select("id")
+          .eq("hypothesis_hash", hHash)
+          .eq(ownerFilter.col, ownerFilter.val)
+          .in("status", ["pending", "qc", "plan"])
+          .gt("updated_at", new Date(Date.now() - 5 * 60_000).toISOString())
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (pending?.id) {
+          return new Response(JSON.stringify({ id: pending.id, in_flight: true }), {
+            status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+      }
+    }
+
     const { data: cached } = isRefinement ? { data: null } : await supabase
       .from("runs")
       .select("id, qc, plan, critique")
