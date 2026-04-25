@@ -51,8 +51,27 @@ export const ExperimentPlanView = ({ plan }: { plan: ExperimentPlan }) => {
     [plan.materials]
   );
 
+  const onShare = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      toast.success("Link copied to clipboard");
+    } catch {
+      toast.error("Could not copy link");
+    }
+  };
+
   return (
     <div className="space-y-6">
+      {/* Toolbar */}
+      <div className="no-print flex items-center justify-end gap-2">
+        <Button variant="outline" size="sm" onClick={onShare} className="gap-2">
+          <Share2 className="h-3.5 w-3.5" /> Share
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => window.print()} className="gap-2">
+          <Printer className="h-3.5 w-3.5" /> Save as PDF
+        </Button>
+      </div>
+
       {/* Header card */}
       <section className="paper-surface relative overflow-hidden rounded-lg p-6 md:p-10 animate-fade-in">
         <div className="absolute right-6 top-6 flex flex-col items-end gap-2">
