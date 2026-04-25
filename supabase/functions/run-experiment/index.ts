@@ -363,20 +363,32 @@ serve(async (req) => {
     if (isRefinement) {
       const { data: parent } = await supabase
         .from("runs")
-        .select("plan, qc, version, hypothesis_hash")
+        .select("plan, qc, version, hypothesis_hash, owner_user_id, owner_token")
         .eq("id", parentRunId)
         .maybeSingle();
-      if (parent && parent.plan) {
-        parentRun = { plan: parent.plan, qc: parent.qc, version: parent.version ?? 1 };
-        // Find max version in the chain (root + descendants).
-        const { data: siblings } = await supabase
-          .from("runs")
-          .select("version")
-          .or(`id.eq.${parentRunId},parent_run_id.eq.${parentRunId}`)
-          .order("version", { ascending: false })
-          .limit(1);
-        nextVersion = ((siblings?.[0]?.version as number | undefined) ?? parentRun.version) + 1;
+      if (!parent || !parent.plan) {
+        return new Response(JSON.stringify({ error: "Parent run not found." }), {
+          status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
       }
+      // Ownership check: only the owner of the parent run may refine it.
+      // Match either by signed-in user ID or by anonymous owner_token.
+      const ownsByUser = userId && parent.owner_user_id === userId;
+      const ownsByToken = ownerToken && parent.owner_token === ownerToken;
+      if (!ownsByUser && !ownsByToken) {
+        return new Response(JSON.stringify({ error: "You can only refine your own experiments." }), {
+          status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      parentRun = { plan: parent.plan, qc: parent.qc, version: parent.version ?? 1 };
+      // Find max version in the chain (root + descendants).
+      const { data: siblings } = await supabase
+        .from("runs")
+        .select("version")
+        .or(`id.eq.${parentRunId},parent_run_id.eq.${parentRunId}`)
+        .order("version", { ascending: false })
+        .limit(1);
+      nextVersion = ((siblings?.[0]?.version as number | undefined) ?? parentRun.version) + 1;
     }
 
     // Cache: skip cache lookup for refinements (they should always re-generate).
