@@ -110,17 +110,26 @@ export const ExperimentPlanView = ({ plan }: { plan: ExperimentPlan }) => {
 
       {/* Header card */}
       <section className="paper-surface relative overflow-hidden rounded-lg p-6 md:p-10 animate-fade-in">
-        <div className="absolute right-6 top-6 flex flex-col items-end gap-2">
+        <div className="hidden md:flex absolute right-6 top-6 max-w-[40%] flex-col items-end gap-2">
           <span className="stamp border-accent/40 bg-accent/10 text-accent">
             <span className="h-1.5 w-1.5 rounded-full bg-accent" />
             Experiment Plan
           </span>
-          <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+          <span className="text-right font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
             {plan.domain}
           </span>
         </div>
 
-        <div className="max-w-3xl">
+        <div className="md:max-w-[60%] md:pr-4">
+          <div className="mb-2 flex flex-wrap items-center gap-2 md:hidden">
+            <span className="stamp border-accent/40 bg-accent/10 text-accent">
+              <span className="h-1.5 w-1.5 rounded-full bg-accent" />
+              Experiment Plan
+            </span>
+            <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+              {plan.domain}
+            </span>
+          </div>
           <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
             Stage 03
           </div>
