@@ -86,7 +86,7 @@ const RunPage = () => {
       const { data: chain } = await client
         .from("runs")
         // deno-lint-ignore no-explicit-any
-        .select("id,version,refinement_instruction,created_at,status,parent_run_id" as any)
+        .select("id,version,refinement_instruction,created_at,status,parent_run_id,plan" as any)
         .or(`id.eq.${rootId},parent_run_id.eq.${rootId}`)
         .order("version", { ascending: true });
       if (active && chain) setVersions(chain as unknown as VersionEntry[]);
