@@ -38,15 +38,26 @@ export const LiteratureQCCard = ({ qc }: { qc: LiteratureQC }) => {
           </span>
         </div>
         <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-          via Semantic Scholar
+          {qc.sources_used
+            ? `via ${[
+                qc.sources_used.s2 && "Semantic Scholar",
+                qc.sources_used.openalex && "OpenAlex",
+                qc.sources_used.pubmed && "PubMed",
+              ].filter(Boolean).join(" · ") || "—"}`
+            : "via Semantic Scholar"}
         </span>
       </div>
 
       <div className={`flex items-start gap-4 rounded-md border p-4 ${cfg.tone}`}>
         <Icon className="mt-0.5 h-5 w-5 flex-shrink-0" />
         <div className="flex-1">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className={`stamp ${cfg.badge} border-transparent`}>{cfg.label}</span>
+            {qc.semantic_overlap && qc.semantic_overlap !== "low" && (
+              <span className="stamp border-warning/40 bg-warning/10 text-foreground">
+                Semantic overlap: {qc.semantic_overlap}
+              </span>
+            )}
           </div>
           <p className="mt-2 text-sm text-foreground/80">{cfg.description}</p>
           <p className="mt-3 text-sm font-serif italic text-foreground/90">"{qc.rationale}"</p>
