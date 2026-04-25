@@ -20,18 +20,20 @@ async function probe(label: string, h: string) {
   // 2) canonical
   const canon = detectCanonicalTechnique(h);
   console.log("canonical:", canon.matched ? canon.technique : "no");
-  // 3) literature
-  const lit = await searchLiterature(h);
+  // 3) literature — match the prod query strategy: canonical → technique-only
+  const litQuery = canon.matched ? `${canon.technique} method protocol` : h;
+  const lit = await searchLiterature(litQuery);
   console.log(`literature: ${lit.papers.length} papers (s2:${lit.sources.s2} oa:${lit.sources.openalex} pm:${lit.sources.pubmed})`);
   const ranked = rankByRelevance(lit.papers, h);
   const top = ranked.slice(0, 3);
   for (const p of top) {
     console.log(`  • [${p.relevance.toFixed(3)}] ${p.title.slice(0, 90)}  (${p.source}, ${p.year ?? "?"})`);
   }
-  const topRel = ranked[0]?.relevance ?? 0;
+  const floor = canon.matched ? 0.005 : RELEVANCE_FLOOR;
+  const candidates = ranked.filter((p) => p.relevance >= floor);
   let signal: string;
-  if (canon.matched && topRel >= RELEVANCE_FLOOR) signal = "exact_match (canonical override)";
-  else if (ranked.length === 0 || topRel < RELEVANCE_FLOOR) signal = "not_found (no relevant lit)";
+  if (canon.matched && candidates.length > 0) signal = "exact_match (canonical override)";
+  else if (candidates.length === 0) signal = "not_found (no relevant lit)";
   else signal = "similar (LLM would classify)";
   console.log("→ heuristic signal:", signal);
 }
