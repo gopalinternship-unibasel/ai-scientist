@@ -49,6 +49,7 @@ const STALL_THRESHOLD_MS = 90_000;
 const RunPage = () => {
   const { id } = useParams<{ id: string }>();
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const shareToken = searchParams.get("t");
   const [run, setRun] = useState<Run | null>(null);
@@ -57,6 +58,8 @@ const RunPage = () => {
   const [refineOpen, setRefineOpen] = useState(false);
   const [stalled, setStalled] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const retryAbortRef = useRef<AbortController | null>(null);
 
   // Pick a client whose RLS context can read this run:
   // - signed-in user → default supabase client (their JWT is enough)
