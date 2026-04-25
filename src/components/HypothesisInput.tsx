@@ -134,3 +134,23 @@ export const HypothesisInput = ({ onSubmit, loading }: Props) => {
     </section>
   );
 };
+
+const Requirement = ({ met, children }: { met: boolean; children: React.ReactNode }) => (
+  <li className="flex items-center gap-1.5">
+    <span
+      className={cn(
+        "flex h-3.5 w-3.5 items-center justify-center rounded-full border transition-colors",
+        met
+          ? "border-accent bg-accent/15 text-accent"
+          : "border-foreground/20 bg-transparent text-transparent",
+      )}
+      aria-hidden
+    >
+      <Check className="h-2.5 w-2.5" strokeWidth={3} />
+    </span>
+    <span className={cn("transition-colors", met ? "text-foreground" : "text-muted-foreground")}>
+      {children}
+    </span>
+  </li>
+);
+
