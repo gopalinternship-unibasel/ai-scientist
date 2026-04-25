@@ -432,7 +432,12 @@ serve(async (req) => {
         error: userId
           ? "You've reached the limit of 30 experiment runs per hour. Please try again later."
           : "Anonymous users are limited to 20 runs per hour. Sign in for a higher quota.",
-      }), { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }), {
+        status: 429,
+        headers: {
+          ...corsHeaders, "Content-Type": "application/json", ...rateHeaders(rl),
+        },
+      });
     }
 
     // Look up parent run (for refinement) and compute next version.
