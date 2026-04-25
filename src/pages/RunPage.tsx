@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
-import { useParams, useSearchParams, Link } from "react-router-dom";
-import { ArrowLeft, RotateCcw, Sparkles, Share2, Check } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useParams, useSearchParams, Link, useNavigate } from "react-router-dom";
+import { ArrowLeft, RotateCcw, Sparkles, Share2, Check, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { createScopedClient } from "@/lib/supabaseScoped";
@@ -15,7 +15,10 @@ import { VersionSwitcher, type VersionEntry } from "@/components/VersionSwitcher
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
-import { untrackRun } from "@/hooks/useBackgroundRunNotifier";
+import { untrackRun, trackRun } from "@/hooks/useBackgroundRunNotifier";
+import { startRunStream } from "@/lib/runStream";
+import { getOwnerToken } from "@/lib/owner";
+import { parseRunError, hintForKind, isRetryable } from "@/lib/runErrors";
 import type { ExperimentPlan, LiteratureQC, PlanCritique } from "@/lib/samples";
 
 type Status = "pending" | "qc" | "plan" | "done" | "failed";
