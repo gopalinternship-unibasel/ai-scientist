@@ -647,11 +647,13 @@ serve(async (req) => {
             send("qc", qc);
             await supabase.from("runs").update({ status: "plan" }).eq("id", runId);
           } else {
-            // For canonical techniques, prepend the technique name to bias
-            // the literature search toward methods papers.
+            // For canonical techniques, query the technique name directly —
+            // this targets methods papers (which have generic titles) rather
+            // than threading through query-degradation that would strip the
+            // technique keyword.
             const canon = detectCanonicalTechnique(hypothesis);
             const litQuery = canon.matched
-              ? `${canon.technique} ${hypothesis}`
+              ? `${canon.technique} method protocol`
               : hypothesis;
             const lit = await searchLiterature(litQuery);
 
