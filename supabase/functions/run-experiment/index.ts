@@ -736,7 +736,7 @@ serve(async (req) => {
 
 REQUIREMENTS:
 - Ground the protocol in real, published methods (protocols.io, Bio-protocol, Nature Protocols, JOVE, OpenWetWare).
-- Materials must include real suppliers (Sigma-Aldrich, Thermo Fisher, Promega, Qiagen, IDT, ATCC, Addgene) with plausible catalog numbers.
+- Materials must include real suppliers (Sigma-Aldrich, Thermo Fisher, Promega, Qiagen, IDT, ATCC, Addgene). Catalog numbers MUST be ones you are confident exist on the supplier's site — if you are uncertain, set catalog_number to "Custom" or omit it. Do NOT fabricate plausible-looking SKUs. Sigma SKUs follow patterns like T9531, PHR1084-1G; Thermo Fisher uses 7–9 digit numbers (11965092) or letter+digits (A3160401); IDT Alt-R reagents are 1081xxx; ATCC uses CCL-2, CRL-3216, HTB-22.
 - Budget MUST be anchored to the REFERENCE COST CATALOG below — do not invent prices that are wildly off (>20%).
 - Budget total MUST equal the sum of line items, and line items must roughly equal materials subtotal + labour + equipment + overhead.
 - CITATIONS: Use ONLY the canonical format \`[N]\` (or \`(see [N, M])\` for multiples). N must be a 1-based index into the KNOWN RELATED WORK list. Never invent reference numbers; never use prose forms like "(ref. 1)" or "(see reference 1)".
