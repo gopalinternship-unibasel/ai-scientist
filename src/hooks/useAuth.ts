@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { getOwnerToken } from "@/lib/owner";
+import { getOwnerToken, rotateOwnerToken } from "@/lib/owner";
 
 /**
  * Auth state with anonymous-run claim:
@@ -56,6 +56,9 @@ async function claimAnonymousRuns() {
     }
     const count = typeof data === "number" ? data : 0;
     if (count > 0) {
+      // Rotate the anonymous token now that runs have been linked to an account.
+      // The old token is no longer needed and should not be reusable if leaked.
+      rotateOwnerToken();
       toast.success(
         count === 1
           ? "Linked 1 previous experiment to your account."

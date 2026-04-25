@@ -393,6 +393,43 @@ serve(async (req) => {
 
     // Cache: skip cache lookup for refinements (they should always re-generate).
     const hHash = await hashHypothesis(hypothesis);
+
+    // Idempotency: if THIS owner already has an in-flight run for the same
+    // hypothesis, return that run instead of starting a duplicate. Catches
+    // double-clicks and racing browser tabs.
+    if (!isRefinement) {
+      const ownerFilter = userId
+        ? { col: "owner_user_id", val: userId }
+        : ownerToken ? { col: "owner_token", val: ownerToken } : null;
+      if (ownerFilter) {
+        const { data: pending } = await supabase
+          .from("runs")
+          .select("id")
+          .eq("hypothesis_hash", hHash)
+          .eq(ownerFilter.col, ownerFilter.val)
+          .in("status", ["pending", "qc", "plan"])
+          .gt("updated_at", new Date(Date.now() - 5 * 60_000).toISOString())
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (pending?.id) {
+          // Return as SSE so the client's stream parser handles it uniformly.
+          // Emits a single `run` event with in_flight=true, then `done`.
+          const enc = new TextEncoder();
+          const stream = new ReadableStream({
+            start(controller) {
+              controller.enqueue(enc.encode(`event: run\ndata: ${JSON.stringify({ id: pending.id, cached: false, in_flight: true })}\n\n`));
+              controller.enqueue(enc.encode(`event: done\ndata: ${JSON.stringify({ id: pending.id })}\n\n`));
+              controller.close();
+            },
+          });
+          return new Response(stream, {
+            headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
+          });
+        }
+      }
+    }
+
     const { data: cached } = isRefinement ? { data: null } : await supabase
       .from("runs")
       .select("id, qc, plan, critique")
