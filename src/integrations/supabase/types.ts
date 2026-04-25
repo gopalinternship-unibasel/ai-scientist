@@ -45,10 +45,13 @@ export type Database = {
           id: string
           owner_token: string | null
           owner_user_id: string | null
+          parent_run_id: string | null
           plan: Json | null
           qc: Json | null
+          refinement_instruction: string | null
           status: Database["public"]["Enums"]["run_status"]
           updated_at: string
+          version: number
         }
         Insert: {
           created_at?: string
@@ -59,10 +62,13 @@ export type Database = {
           id?: string
           owner_token?: string | null
           owner_user_id?: string | null
+          parent_run_id?: string | null
           plan?: Json | null
           qc?: Json | null
+          refinement_instruction?: string | null
           status?: Database["public"]["Enums"]["run_status"]
           updated_at?: string
+          version?: number
         }
         Update: {
           created_at?: string
@@ -73,12 +79,23 @@ export type Database = {
           id?: string
           owner_token?: string | null
           owner_user_id?: string | null
+          parent_run_id?: string | null
           plan?: Json | null
           qc?: Json | null
+          refinement_instruction?: string | null
           status?: Database["public"]["Enums"]["run_status"]
           updated_at?: string
+          version?: number
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "runs_parent_run_id_fkey"
+            columns: ["parent_run_id"]
+            isOneToOne: false
+            referencedRelation: "runs"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {
