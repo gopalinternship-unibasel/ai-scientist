@@ -1,7 +1,9 @@
-import { useState } from "react";
-import { ArrowRight, Loader2, Sparkles } from "lucide-react";
+import { useMemo, useState } from "react";
+import { ArrowRight, Check, Loader2, Sparkles } from "lucide-react";
 import { SAMPLE_HYPOTHESES } from "@/lib/samples";
 import { Button } from "@/components/ui/button";
+import { checkHypothesis } from "@/lib/hypothesisValidation";
+import { cn } from "@/lib/utils";
 
 interface Props {
   onSubmit: (hypothesis: string) => void;
@@ -10,10 +12,15 @@ interface Props {
 
 export const HypothesisInput = ({ onSubmit, loading }: Props) => {
   const [value, setValue] = useState("");
+  const [touched, setTouched] = useState(false);
+
+  const check = useMemo(() => checkHypothesis(value), [value]);
 
   const submit = (text?: string) => {
     const v = (text ?? value).trim();
-    if (v.length < 10 || loading) return;
+    const c = checkHypothesis(v);
+    setTouched(true);
+    if (!c.ok || loading) return;
     setValue(v);
     onSubmit(v);
   };
@@ -55,7 +62,7 @@ export const HypothesisInput = ({ onSubmit, loading }: Props) => {
           </span>
           <Button
             onClick={() => submit()}
-            disabled={value.trim().length < 10 || loading}
+            disabled={!check.ok || loading}
             className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90"
           >
             {loading ? (
@@ -72,6 +79,30 @@ export const HypothesisInput = ({ onSubmit, loading }: Props) => {
           </Button>
         </div>
       </div>
+
+      {/* Live validation checklist — only after the user has typed something */}
+      {value.trim().length > 0 && (
+        <div className="mt-3 rounded-md border border-rule bg-paper/60 px-3.5 py-2.5">
+          <div className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+            A strong hypothesis includes
+          </div>
+          <ul className="grid gap-1 text-[12px] sm:grid-cols-2">
+            <Requirement met={check.signals.hasMultipleWords && check.signals.longEnough}>
+              A full sentence
+            </Requirement>
+            <Requirement met={check.signals.hasIntervention}>
+              An intervention or comparison
+            </Requirement>
+            <Requirement met={check.signals.hasMeasurableOutcome}>
+              A measurable outcome
+            </Requirement>
+            <Requirement met={check.ok}>Ready to generate</Requirement>
+          </ul>
+          {touched && !check.ok && check.reason && (
+            <p className="mt-2 text-[12px] text-foreground/70">{check.reason}</p>
+          )}
+        </div>
+      )}
 
       <div className="mt-7">
         <div className="mb-3 flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
