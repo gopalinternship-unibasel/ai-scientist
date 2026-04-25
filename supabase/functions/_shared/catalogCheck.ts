@@ -112,8 +112,8 @@ const SUPPLIER_FORMATS: Array<{ match: RegExp; cat: RegExp; canonical: string }>
   // synthesised oligos are catalogued as "Custom". 7-digit numbers outside
   // 108xxxx are almost always hallucinated.
   { match: /^idt$|integrated\s+dna/i,
-    cat: /^(?:Custom|108\d{4})$/i,
-    canonical: "IDT Alt-R catalog numbers are in the 108xxxx series (e.g. 1081058, 1072558 for tracrRNA). Use 'Custom' for synthesised oligos." },
+    cat: /^(?:Custom|10[78]\d{4})$/i,
+    canonical: "IDT Alt-R catalog numbers are in the 107xxxx–108xxxx range (e.g. 1081058, 1072558). Use 'Custom' for synthesised oligos." },
   // ATCC: letters + dash + digits (CRL-3216, CCL-2, HTB-22) or pure digits
   { match: /^atcc$/i,
     cat: /^(?:[A-Z]{2,4}-\d{1,5}|\d{4,6}|VR-\d{2,5})$/,
