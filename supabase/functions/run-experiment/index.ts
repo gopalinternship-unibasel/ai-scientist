@@ -167,6 +167,8 @@ async function hashHypothesis(h: string): Promise<string> {
 }
 
 // fetchWithRetry now lives in ../_shared/fetch-with-retry.ts
+
+async function searchSemanticScholar(query: string): Promise<{ papers: S2Paper[]; rateLimited: boolean }> {
   const q = query.replace(/\s+/g, " ").trim().slice(0, 280);
   const url = new URL("https://api.semanticscholar.org/graph/v1/paper/search");
   url.searchParams.set("query", q);
