@@ -690,12 +690,16 @@ ${COST_CATALOG_PROMPT}`;
             return;
           }
 
-          // Validate inline citations against the actual reference list — strip
-          // hallucinated [N] indices that don't map to a real paper.
+          // Validate + normalise inline citations against the reference list.
+          // Strips hallucinated [N] indices and rewrites prose forms to canonical [N].
           // deno-lint-ignore no-explicit-any
           const planObj = plan as any;
           if (planObj && Array.isArray(planObj.protocol)) {
-            planObj.protocol = sanitizeCitations(planObj.protocol, references.length);
+            const { steps, report } = sanitizeCitationsWithReport(planObj.protocol, references.length);
+            planObj.protocol = steps;
+            if (report.hallucinated > 0 || report.rewritten > 0) {
+              console.log("citation-sanitize", JSON.stringify({ run_id: runId, ...report, refs: references.length }));
+            }
           }
 
           await supabase.from("runs").update({ plan: planObj, status: "done" }).eq("id", runId);
