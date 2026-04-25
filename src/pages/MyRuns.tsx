@@ -19,6 +19,20 @@ const MyRuns = () => {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const [runs, setRuns] = useState<RunRow[] | null>(null);
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "done" | "failed" | "in_flight">("all");
+
+  const filtered = useMemo(() => {
+    if (!runs) return null;
+    const q = query.trim().toLowerCase();
+    return runs.filter((r) => {
+      if (statusFilter === "done" && r.status !== "done") return false;
+      if (statusFilter === "failed" && r.status !== "failed") return false;
+      if (statusFilter === "in_flight" && !["pending", "qc", "plan"].includes(r.status)) return false;
+      if (q && !r.hypothesis.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [runs, query, statusFilter]);
 
   useEffect(() => {
     if (authLoading) return;
