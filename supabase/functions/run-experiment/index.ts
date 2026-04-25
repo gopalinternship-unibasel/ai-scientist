@@ -385,12 +385,12 @@ serve(async (req) => {
     // Rate limit: 30 runs / hour for signed-in users; 20 / hour per IP for anon.
     const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || "unknown";
     const rlIdent = userId ? `user:${userId}` : `ip:${ip}`;
-    const rl = await checkRateLimit(supabase, rlIdent, "run", 60, userId ? 5 : 3);
+    const rl = await checkRateLimit(supabase, rlIdent, "run", 60, userId ? 30 : 20);
     if (!rl.ok) {
       return new Response(JSON.stringify({
         error: userId
-          ? "You've reached the limit of 5 experiment runs per hour. Please try again later."
-          : "Anonymous users are limited to 3 runs per hour. Sign in for a higher quota.",
+          ? "You've reached the limit of 30 experiment runs per hour. Please try again later."
+          : "Anonymous users are limited to 20 runs per hour. Sign in for a higher quota.",
       }), { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
