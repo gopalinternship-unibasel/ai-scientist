@@ -1,13 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { COST_CATALOG_PROMPT } from "./cost-catalog.ts";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
-  "Access-Control-Expose-Headers": "x-run-id",
-};
+import { corsHeaders } from "../_shared/cors.ts";
+import { fetchWithRetry } from "../_shared/fetch-with-retry.ts";
+import { sanitizeCitations } from "../_shared/citations.ts";
 
 const planSchema = {
   type: "object",
@@ -170,45 +166,7 @@ async function hashHypothesis(h: string): Promise<string> {
   return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/**
- * Fetch with exponential backoff + jitter. Retries on network errors and
- * transient 5xx / 429 responses. Returns the final Response (which may still
- * be non-OK if all retries are exhausted) so the caller can inspect status.
- *
- * Does NOT retry on 4xx other than 429 (those are caller errors and won't
- * succeed on retry).
- */
-async function fetchWithRetry(
-  url: string,
-  init: RequestInit,
-  opts: { retries?: number; baseDelayMs?: number; label?: string } = {},
-): Promise<Response> {
-  const retries = opts.retries ?? 3;
-  const base = opts.baseDelayMs ?? 800;
-  const label = opts.label ?? "fetch";
-  let lastErr: unknown = null;
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      const res = await fetch(url, init);
-      // Success or non-retryable client error — return as-is.
-      if (res.ok) return res;
-      const retryable = res.status === 429 || (res.status >= 500 && res.status < 600);
-      if (!retryable || attempt === retries) return res;
-      // Drain body so the connection can be reused.
-      try { await res.body?.cancel(); } catch { /* noop */ }
-      console.warn(`[${label}] retry ${attempt + 1}/${retries} after ${res.status}`);
-    } catch (e) {
-      lastErr = e;
-      if (attempt === retries) throw e;
-      console.warn(`[${label}] retry ${attempt + 1}/${retries} after network error:`, (e as Error).message);
-    }
-    // Exponential backoff with jitter: base * 3^attempt ± 30%
-    const delay = base * Math.pow(3, attempt) * (0.7 + Math.random() * 0.6);
-    await new Promise((r) => setTimeout(r, delay));
-  }
-  // Unreachable, but TypeScript wants it.
-  throw lastErr ?? new Error(`${label} failed after ${retries} retries`);
-}
+// fetchWithRetry now lives in ../_shared/fetch-with-retry.ts
 
 async function searchSemanticScholar(query: string): Promise<{ papers: S2Paper[]; rateLimited: boolean }> {
   const q = query.replace(/\s+/g, " ").trim().slice(0, 280);
@@ -405,20 +363,32 @@ serve(async (req) => {
     if (isRefinement) {
       const { data: parent } = await supabase
         .from("runs")
-        .select("plan, qc, version, hypothesis_hash")
+        .select("plan, qc, version, hypothesis_hash, owner_user_id, owner_token")
         .eq("id", parentRunId)
         .maybeSingle();
-      if (parent && parent.plan) {
-        parentRun = { plan: parent.plan, qc: parent.qc, version: parent.version ?? 1 };
-        // Find max version in the chain (root + descendants).
-        const { data: siblings } = await supabase
-          .from("runs")
-          .select("version")
-          .or(`id.eq.${parentRunId},parent_run_id.eq.${parentRunId}`)
-          .order("version", { ascending: false })
-          .limit(1);
-        nextVersion = ((siblings?.[0]?.version as number | undefined) ?? parentRun.version) + 1;
+      if (!parent || !parent.plan) {
+        return new Response(JSON.stringify({ error: "Parent run not found." }), {
+          status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
       }
+      // Ownership check: only the owner of the parent run may refine it.
+      // Match either by signed-in user ID or by anonymous owner_token.
+      const ownsByUser = userId && parent.owner_user_id === userId;
+      const ownsByToken = ownerToken && parent.owner_token === ownerToken;
+      if (!ownsByUser && !ownsByToken) {
+        return new Response(JSON.stringify({ error: "You can only refine your own experiments." }), {
+          status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      parentRun = { plan: parent.plan, qc: parent.qc, version: parent.version ?? 1 };
+      // Find max version in the chain (root + descendants).
+      const { data: siblings } = await supabase
+        .from("runs")
+        .select("version")
+        .or(`id.eq.${parentRunId},parent_run_id.eq.${parentRunId}`)
+        .order("version", { ascending: false })
+        .limit(1);
+      nextVersion = ((siblings?.[0]?.version as number | undefined) ?? parentRun.version) + 1;
     }
 
     // Cache: skip cache lookup for refinements (they should always re-generate).
@@ -626,8 +596,16 @@ ${COST_CATALOG_PROMPT}`;
             return;
           }
 
-          await supabase.from("runs").update({ plan, status: "done" }).eq("id", runId);
-          send("plan", plan);
+          // Validate inline citations against the actual reference list — strip
+          // hallucinated [N] indices that don't map to a real paper.
+          // deno-lint-ignore no-explicit-any
+          const planObj = plan as any;
+          if (planObj && Array.isArray(planObj.protocol)) {
+            planObj.protocol = sanitizeCitations(planObj.protocol, references.length);
+          }
+
+          await supabase.from("runs").update({ plan: planObj, status: "done" }).eq("id", runId);
+          send("plan", planObj);
           send("done", { id: runId });
 
           // 3) Reviewer critique pass (best-effort, fire-and-forget after main plan is sent).

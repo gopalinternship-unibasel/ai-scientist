@@ -12,6 +12,7 @@ import { RefineDialog } from "@/components/RefineDialog";
 import { VersionSwitcher, type VersionEntry } from "@/components/VersionSwitcher";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Button } from "@/components/ui/button";
+import { untrackRun } from "@/hooks/useBackgroundRunNotifier";
 import type { ExperimentPlan, LiteratureQC, PlanCritique } from "@/lib/samples";
 
 type Status = "pending" | "qc" | "plan" | "done" | "failed";
@@ -43,6 +44,9 @@ const RunPage = () => {
   useEffect(() => {
     if (!id) return;
     let active = true;
+
+    // Stop the background notifier from firing for this run while we view it.
+    untrackRun(id);
 
     const load = async () => {
       // The new columns aren't yet in the generated TS types; cast through unknown.
