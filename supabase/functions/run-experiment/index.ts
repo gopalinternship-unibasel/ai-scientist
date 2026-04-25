@@ -422,6 +422,23 @@ serve(async (req) => {
     // chatter, gibberish) BEFORE we burn rate-limit quota or AI credits.
     // Skipped for refinements — those have a validated parent.
     if (!isRefinement) {
+      // (a) Deterministic feasibility pre-screen — block hypotheses that
+      // violate well-established physical/biological limits (Abbe limit,
+      // FTL, perpetual motion, etc.). Fast, free, no LLM needed.
+      const feas = checkFeasibility(hypothesis);
+      if (!feas.ok) {
+        return new Response(JSON.stringify({
+          error: `${feas.principle}: ${feas.explanation}`,
+          suggestion: feas.suggestion,
+          kind: "VALIDATION",
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      // (b) LLM gate — rejects non-hypothesis inputs and overly-vague
+      // research goals.
       const verdict = await gateHypothesis(hypothesis, LOVABLE_API_KEY);
       if (!verdict.ok) {
         return new Response(JSON.stringify({
