@@ -1,0 +1,74 @@
+// Detect when a hypothesis describes a textbook-canonical technique
+// (PCR, Western blot, ELISA, etc.). Used to override the novelty classifier
+// when it incorrectly returns `not_found` for protocols that are obviously
+// extensively published.
+//
+// Heuristic: if the hypothesis matches one of the known method patterns AND
+// at least one literature hit was returned, we promote the signal to
+// `exact_match` — it's almost certainly not novel work.
+
+interface CanonicalTechnique {
+  name: string;
+  // Pattern must match the hypothesis (case-insensitive).
+  pattern: RegExp;
+  // Human-readable rationale shown to the user when this rule fires.
+  rationale: string;
+}
+
+const TECHNIQUES: CanonicalTechnique[] = [
+  {
+    name: "PCR amplification",
+    pattern: /\b(?:standard\s+)?(?:RT-?|q)?PCR\b.*\bamplif/i,
+    rationale: "PCR amplification is a textbook-canonical technique with thousands of published protocols. The exact procedure is well-established.",
+  },
+  {
+    name: "Western blot",
+    pattern: /\bwestern\s+blot/i,
+    rationale: "Western blotting is a textbook-canonical technique — countless published protocols exist.",
+  },
+  {
+    name: "ELISA",
+    pattern: /\bELISA\b|\benzyme[- ]linked\s+immunosorbent/i,
+    rationale: "ELISA is a textbook-canonical immunoassay with extensive published protocols.",
+  },
+  {
+    name: "Bradford / BCA protein assay",
+    pattern: /\b(?:bradford|BCA)\s+(?:protein\s+)?assay/i,
+    rationale: "Standard protein quantification assay — extensively published.",
+  },
+  {
+    name: "Gel electrophoresis",
+    pattern: /\b(?:SDS-?PAGE|agarose\s+gel|gel\s+electrophoresis)\b/i,
+    rationale: "Gel electrophoresis is a foundational technique — countless published protocols exist.",
+  },
+  {
+    name: "Sanger sequencing",
+    pattern: /\bsanger\s+sequencing\b/i,
+    rationale: "Sanger sequencing is a textbook DNA sequencing method.",
+  },
+  {
+    name: "Plasmid transformation",
+    pattern: /\b(?:transform(?:ation|ing)?|electroporat)\b.*\b(?:E\.?\s*coli|plasmid|competent\s+cells)\b/i,
+    rationale: "Bacterial transformation is a foundational molecular cloning step.",
+  },
+  {
+    name: "Cell viability (MTT/MTS)",
+    pattern: /\b(?:MTT|MTS|XTT|cell\s+viability)\s+assay/i,
+    rationale: "Standard cell viability colorimetric assay — extensively published.",
+  },
+];
+
+export interface CanonicalMatch {
+  matched: boolean;
+  technique?: string;
+  rationale?: string;
+}
+
+export function detectCanonicalTechnique(hypothesis: string): CanonicalMatch {
+  for (const t of TECHNIQUES) {
+    if (t.pattern.test(hypothesis)) {
+      return { matched: true, technique: t.name, rationale: t.rationale };
+    }
+  }
+  return { matched: false };
+}

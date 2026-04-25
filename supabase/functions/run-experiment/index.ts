@@ -13,6 +13,8 @@ import {
 } from "../_shared/ai-fallback.ts";
 import { gateHypothesis } from "../_shared/hypothesisGate.ts";
 import { findCatalogIssues } from "../_shared/catalogCheck.ts";
+import { checkFeasibility } from "../_shared/feasibilityCheck.ts";
+import { detectCanonicalTechnique } from "../_shared/canonicalTechniques.ts";
 
 const planSchema = {
   type: "object",
@@ -420,6 +422,23 @@ serve(async (req) => {
     // chatter, gibberish) BEFORE we burn rate-limit quota or AI credits.
     // Skipped for refinements — those have a validated parent.
     if (!isRefinement) {
+      // (a) Deterministic feasibility pre-screen — block hypotheses that
+      // violate well-established physical/biological limits (Abbe limit,
+      // FTL, perpetual motion, etc.). Fast, free, no LLM needed.
+      const feas = checkFeasibility(hypothesis);
+      if (!feas.ok) {
+        return new Response(JSON.stringify({
+          error: `${feas.principle}: ${feas.explanation}`,
+          suggestion: feas.suggestion,
+          kind: "VALIDATION",
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      // (b) LLM gate — rejects non-hypothesis inputs and overly-vague
+      // research goals.
       const verdict = await gateHypothesis(hypothesis, LOVABLE_API_KEY);
       if (!verdict.ok) {
         return new Response(JSON.stringify({
@@ -632,6 +651,24 @@ serve(async (req) => {
             if (lit.rateLimited && lit.papers.length === 0) {
               verdict.rationale = "All literature sources rate-limited or unreachable. Treating as unknown novelty.";
             }
+
+            // Canonical-technique override: if the hypothesis describes a
+            // textbook protocol (PCR, Western blot, etc.) AND we got at least
+            // one literature hit, force `exact_match`. The LLM classifier
+            // tends to return `not_found` for these because no paper has the
+            // exact wording — but they're obviously not novel.
+            const canon = detectCanonicalTechnique(hypothesis);
+            if (canon.matched && lit.papers.length > 0 && verdict.signal !== "exact_match") {
+              console.log(JSON.stringify({ run_id: runId, step: "canonical_override", technique: canon.technique, prev_signal: verdict.signal }));
+              verdict.signal = "exact_match";
+              verdict.semantic_overlap = "high";
+              verdict.rationale = `${canon.rationale} ${verdict.rationale}`.trim();
+              // Ensure at least the top references are surfaced.
+              if (!verdict.chosen || verdict.chosen.length === 0) {
+                verdict.chosen = lit.papers.slice(0, 3).map((_: LitPaper, i: number) => i);
+              }
+            }
+
             references = (verdict.chosen ?? [])
               .map((i: number) => lit.papers[i]).filter(Boolean).slice(0, 3)
               .map((p: LitPaper) => ({
