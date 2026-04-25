@@ -10,6 +10,7 @@ import { GenerationProgress } from "@/components/GenerationProgress";
 import { PlanCritiqueCard } from "@/components/PlanCritiqueCard";
 import { RefineDialog } from "@/components/RefineDialog";
 import { VersionSwitcher, type VersionEntry } from "@/components/VersionSwitcher";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Button } from "@/components/ui/button";
 import type { ExperimentPlan, LiteratureQC, PlanCritique } from "@/lib/samples";
 
@@ -176,11 +177,23 @@ const RunPage = () => {
         )}
 
         <div className="space-y-6">
-          {run.qc && <LiteratureQCCard qc={run.qc} />}
+          {run.qc && (
+            <ErrorBoundary label="the literature review">
+              <LiteratureQCCard qc={run.qc} />
+            </ErrorBoundary>
+          )}
           {inFlight && !run.qc && <GenerationProgress stage="qc" />}
           {inFlight && run.qc && !run.plan && <GenerationProgress stage="plan" />}
-          {run.plan && <ExperimentPlanView plan={run.plan} />}
-          {run.critique && <PlanCritiqueCard critique={run.critique} />}
+          {run.plan && (
+            <ErrorBoundary label="the experiment plan">
+              <ExperimentPlanView plan={run.plan} />
+            </ErrorBoundary>
+          )}
+          {run.critique && (
+            <ErrorBoundary label="the peer review">
+              <PlanCritiqueCard critique={run.critique} />
+            </ErrorBoundary>
+          )}
         </div>
       </main>
 
