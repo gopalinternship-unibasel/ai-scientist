@@ -307,7 +307,11 @@ serve(async (req) => {
 
   let runId: string | null = null;
   try {
-    const { hypothesis: rawHypothesis, owner_token } = await req.json();
+    const body = await req.json();
+    const { hypothesis: rawHypothesis, owner_token } = body;
+    const rawParentId: unknown = body.parent_run_id;
+    const rawRefinement: unknown = body.refinement_instruction;
+
     if (!rawHypothesis || typeof rawHypothesis !== "string") {
       return new Response(JSON.stringify({ error: "hypothesis is required" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -320,6 +324,13 @@ serve(async (req) => {
     }
     const hypothesis = stripCtl(rawHypothesis).trim();
     const ownerToken = typeof owner_token === "string" ? stripCtl(owner_token).slice(0, 100) : null;
+
+    // Optional refinement parameters (when refining a previous plan).
+    const parentRunId = typeof rawParentId === "string" && /^[0-9a-f-]{36}$/i.test(rawParentId)
+      ? rawParentId : null;
+    const refinementInstruction = typeof rawRefinement === "string" && rawRefinement.trim().length > 0
+      ? stripCtl(rawRefinement).trim().slice(0, 500) : null;
+    const isRefinement = !!(parentRunId && refinementInstruction);
 
     // Resolve user (optional)
     let userId: string | null = null;
@@ -348,13 +359,36 @@ serve(async (req) => {
       }), { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // Cache: if a previous run with the same hypothesis is done, return it as a new shareable run.
+    // Look up parent run (for refinement) and compute next version.
+    let parentRun: { plan: unknown; qc: unknown; version: number } | null = null;
+    let nextVersion = 1;
+    if (isRefinement) {
+      const { data: parent } = await supabase
+        .from("runs")
+        .select("plan, qc, version, hypothesis_hash")
+        .eq("id", parentRunId)
+        .maybeSingle();
+      if (parent && parent.plan) {
+        parentRun = { plan: parent.plan, qc: parent.qc, version: parent.version ?? 1 };
+        // Find max version in the chain (root + descendants).
+        const { data: siblings } = await supabase
+          .from("runs")
+          .select("version")
+          .or(`id.eq.${parentRunId},parent_run_id.eq.${parentRunId}`)
+          .order("version", { ascending: false })
+          .limit(1);
+        nextVersion = ((siblings?.[0]?.version as number | undefined) ?? parentRun.version) + 1;
+      }
+    }
+
+    // Cache: skip cache lookup for refinements (they should always re-generate).
     const hHash = await hashHypothesis(hypothesis);
-    const { data: cached } = await supabase
+    const { data: cached } = isRefinement ? { data: null } : await supabase
       .from("runs")
       .select("id, qc, plan, critique")
       .eq("hypothesis_hash", hHash)
       .eq("status", "done")
+      .is("parent_run_id", null)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -368,9 +402,12 @@ serve(async (req) => {
         owner_user_id: userId,
         hypothesis_hash: hHash,
         status: cached ? "done" : "qc",
-        qc: cached?.qc ?? null,
+        qc: cached?.qc ?? (isRefinement ? parentRun?.qc ?? null : null),
         plan: cached?.plan ?? null,
         critique: cached?.critique ?? null,
+        parent_run_id: isRefinement ? parentRunId : null,
+        version: nextVersion,
+        refinement_instruction: refinementInstruction,
       })
       .select("id")
       .single();
