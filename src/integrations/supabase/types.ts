@@ -102,7 +102,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      cleanup_stale_runs: { Args: never; Returns: number }
     }
     Enums: {
       run_status: "pending" | "qc" | "plan" | "done" | "failed"

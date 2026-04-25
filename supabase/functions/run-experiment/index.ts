@@ -170,6 +170,46 @@ async function hashHypothesis(h: string): Promise<string> {
   return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/**
+ * Fetch with exponential backoff + jitter. Retries on network errors and
+ * transient 5xx / 429 responses. Returns the final Response (which may still
+ * be non-OK if all retries are exhausted) so the caller can inspect status.
+ *
+ * Does NOT retry on 4xx other than 429 (those are caller errors and won't
+ * succeed on retry).
+ */
+async function fetchWithRetry(
+  url: string,
+  init: RequestInit,
+  opts: { retries?: number; baseDelayMs?: number; label?: string } = {},
+): Promise<Response> {
+  const retries = opts.retries ?? 3;
+  const base = opts.baseDelayMs ?? 800;
+  const label = opts.label ?? "fetch";
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(url, init);
+      // Success or non-retryable client error — return as-is.
+      if (res.ok) return res;
+      const retryable = res.status === 429 || (res.status >= 500 && res.status < 600);
+      if (!retryable || attempt === retries) return res;
+      // Drain body so the connection can be reused.
+      try { await res.body?.cancel(); } catch { /* noop */ }
+      console.warn(`[${label}] retry ${attempt + 1}/${retries} after ${res.status}`);
+    } catch (e) {
+      lastErr = e;
+      if (attempt === retries) throw e;
+      console.warn(`[${label}] retry ${attempt + 1}/${retries} after network error:`, (e as Error).message);
+    }
+    // Exponential backoff with jitter: base * 3^attempt ± 30%
+    const delay = base * Math.pow(3, attempt) * (0.7 + Math.random() * 0.6);
+    await new Promise((r) => setTimeout(r, delay));
+  }
+  // Unreachable, but TypeScript wants it.
+  throw lastErr ?? new Error(`${label} failed after ${retries} retries`);
+}
+
 async function searchSemanticScholar(query: string): Promise<{ papers: S2Paper[]; rateLimited: boolean }> {
   const q = query.replace(/\s+/g, " ").trim().slice(0, 280);
   const url = new URL("https://api.semanticscholar.org/graph/v1/paper/search");
@@ -196,7 +236,7 @@ async function classifyNovelty(hypothesis: string, papers: S2Paper[], apiKey: st
   const condensed = papers.slice(0, 8).map((p, i) => ({
     i, title: p.title, year: p.year, venue: p.venue, abstract: (p.abstract ?? "").slice(0, 600),
   }));
-  const aiRes = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+  const aiRes = await fetchWithRetry("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -223,7 +263,7 @@ async function classifyNovelty(hypothesis: string, papers: S2Paper[], apiKey: st
       }],
       tool_choice: { type: "function", function: { name: "report_novelty" } },
     }),
-  });
+  }, { label: "novelty-classify" });
   if (!aiRes.ok) {
     return { signal: "similar" as const, rationale: "Classification unavailable; defaulting to similar work exists.", chosen: [0, 1, 2] };
   }
@@ -236,7 +276,7 @@ async function classifyNovelty(hypothesis: string, papers: S2Paper[], apiKey: st
 }
 
 async function critiquePlan(hypothesis: string, plan: unknown, apiKey: string) {
-  const aiRes = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+  const aiRes = await fetchWithRetry("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -251,7 +291,7 @@ async function critiquePlan(hypothesis: string, plan: unknown, apiKey: string) {
       }],
       tool_choice: { type: "function", function: { name: "submit_critique" } },
     }),
-  });
+  }, { label: "critique", retries: 2 });
   if (!aiRes.ok) return null;
   try {
     const aiJson = await aiRes.json();
@@ -494,7 +534,9 @@ REQUIREMENTS:
 - Be precise. Use exact concentrations, volumes, durations.
 ${COST_CATALOG_PROMPT}`;
 
-          const aiRes = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+          // Streaming plan generation. Retry on transient errors but only on the
+          // initial connect — once tokens are flowing we cannot resume mid-stream.
+          const aiRes = await fetchWithRetry("https://ai.gateway.lovable.dev/v1/chat/completions", {
             method: "POST",
             headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -515,7 +557,7 @@ ${COST_CATALOG_PROMPT}`;
               }],
               tool_choice: { type: "function", function: { name: "submit_experiment_plan" } },
             }),
-          });
+          }, { label: "plan-stream", retries: 2 });
 
           if (!aiRes.ok || !aiRes.body) {
             const text = await aiRes.text().catch(() => "");
@@ -537,6 +579,7 @@ ${COST_CATALOG_PROMPT}`;
           let buf = "";
           let argsAccum = "";
           let lastEmit = 0;
+          let lastHeartbeat = Date.now();
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
@@ -559,6 +602,13 @@ ${COST_CATALOG_PROMPT}`;
                     lastEmit = now;
                     const partial = tryParsePartial(argsAccum);
                     send("progress", { chars: argsAccum.length, partial });
+                  }
+                  // Heartbeat: bump updated_at every ~60s so the stale-run
+                  // cleanup cron doesn't kill an actively-streaming generation.
+                  if (now - lastHeartbeat > 60_000) {
+                    lastHeartbeat = now;
+                    supabase.from("runs").update({ updated_at: new Date().toISOString() })
+                      .eq("id", runId).then(() => {/* fire-and-forget */});
                   }
                 }
               } catch { /* partial chunk */ }

@@ -17,19 +17,26 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import type { ExperimentPlan } from "@/lib/samples";
 
+/**
+ * Plan section. On mobile (< md) the body is collapsible via a native <details>
+ * element so users can scan the plan without endless scrolling. On md+ screens
+ * everything is always visible (and prints expanded).
+ */
 const Section = ({
   icon: Icon,
   label,
   number,
   children,
+  defaultOpen = true,
 }: {
   icon: React.ElementType;
   label: string;
   number: string;
   children: React.ReactNode;
-}) => (
-  <section className="paper-surface rounded-lg p-6 md:p-8 animate-fade-in">
-    <header className="mb-5 flex items-center gap-3">
+  defaultOpen?: boolean;
+}) => {
+  const header = (
+    <>
       <span className="flex h-7 w-7 items-center justify-center rounded-sm bg-primary text-primary-foreground">
         <Icon className="h-3.5 w-3.5" />
       </span>
@@ -37,10 +44,37 @@ const Section = ({
         § {number}
       </span>
       <h2 className="font-serif text-xl font-semibold text-foreground">{label}</h2>
-    </header>
-    {children}
-  </section>
-);
+    </>
+  );
+  return (
+    <section className="paper-surface rounded-lg p-6 md:p-8 animate-fade-in">
+      {/* Mobile: collapsible */}
+      <details open={defaultOpen} className="md:hidden group">
+        <summary className="mb-5 flex cursor-pointer list-none items-center gap-3 [&::-webkit-details-marker]:hidden">
+          {header}
+          <svg
+            className="ml-auto h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden
+          >
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </summary>
+        {children}
+      </details>
+      {/* Desktop / print: always expanded */}
+      <div className="hidden md:block">
+        <header className="mb-5 flex items-center gap-3">{header}</header>
+        {children}
+      </div>
+    </section>
+  );
+};
 
 const fmtUsd = (n: number) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n);
