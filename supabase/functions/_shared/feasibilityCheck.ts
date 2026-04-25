@@ -38,12 +38,23 @@ const RULES: Rule[] = [
   {
     principle: "Faster-than-light signalling",
     patterns: [
-      /\b(?:faster|greater)\s+than\s+(?:the\s+speed\s+of\s+)?light\b|\bsuperluminal\b|\bFTL\b/i,
+      /\b(?:faster[-\s]than[-\s]light|greater\s+than\s+(?:the\s+speed\s+of\s+)?light|superluminal|FTL)\b/i,
     ],
     explanation:
       "Special relativity forbids superluminal information transfer — no experiment can demonstrate this.",
     suggestion:
       "If you're interested in apparent FTL phenomena (group velocity, quantum entanglement), rephrase around the actual measurable quantity.",
+  },
+  {
+    principle: "No-communication theorem (entanglement signalling)",
+    patterns: [
+      /\b(?:entangl(?:ed|ement))\b/i,
+      /\b(?:transmit|send|communicate|signal|convey)\b[^.]*\b(?:classical\s+information|message|bit|signal|data)\b/i,
+    ],
+    explanation:
+      "The no-communication theorem of quantum mechanics forbids using entanglement to transmit classical information — measurement outcomes on one party are random and provide no channel.",
+    suggestion:
+      "Reframe around correlations (Bell-inequality violations, CHSH tests) or quantum teleportation, which still requires a classical channel.",
   },
   {
     principle: "Perpetual motion / over-unity energy",
