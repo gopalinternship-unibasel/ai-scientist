@@ -117,17 +117,7 @@ const Admin = () => {
   }
   if (!user) return <Navigate to="/auth" replace />;
   if (!isMod) {
-    return (
-      <div className="mx-auto max-w-2xl p-8 text-center">
-        <h1 className="text-2xl font-semibold">Access required</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          The moderation dashboard is only available to users with the moderator or admin role.
-        </p>
-        <Button asChild variant="outline" className="mt-6">
-          <Link to="/"><ArrowLeft className="mr-1.5 h-3.5 w-3.5" /> Back home</Link>
-        </Button>
-      </div>
-    );
+    return <BootstrapAdminPanel onPromoted={() => setIsMod(true)} />;
   }
 
   return (
