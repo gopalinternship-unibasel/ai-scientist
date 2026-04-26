@@ -540,7 +540,9 @@ serve(async (req) => {
           supabase.from("runs").update({ updated_at: new Date().toISOString() })
             .eq("id", runId)
             .then(() => {}, () => {});
-          try { controller.enqueue(encoder.encode(`: hb ${Date.now()}\n\n`)); } catch { /* closed */ }
+          if (streamOpen) {
+            try { controller.enqueue(encoder.encode(`: hb ${Date.now()}\n\n`)); } catch { streamOpen = false; }
+          }
         }, 20_000);
         const stopHeartbeat = () => clearInterval(heartbeat);
 
