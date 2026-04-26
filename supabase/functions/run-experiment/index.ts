@@ -791,6 +791,11 @@ serve(async (req) => {
                 correction: h.correction,
                 similarity: Number(h.similarity.toFixed(3)),
               })),
+              // Telemetry flag — lets us measure later whether plans that
+              // received learned lessons end up rated higher than ones that
+              // didn't (compare avg rating of subsequent plan_feedback rows
+              // grouped by this column).
+              had_applied_feedback: true,
             }).eq("id", runId);
           }
           const feedbackContext = feedbackPromptFragment(feedbackHints);
