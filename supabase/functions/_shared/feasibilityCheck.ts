@@ -90,7 +90,33 @@ const RULES: Rule[] = [
     suggestion:
       "Use ex vivo tissue, isolated cells, or a cryopreservation protocol with vitrification agents — and study the nanomaterial behaviour separately at 4 K.",
   },
-];
+  {
+    // qPCR / RT-qPCR amplification cycles take ~10–30 s each plus ramp time.
+    // A full 40-cycle run is ~30–90 min. Sub-millisecond gene-expression
+    // measurements via PCR are physically impossible.
+    principle: "Sub-millisecond PCR / qPCR readout",
+    patterns: [
+      /\b(?:qPCR|RT[-\s]?qPCR|RT[-\s]?PCR|real[-\s]?time\s+PCR)\b/i,
+      /\b(?:sub[-\s]?millisecond|microsecond|nanosecond|picosecond|<\s*1\s*ms|less\s+than\s+(?:a\s+)?millisecond)\b/i,
+    ],
+    explanation:
+      "qPCR thermal cycling requires seconds-to-minutes per cycle; gene-expression changes cannot be resolved at sub-millisecond timescales by PCR.",
+    suggestion:
+      "Use single-molecule fluorescence (smFISH live-cell), MS2/PP7 nascent-RNA tagging, or nanopore sequencing for fast transcription dynamics.",
+  },
+  {
+    // Mammalian cell culture media (DMEM, RPMI, IMDM, MEM) are bicarbonate-
+    // buffered — without 5 % CO₂ the pH crashes within hours and the cells
+    // die. CO₂-independent media (Leibovitz L-15) exist but must be named.
+    principle: "Mammalian culture without CO₂ buffering",
+    patterns: [
+      /\b(?:HeLa|HEK293|HEK\s*293|A549|K562|Jurkat|MCF[-\s]?7|U2OS|CHO|HepG2|mammalian\s+(?:cell|culture)|primary\s+(?:human|mouse)\s+cells?)\b/i,
+      /\b(?:without\s+CO2|no\s+CO2|ambient\s+air|atmospheric\s+air|room\s+air)\b/i,
+    ],
+    explanation:
+      "Standard mammalian media (DMEM/RPMI/MEM) are bicarbonate-buffered and require 5 % CO₂; cells will not survive ambient-air culture for the duration of a typical experiment.",
+    suggestion:
+      "Use Leibovitz's L-15 medium (CO₂-independent, phosphate-buffered) or HEPES-supplemented media with s
 
 export function checkFeasibility(hypothesis: string): FeasibilityResult {
   for (const rule of RULES) {
