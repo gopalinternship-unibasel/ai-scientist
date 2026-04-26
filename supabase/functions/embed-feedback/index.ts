@@ -33,7 +33,7 @@ serve(async (req) => {
 
     const { data: row, error: selErr } = await supabase
       .from("plan_feedback")
-      .select("id, correction, hypothesis_excerpt, embedding")
+      .select("id, section, domain, correction, hypothesis_excerpt, embedding")
       .eq("id", feedback_id)
       .maybeSingle();
     if (selErr || !row) {
@@ -66,6 +66,31 @@ serve(async (req) => {
         status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
+    // Dedup pass: now that the row has an embedding, look for an existing
+    // near-identical correction in the same section/domain. If we find one,
+    // bump its dup_count and delete this row — keeps the corpus clean and
+    // turns repeat reports into a consensus signal at retrieval time.
+    try {
+      const { data: dupId } = await supabase.rpc("find_duplicate_feedback", {
+        _id: row.id,
+        _section: row.section,
+        _domain: row.domain,
+        // deno-lint-ignore no-explicit-any
+        _embedding: vec as any,
+        _threshold: 0.92,
+      });
+      if (dupId && typeof dupId === "string") {
+        await supabase.rpc("bump_feedback_dup", { _id: dupId });
+        await supabase.from("plan_feedback").delete().eq("id", row.id);
+        return new Response(JSON.stringify({ ok: true, deduped_into: dupId }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+    } catch (e) {
+      console.warn("dedup check failed (non-fatal):", e);
+    }
+
     return new Response(JSON.stringify({ ok: true }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
