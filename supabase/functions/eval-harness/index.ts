@@ -218,7 +218,7 @@ async function realPlan(
         body: JSON.stringify({
           // Pin to flash for cost; production uses fallback chain but flash is
           // the typical first hop and what most users actually receive.
-          model: "google/gemini-2.5-flash",
+          model: "google/gemini-3-flash-preview",
           temperature: 0.2,
           // No streaming — eval doesn't need it and one-shot is simpler.
           messages: [
@@ -262,7 +262,7 @@ async function judge(hypothesis: string, plan: string, apiKey: string): Promise<
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "google/gemini-2.5-pro",
+          model: "google/gemini-3.1-pro-preview",
           temperature: 0.0,
           messages: [
             { role: "system", content: "You are a strict, calibrated peer reviewer scoring an experiment plan on a 0-10 rubric across four axes. Be honest — most first-draft plans should score 5-7, not 9. Reserve 9-10 for plans you would publish as a worked example." },
