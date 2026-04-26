@@ -44,7 +44,7 @@ const RUN_COLUMNS =
   "id,hypothesis,status,qc,plan,critique,error,created_at,parent_run_id,version,refinement_instruction,share_token,owner_user_id,updated_at";
 
 // Stall threshold: warn the user if no progress for 90s on an in-flight run.
-const STALL_THRESHOLD_MS = 90_000;
+const STALL_THRESHOLD_MS = 150_000;
 
 const RunPage = () => {
   const { id } = useParams<{ id: string }>();
