@@ -33,6 +33,7 @@ const Section = ({
   children,
   defaultOpen = true,
   changed = false,
+  feedback,
 }: {
   icon: React.ElementType;
   label: string;
@@ -41,6 +42,8 @@ const Section = ({
   defaultOpen?: boolean;
   /** Render a "modified" badge when this section differs from the previous version. */
   changed?: boolean;
+  /** Optional inline feedback control (rendered to the right of the header). */
+  feedback?: React.ReactNode;
 }) => {
   const header = (
     <>
@@ -68,8 +71,9 @@ const Section = ({
       <details open={defaultOpen} className="md:hidden group">
         <summary className="mb-5 flex cursor-pointer list-none items-center gap-3 [&::-webkit-details-marker]:hidden">
           {header}
+          {feedback && <span className="no-print ml-auto mr-1" onClick={(e) => e.preventDefault()}>{feedback}</span>}
           <svg
-            className="ml-auto h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180"
+            className={`${feedback ? "" : "ml-auto"} h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180`}
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
@@ -85,7 +89,10 @@ const Section = ({
       </details>
       {/* Desktop / print: always expanded */}
       <div className="hidden md:block">
-        <header className="mb-5 flex items-center gap-3">{header}</header>
+        <header className="mb-5 flex items-center gap-3">
+          {header}
+          {feedback && <span className="no-print ml-auto">{feedback}</span>}
+        </header>
         {children}
       </div>
     </section>
