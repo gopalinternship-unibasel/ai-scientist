@@ -74,28 +74,47 @@ catalog issues into the reviewer as extra context).
 ┌──────────────────────────────────────────────────────────────────────┐
 │  Supabase Edge Function: run-experiment (Deno)                       │
 │                                                                      │
-│  1. hypothesisGate     ── reject vague / non-scientific input        │
-│  2. feasibilityCheck   ── reject physically impossible hypotheses    │
-│  3. rate-limit         ── 100 / hour (anon by IP, signed-in by uid)  │
-│  4. cache lookup       ── reuse plan if same hypothesis hash exists  │
-│  5. literature search  ── S2 + OpenAlex + PubMed in parallel         │
-│  6. novelty classify   ── Lovable AI Gateway (gemini-3-flash-preview)│
-│  7. safety screen      ── prompt fragment for planner                │
-│  8. plan generation    ── Lovable AI Gateway (gemini-3-flash, SSE)   │
-│  9. citation sanitise  ── strip out-of-range refs                    │
-│ 10. catalog cross-check── flag wrong SKUs / name mismatches          │
-│ 11. critique pass      ── Lovable AI Gateway (gpt-5-mini, reasoning) │
+│  Stage                        Model (primary → fallback)             │
+│  ─────────────────────────────────────────────────────────────────   │
+│  1. hypothesisGate            gemini-2.5-flash-lite → gpt-5-nano     │
+│  2. feasibilityCheck          deterministic (regex rules)            │
+│  3. rate-limit                100 / hr (anon by IP, signed-in by uid)│
+│  4. cache lookup              reuse if same hypothesis hash exists   │
+│  5. literature search         S2 + OpenAlex + PubMed (parallel)      │
+│  6. novelty classify          gemini-3-flash-preview → gpt-5-nano    │
+│  7. safety screen             deterministic (prompt fragment)        │
+│  8. plan generation (SSE)     gemini-3-flash-preview → gpt-5-mini    │
+│  9. citation sanitise         deterministic (strip out-of-range)     │
+│ 10. catalog + SKU + timeline  deterministic (live Sigma lookup)      │
+│ 11. critique pass             gpt-5-mini → gemini-3-flash-preview    │
 └──────────────────────────────────────────────────────────────────────┘
                                 │
                                 ▼
 ┌──────────────────────────────────────────────────────────────────────┐
 │  Lovable Cloud (Postgres + Realtime + Auth)                          │
-│  ├── runs        — hypothesis, qc, plan, critique, status, version   │
-│  ├── plan_feedback — section-level corrections + embeddings          │
-│  ├── domain_rules — distilled house rules per domain                 │
-│  └── rate_limits — sliding-window counter                            │
+│  ├── runs           — hypothesis, qc, plan, critique, status, version│
+│  ├── plan_feedback  — section-level corrections + pgvector embeddings│
+│  ├── domain_rules   — distilled house rules per domain               │
+│  └── rate_limits    — sliding-window counter                         │
+└──────────────────────────────────────────────────────────────────────┘
+
+Offline / background jobs
+┌──────────────────────────────────────────────────────────────────────┐
+│  distill-house-rules (cron)   gpt-5-mini                             │
+│      └─ converts trusted corrections → durable per-domain rules      │
+│  eval-harness (A/B + judge)   planner: gemini-3-flash-preview        │
+│                               judge:   gpt-5  (cross-family →        │
+│                                        uncorrelated scoring errors)  │
+│  embed-feedback               text-embedding-004 (768d, cosine)      │
 └──────────────────────────────────────────────────────────────────────┘
 ```
+
+**Why this routing?** Three principles: (1) **hot path → Gemini Flash** for
+latency + long context + cheap streaming; (2) **reasoning-critical → GPT-5-mini**
+for the critic and rule distillation, where one extra caught flaw compounds
+across every future plan in that domain; (3) **every chain has a cross-family
+fallback** — if one provider degrades, the pipeline keeps producing plans
+instead of 500-ing.
 
 ### Tech stack
 
