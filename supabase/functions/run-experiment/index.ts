@@ -861,6 +861,7 @@ ${COST_CATALOG_PROMPT}`;
             console.error("Failed to parse plan JSON", e);
             await supabase.from("runs").update({ status: "failed", error: encodeError("PARSE", "Model returned malformed plan.") }).eq("id", runId);
             send("error", { message: "Model returned malformed plan.", kind: "PARSE" });
+            stopHeartbeat();
             controller.close();
             return;
           }
