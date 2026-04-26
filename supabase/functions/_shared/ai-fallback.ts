@@ -10,11 +10,12 @@ const ENDPOINT = "https://ai.gateway.lovable.dev/v1/chat/completions";
 export type ModelChain = string[];
 
 // Hot-path generation: long context + strict JSON + streaming.
-// Prefer the stable Flash model for lower first-token latency; preview / OpenAI
-// models remain fallbacks for provider hiccups.
+// Recent production logs show 2.5 Flash often burns the whole first-attempt
+// budget before falling through, while 3 Flash is the model that actually
+// starts streaming. Keep 2.5 Flash as backup, then OpenAI as cross-family rescue.
 export const PLAN_MODELS: ModelChain = [
-  "google/gemini-2.5-flash",
   "google/gemini-3-flash-preview",
+  "google/gemini-2.5-flash",
   "openai/gpt-5-mini",
 ];
 

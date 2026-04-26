@@ -757,7 +757,7 @@ serve(async (req) => {
             buildBody: (model) => ({
               model,
               stream: true,
-              temperature: 0.2,
+              ...(model.startsWith("openai/gpt-5") ? {} : { temperature: 0.2 }),
               messages: [
                 { role: "system", content: system },
                 { role: "user", content: userMessage },
