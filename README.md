@@ -64,6 +64,12 @@ catalog issues into the reviewer as extra context).
 
 ## 🏗️ Architecture
 
+> **Deep dive:** see [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) for the
+> full technical reference — request lifecycle, edge-function pipeline,
+> deterministic guards, literature search, LLM fallback, data model,
+> realtime/sync, feedback loop, security model, and operational concerns —
+> with Mermaid diagrams for each.
+
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
 │  Browser (React 18 + Vite + Tailwind + shadcn/ui)                    │
