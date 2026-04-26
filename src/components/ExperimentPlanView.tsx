@@ -111,6 +111,10 @@ interface PlanViewProps {
   hypothesis?: string;
   /** Version number for the PDF filename / cover sheet. */
   version?: number;
+  /** Run id — enables per-section feedback collection that powers the learning loop. */
+  runId?: string;
+  /** Auth user id (if logged in) — written alongside owner_token on feedback rows. */
+  ownerUserId?: string | null;
 }
 
 /** Cheap structural diff: stringify each section and compare. */
@@ -130,7 +134,7 @@ function diffSections(a: ExperimentPlan, b: ExperimentPlan) {
   };
 }
 
-export const ExperimentPlanView = ({ plan, previousPlan, hypothesis, version = 1 }: PlanViewProps) => {
+export const ExperimentPlanView = ({ plan, previousPlan, hypothesis, version = 1, runId, ownerUserId }: PlanViewProps) => {
   const materialsTotal = useMemo(
     () => plan.materials.reduce((s, m) => s + (m.total_cost_usd ?? 0), 0),
     [plan.materials]
@@ -140,6 +144,18 @@ export const ExperimentPlanView = ({ plan, previousPlan, hypothesis, version = 1
     () => previousPlan ? diffSections(plan, previousPlan) : null,
     [plan, previousPlan],
   );
+
+  // Helper: render a feedback control for a given section, only when we have a runId.
+  const fb = (section: FeedbackSection) =>
+    runId ? (
+      <SectionFeedback
+        runId={runId}
+        section={section}
+        domain={plan.domain}
+        hypothesis={hypothesis ?? plan.hypothesis_restated}
+        ownerUserId={ownerUserId ?? null}
+      />
+    ) : undefined;
 
   const onShare = async () => {
     try {
