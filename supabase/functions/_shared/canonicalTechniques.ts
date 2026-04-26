@@ -59,8 +59,9 @@ const TECHNIQUES: CanonicalTechnique[] = [
   {
     name: "Bacterial growth curve (OD600)",
     pattern: /\bOD\s*600\b|\b(?:bacterial\s+)?growth\s+curve\b|\b(?:E\.?\s*coli|bacteria|bacterial)\b[^.]{0,80}\b(?:LB|lysogeny\s+broth|TB|terrific\s+broth|M9|minimal\s+media)\b[^.]{0,80}\b(?:37\s*°?\s*C|grow|culture|OD)/i,
-    rationale: "Bacterial growth curves in standard media (LB, TB, M9) are textbook microbiology — countless published protocols and
-
+    rationale: "Bacterial growth curves in standard media (LB, TB, M9) are textbook microbiology — countless published protocols exist.",
+  },
+];
 export interface CanonicalMatch {
   matched: boolean;
   technique?: string;
