@@ -175,8 +175,15 @@ async function critiquePlan(
     // Critic uses REASONING_MODELS (gpt-5-mini primary). Reviewer-style
     // critique benefits from sharper reasoning; latency is fine because the
     // critic runs after the streamed plan is already on screen.
+    //
+    // Tight per-attempt budget (35s) + 0 retries on the primary so a slow
+    // gpt-5-mini falls through to gemini-flash within ~35s instead of
+    // burning 120s (60s timeout × 2 attempts) before the fallback ever runs.
+    // The fallback gets the default retry budget.
     models: REASONING_MODELS,
     label: "critique",
+    retries: 0,
+    timeoutMs: 35_000,
     buildBody: (model) => ({
       model,
       messages: [
