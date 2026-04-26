@@ -66,6 +66,42 @@ const AppliedLessonsBadge = ({ entries }: { entries: AppliedFeedbackEntry[] }) =
   );
 };
 
+/** Inline ✨ marker rendered next to a specific row (protocol step, material,
+ *  risk) when the planner attributed one or more lessons to that exact row.
+ *  Shows the matched corrections in a tooltip. Silently renders nothing when
+ *  no ids match the appliedFeedback corpus (e.g. dedup deleted the source). */
+const LessonMark = ({
+  ids, lookup,
+}: { ids: string[] | undefined; lookup: Map<string, AppliedFeedbackEntry> }) => {
+  if (!ids || ids.length === 0) return null;
+  const matches = ids.map((id) => lookup.get(id)).filter((x): x is AppliedFeedbackEntry => !!x);
+  if (matches.length === 0) return null;
+  return (
+    <TooltipProvider delayDuration={150}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className="no-print inline-flex cursor-help items-center align-middle text-primary"
+            aria-label={`${matches.length} lesson${matches.length === 1 ? "" : "s"} applied to this row`}
+          >
+            <Sparkles className="h-3 w-3" />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="top" align="start" className="max-w-xs space-y-1.5 p-2.5 text-xs">
+          <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+            Shaped by past feedback
+          </div>
+          {matches.map((e) => (
+            <div key={e.id} className="border-l-2 border-primary/40 pl-2 text-foreground">
+              {e.correction}
+            </div>
+          ))}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+};
+
 /**
  * Plan section. On mobile (< md) the body is collapsible via a native <details>
  * element so users can scan the plan without endless scrolling. On md+ screens
@@ -204,6 +240,13 @@ export const ExperimentPlanView = ({
     return map;
   }, [appliedFeedback]);
 
+  // Flat id → entry lookup for inline per-row attribution (✨ marker).
+  const lessonsById = useMemo(() => {
+    const m = new Map<string, AppliedFeedbackEntry>();
+    for (const e of appliedFeedback ?? []) m.set(e.id, e);
+    return m;
+  }, [appliedFeedback]);
+
   // Helper: render the badge + feedback button for a given section.
   const fb = (section: FeedbackSection) => {
     const lessons = lessonsBySection.get(section) ?? [];
@@ -331,7 +374,7 @@ export const ExperimentPlanView = ({
                 {s.step}
               </span>
               <div className="flex flex-wrap items-baseline gap-x-3">
-                <h3 className="font-serif text-base font-semibold text-foreground">{s.title}</h3>
+                <h3 className="font-serif text-base font-semibold text-foreground inline-flex items-center gap-1.5">{s.title} <LessonMark ids={s.applied_lessons} lookup={lessonsById} /></h3>
                 <span className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
                   {s.duration}
                 </span>
@@ -362,7 +405,7 @@ export const ExperimentPlanView = ({
               {plan.materials.map((m, i) => (
                 <tr key={i} className="align-top">
                   <td className="py-2.5 pr-4">
-                    <div className="font-medium text-foreground">{m.name}</div>
+                    <div className="font-medium text-foreground inline-flex items-center gap-1.5">{m.name} <LessonMark ids={m.applied_lessons} lookup={lessonsById} /></div>
                     {m.notes && <div className="text-xs text-muted-foreground">{m.notes}</div>}
                   </td>
                   <td className="py-2.5 pr-4 text-foreground/80">{m.supplier}</td>
@@ -588,7 +631,7 @@ export const ExperimentPlanView = ({
               <li key={i} className="rounded-md border border-rule p-3">
                 <div className="flex items-start gap-2">
                   <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-warning" />
-                  <div className="font-medium text-sm text-foreground">{r.risk}</div>
+                  <div className="font-medium text-sm text-foreground inline-flex items-center gap-1.5">{r.risk} <LessonMark ids={r.applied_lessons} lookup={lessonsById} /></div>
                 </div>
                 <div className="mt-1.5 pl-5 text-sm text-foreground/75">→ {r.mitigation}</div>
               </li>

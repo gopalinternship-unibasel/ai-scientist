@@ -31,7 +31,7 @@ export type ExperimentPlan = {
   summary: string;
   hypothesis_restated: string;
   success_criteria: string[];
-  protocol: { step: number; title: string; description: string; duration: string; source?: string }[];
+  protocol: { step: number; title: string; description: string; duration: string; source?: string; applied_lessons?: string[] }[];
   materials: {
     name: string;
     supplier: string;
@@ -40,6 +40,7 @@ export type ExperimentPlan = {
     unit_cost_usd: number;
     total_cost_usd: number;
     notes?: string;
+    applied_lessons?: string[];
   }[];
   budget: {
     currency: "USD";
@@ -88,7 +89,7 @@ export type ExperimentPlan = {
     waste_handling: string;
     emergency_procedure: string;
   };
-  risks: { risk: string; mitigation: string }[];
+  risks: { risk: string; mitigation: string; applied_lessons?: string[] }[];
   team: { role: string; fte: number }[];
 };
 

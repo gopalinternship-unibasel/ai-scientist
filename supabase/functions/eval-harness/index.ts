@@ -55,6 +55,7 @@ serve(async (req) => {
   const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+  const CRON_SECRET = Deno.env.get("EVAL_CRON_SECRET");
 
   if (!LOVABLE_API_KEY) {
     return new Response(JSON.stringify({ error: "Service not configured" }), {
@@ -62,32 +63,40 @@ serve(async (req) => {
     });
   }
 
-  const authHeader = req.headers.get("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
-    return new Response(JSON.stringify({ error: "auth required" }), {
-      status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-  const userClient = createClient(SUPABASE_URL, ANON_KEY, {
-    global: { headers: { Authorization: authHeader } },
-  });
-  const { data: who } = await userClient.auth.getUser();
-  if (!who?.user) {
-    return new Response(JSON.stringify({ error: "auth required" }), {
-      status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-  const { data: roles } = await userClient
-    .from("user_roles")
-    .select("role")
-    .eq("user_id", who.user.id);
-  const ok = (roles ?? []).some((r) => r.role === "moderator" || r.role === "admin");
-  if (!ok) {
-    return new Response(JSON.stringify({ error: "forbidden" }), {
-      status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
+  // Two valid auth paths:
+  //   1) `x-cron-secret: <EVAL_CRON_SECRET>` — used by the daily pg_cron job
+  //      which has no JWT to forward. Constant-time compare to avoid timing leaks.
+  //   2) Bearer JWT belonging to a moderator/admin — interactive admin button.
+  const cronHeader = req.headers.get("x-cron-secret");
+  const isCronCall = !!CRON_SECRET && !!cronHeader && constantTimeEqual(cronHeader, CRON_SECRET);
 
+  if (!isCronCall) {
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return new Response(JSON.stringify({ error: "auth required" }), {
+        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const userClient = createClient(SUPABASE_URL, ANON_KEY, {
+      global: { headers: { Authorization: authHeader } },
+    });
+    const { data: who } = await userClient.auth.getUser();
+    if (!who?.user) {
+      return new Response(JSON.stringify({ error: "auth required" }), {
+        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const { data: roles } = await userClient
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", who.user.id);
+    const ok = (roles ?? []).some((r) => r.role === "moderator" || r.role === "admin");
+    if (!ok) {
+      return new Response(JSON.stringify({ error: "forbidden" }), {
+        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+  }
   let body: { full?: boolean; pilot_size?: number } = {};
   try { body = await req.json(); } catch { /* allow empty */ }
 
@@ -251,4 +260,13 @@ function toRow(p: {
     plan_excerpt: p.plan?.slice(0, 4000) ?? null,
     applied_lesson_count: p.lessonCount,
   };
+}
+
+// Constant-time string compare for the cron secret. Standard timing-attack
+// hardening — short-circuit on length but otherwise iterate the whole string.
+function constantTimeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
 }
