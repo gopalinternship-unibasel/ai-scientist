@@ -765,7 +765,7 @@ serve(async (req) => {
             apiKey: LOVABLE_API_KEY,
             models: PLAN_MODELS,
             label: "plan-stream",
-            timeoutMs: 25_000,
+            timeoutMs: 90_000,
             retries: 0,
             buildBody: (model) => ({
               model,
