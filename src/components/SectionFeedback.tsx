@@ -42,14 +42,33 @@ interface ExistingFeedback {
 export const SectionFeedback = ({
   runId, section, domain, hypothesis, ownerUserId, compact = true,
 }: Props) => {
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [rating, setRating] = useState<number | null>(null);
   const [correction, setCorrection] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [replaying, setReplaying] = useState(false);
   // Editing mode for an existing feedback row owned by this user.
   const [existing, setExisting] = useState<ExistingFeedback | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+
+  const startReplay = (text: string) => {
+    if (replaying) return;
+    setReplaying(true);
+    replayWithLesson({
+      parentRunId: runId,
+      hypothesis: hypothesis ?? "",
+      section,
+      correction: text,
+      onCreated: (newId) => {
+        setOpen(false);
+        toast.success("Re-running with this lesson…");
+        navigate(`/runs/${newId}`);
+      },
+      onSettled: () => setReplaying(false),
+    });
+  };
 
   const reset = () => {
     setRating(null);
