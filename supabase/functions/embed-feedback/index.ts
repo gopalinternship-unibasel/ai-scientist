@@ -33,7 +33,7 @@ serve(async (req) => {
 
     const { data: row, error: selErr } = await supabase
       .from("plan_feedback")
-      .select("id, section, domain, correction, hypothesis_excerpt, embedding")
+      .select("id, section, domain, correction, hypothesis_excerpt, embedding, embedding_attempts")
       .eq("id", feedback_id)
       .maybeSingle();
     if (selErr || !row) {
