@@ -20,6 +20,7 @@ import { checkTimelineConsistency } from "../_shared/timelineCheck.ts";
 import { verifyMaterialsLive } from "../_shared/skuVerify.ts";
 import { retrieveRelevantFeedback, feedbackPromptFragment, type FeedbackHint } from "../_shared/feedbackRetrieval.ts";
 import { normalizeDomain, resolveDomain } from "../_shared/domainNormalize.ts";
+import { fetchHouseRules, houseRulesPromptFragment } from "../_shared/houseRules.ts";
 
 const planSchema = {
   type: "object",
@@ -820,6 +821,17 @@ serve(async (req) => {
           }
           const feedbackContext = feedbackPromptFragment(feedbackHints);
 
+          // House rules: stable, distilled per-domain conventions. Cheap to
+          // fetch (single indexed query). Best-effort — empty fragment if none.
+          const houseRules = await fetchHouseRules(supabase, domainGuess);
+          const houseRulesContext = houseRulesPromptFragment(houseRules, domainGuess);
+          if (houseRules.length > 0) {
+            console.log(JSON.stringify({
+              run_id: runId, step: "house_rules_injected",
+              domain: domainGuess, count: houseRules.length,
+            }));
+          }
+
           // 2) Plan generation (streamed)
           const refContext = references.length
             ? `\n\nKNOWN RELATED WORK — use ONLY the strict canonical citation format:\n  • Bare reference:   [N]\n  • Multiple refs:    (see [N, M])\n  • DO NOT use any other form ((ref. 1), [ref. 1], (1), etc.)\n${references.map((r: Reference, i: number) => `[${i + 1}] ${r.title} (${r.year ?? "n.d."}) — ${r.url ?? ""}`).join("\n")}`
@@ -844,7 +856,7 @@ REQUIREMENTS:
 - Risks must be specific, not generic.
 - Be precise. Use exact concentrations, volumes, durations.
 ${safetyPromptFragment(safetyFlags)}
-${COST_CATALOG_PROMPT}${feedbackContext}`;
+${COST_CATALOG_PROMPT}${houseRulesContext}${feedbackContext}`;
 
 
           // Streaming plan generation with model fallback. Once tokens are
