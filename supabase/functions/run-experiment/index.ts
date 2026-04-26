@@ -807,6 +807,7 @@ ${COST_CATALOG_PROMPT}`;
               : "AI gateway error — please retry.";
             await supabase.from("runs").update({ status: "failed", error: encodeError(kind, msg) }).eq("id", runId);
             send("error", { message: msg, kind });
+            stopHeartbeat();
             controller.close();
             return;
           }
