@@ -100,8 +100,8 @@ const Index = () => {
             </h1>
             <p className="mt-5 max-w-2xl font-serif text-lg leading-relaxed text-foreground/75">
               State a scientific hypothesis. We check whether it's been done, then draft a complete
-              operational plan — protocol, materials, budget, timeline, validation — that a real lab
-              could pick up Monday and start running by Friday.
+              operational plan covering protocol, materials, budget, timeline, and validation that a
+              real lab could pick up Monday and start running by Friday.
             </p>
           </section>
         )}
