@@ -18,8 +18,8 @@ import { detectCanonicalTechnique } from "../_shared/canonicalTechniques.ts";
 import { rankByRelevance } from "../_shared/relevanceRank.ts";
 import { checkTimelineConsistency } from "../_shared/timelineCheck.ts";
 import { verifyMaterialsLive } from "../_shared/skuVerify.ts";
-import { retrieveRelevantFeedback, feedbackPromptFragment } from "../_shared/feedbackRetrieval.ts";
-import { normalizeDomain } from "../_shared/domainNormalize.ts";
+import { retrieveRelevantFeedback, feedbackPromptFragment, type FeedbackHint } from "../_shared/feedbackRetrieval.ts";
+import { normalizeDomain, resolveDomain } from "../_shared/domainNormalize.ts";
 
 const planSchema = {
   type: "object",
