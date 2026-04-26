@@ -374,7 +374,7 @@ export const ExperimentPlanView = ({
                 {s.step}
               </span>
               <div className="flex flex-wrap items-baseline gap-x-3">
-                <h3 className="font-serif text-base font-semibold text-foreground">{s.title}</h3>
+                <h3 className="font-serif text-base font-semibold text-foreground inline-flex items-center gap-1.5">{s.title} <LessonMark ids={s.applied_lessons} lookup={lessonsById} /></h3>
                 <span className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
                   {s.duration}
                 </span>
@@ -405,7 +405,7 @@ export const ExperimentPlanView = ({
               {plan.materials.map((m, i) => (
                 <tr key={i} className="align-top">
                   <td className="py-2.5 pr-4">
-                    <div className="font-medium text-foreground">{m.name}</div>
+                    <div className="font-medium text-foreground inline-flex items-center gap-1.5">{m.name} <LessonMark ids={m.applied_lessons} lookup={lessonsById} /></div>
                     {m.notes && <div className="text-xs text-muted-foreground">{m.notes}</div>}
                   </td>
                   <td className="py-2.5 pr-4 text-foreground/80">{m.supplier}</td>
@@ -631,7 +631,7 @@ export const ExperimentPlanView = ({
               <li key={i} className="rounded-md border border-rule p-3">
                 <div className="flex items-start gap-2">
                   <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-warning" />
-                  <div className="font-medium text-sm text-foreground">{r.risk}</div>
+                  <div className="font-medium text-sm text-foreground inline-flex items-center gap-1.5">{r.risk} <LessonMark ids={r.applied_lessons} lookup={lessonsById} /></div>
                 </div>
                 <div className="mt-1.5 pl-5 text-sm text-foreground/75">→ {r.mitigation}</div>
               </li>
