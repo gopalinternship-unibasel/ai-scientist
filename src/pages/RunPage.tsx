@@ -383,6 +383,16 @@ const RunPage = () => {
               )}
               {inFlight && !run.qc && <GenerationProgress stage="qc" refinement={refinementCtx} />}
               {inFlight && run.qc && !run.plan && <GenerationProgress stage="plan" refinement={refinementCtx} />}
+              {run.plan && run.solicit_section && run.solicit_reason && isOwner && (
+                <SolicitationBanner
+                  runId={run.id}
+                  ownerUserId={run.owner_user_id}
+                  hypothesis={run.hypothesis}
+                  domain={run.plan.domain}
+                  section={run.solicit_section}
+                  reason={run.solicit_reason}
+                />
+              )}
               {run.plan && (
                 <ErrorBoundary label="the experiment plan">
                   <ExperimentPlanView
