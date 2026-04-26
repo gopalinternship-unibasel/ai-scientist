@@ -618,6 +618,20 @@ serve(async (req) => {
           controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
         };
 
+        // Heartbeat: literature QC can take >90s when external APIs are slow,
+        // and the row's updated_at would otherwise stay frozen until QC writes.
+        // Ticking updated_at every 20s keeps the client-side stall detector
+        // (which watches updated_at) from firing on healthy long-running runs.
+        // We also emit an SSE comment line so any intermediate proxy keeps the
+        // connection warm.
+        const heartbeat = setInterval(() => {
+          supabase.from("runs").update({ updated_at: new Date().toISOString() })
+            .eq("id", runId)
+            .then(() => {}, () => {});
+          try { controller.enqueue(encoder.encode(`: hb ${Date.now()}\n\n`)); } catch { /* closed */ }
+        }, 20_000);
+        const stopHeartbeat = () => clearInterval(heartbeat);
+
         try {
           send("run", { id: runId, cached: !!cached });
 
@@ -627,6 +641,7 @@ serve(async (req) => {
             send("plan", cached.plan);
             if (cached.critique) send("critique", cached.critique);
             send("done", { id: runId });
+            stopHeartbeat();
             controller.close();
             return;
           }
@@ -792,6 +807,7 @@ ${COST_CATALOG_PROMPT}`;
               : "AI gateway error — please retry.";
             await supabase.from("runs").update({ status: "failed", error: encodeError(kind, msg) }).eq("id", runId);
             send("error", { message: msg, kind });
+            stopHeartbeat();
             controller.close();
             return;
           }
@@ -845,6 +861,7 @@ ${COST_CATALOG_PROMPT}`;
             console.error("Failed to parse plan JSON", e);
             await supabase.from("runs").update({ status: "failed", error: encodeError("PARSE", "Model returned malformed plan.") }).eq("id", runId);
             send("error", { message: "Model returned malformed plan.", kind: "PARSE" });
+            stopHeartbeat();
             controller.close();
             return;
           }
@@ -893,9 +910,11 @@ ${COST_CATALOG_PROMPT}`;
             console.error("critique failed", e);
           }
 
+          stopHeartbeat();
           try { controller.close(); } catch { /* already closed */ }
         } catch (e) {
           console.error("stream error", e);
+          stopHeartbeat();
           // Only mark as failed if the run isn't already done. A late stream
           // error (client disconnect after `done` was sent) must NOT demote
           // a successful run to `failed`.
