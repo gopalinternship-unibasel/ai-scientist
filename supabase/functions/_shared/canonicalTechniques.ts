@@ -58,8 +58,13 @@ const TECHNIQUES: CanonicalTechnique[] = [
   },
   {
     name: "Bacterial growth curve (OD600)",
+    // Match only when the hypothesis is *about* a textbook growth assay —
+    // not when it merely mentions growth in passing while testing a novel
+    // perturbation (CRISPRi, knockout, novel substrate, engineered strain, …).
     pattern: /\bOD\s*600\b|\b(?:bacterial\s+)?growth\s+curve\b|\b(?:E\.?\s*coli|bacteria|bacterial)\b[^.]{0,80}\b(?:LB|lysogeny\s+broth|TB|terrific\s+broth|M9|minimal\s+media)\b[^.]{0,80}\b(?:37\s*°?\s*C|grow|culture|OD)/i,
     rationale: "Bacterial growth curves in standard media (LB, TB, M9) are textbook microbiology — countless published protocols exist.",
+    // Disqualify if the hypothesis introduces a non-canonical perturbation.
+    disqualifyIf: /\b(?:CRISPR|CRISPRi|CRISPRa|Cas9|Cas12|Cas13|knockout|knock-?out|knockdown|knock-?down|knock-?in|RNAi|shRNA|siRNA|engineered|synthetic|riboswitch|optogenetic|novel|mutant|deletion\s+strain|Δ[a-zA-Z]|overexpress)/i,
   },
 ];
 export interface CanonicalMatch {
