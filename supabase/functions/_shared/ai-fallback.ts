@@ -10,8 +10,10 @@ const ENDPOINT = "https://ai.gateway.lovable.dev/v1/chat/completions";
 export type ModelChain = string[];
 
 // Hot-path generation: long context + strict JSON + streaming.
-// Gemini Flash leads on latency/context; GPT-5-mini fallback covers outages.
+// Prefer the stable Flash model for lower first-token latency; preview / OpenAI
+// models remain fallbacks for provider hiccups.
 export const PLAN_MODELS: ModelChain = [
+  "google/gemini-2.5-flash",
   "google/gemini-3-flash-preview",
   "openai/gpt-5-mini",
 ];
