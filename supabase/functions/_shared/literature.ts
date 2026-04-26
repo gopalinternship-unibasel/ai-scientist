@@ -132,7 +132,7 @@ async function searchPubMed(q: string, timeoutMs = DEFAULT_TIMEOUT): Promise<Lit
   sum.searchParams.set("retmode", "json");
   const uRes = await fetch(sum.toString(), {
     headers: { "User-Agent": UA },
-    signal: AbortSignal.timeout(8000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!uRes.ok) return [];
   const uJson = await uRes.json();
