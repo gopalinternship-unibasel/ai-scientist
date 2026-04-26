@@ -39,7 +39,7 @@ export const HypothesisInput = ({ onSubmit, loading }: Props) => {
           What experiment do you want to run?
         </h2>
         <p className="mt-2 max-w-xl text-sm text-muted-foreground">
-          State a precise hypothesis — an intervention, a measurable outcome, a threshold.
+          State a precise hypothesis: an intervention, a measurable outcome, a threshold.
           We'll check the literature, then draft a complete, lab-ready plan.
         </p>
       </div>
