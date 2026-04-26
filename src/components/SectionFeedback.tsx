@@ -60,11 +60,20 @@ export const SectionFeedback = ({
         owner_token: ownerToken,
         owner_user_id: ownerUserId ?? null,
       };
-      const { error } = await supabase
+      const { data: inserted, error } = await supabase
         .from("plan_feedback")
         // deno-lint-ignore no-explicit-any
-        .insert(payload as any);
+        .insert(payload as any)
+        .select("id")
+        .single();
       if (error) throw error;
+      // Fire-and-forget: embed the new row so future plans can match it
+      // semantically. Failure here doesn't block the user — the row is saved.
+      if (inserted?.id) {
+        supabase.functions.invoke("embed-feedback", {
+          body: { feedback_id: inserted.id },
+        }).catch((e) => console.warn("embed-feedback invoke failed", e));
+      }
       setSubmitted(true);
       toast.success("Feedback recorded — future plans will learn from this.");
       setTimeout(() => { setOpen(false); reset(); }, 1200);
