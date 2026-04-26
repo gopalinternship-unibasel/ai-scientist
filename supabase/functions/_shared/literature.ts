@@ -33,8 +33,10 @@ export interface LitResult {
 }
 
 const UA = "AI-Scientist/1.0 (Lovable)";
+const DEFAULT_TIMEOUT = 8000;
+const DEGRADED_TIMEOUT = 4000; // shorter timeout for retry queries
 
-async function searchS2(q: string): Promise<LitPaper[]> {
+async function searchS2(q: string, timeoutMs = DEFAULT_TIMEOUT): Promise<LitPaper[]> {
   const url = new URL("https://api.semanticscholar.org/graph/v1/paper/search");
   url.searchParams.set("query", q);
   url.searchParams.set("limit", "8");
@@ -44,7 +46,7 @@ async function searchS2(q: string): Promise<LitPaper[]> {
   );
   const res = await fetch(url.toString(), {
     headers: { "User-Agent": UA },
-    signal: AbortSignal.timeout(8000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!res.ok) return [];
   const json = await res.json();
@@ -64,18 +66,15 @@ async function searchS2(q: string): Promise<LitPaper[]> {
   }));
 }
 
-async function searchOpenAlex(q: string): Promise<LitPaper[]> {
+async function searchOpenAlex(q: string, timeoutMs = DEFAULT_TIMEOUT): Promise<LitPaper[]> {
   const url = new URL("https://api.openalex.org/works");
-  // `title_and_abstract.search` is far more topical than the default `search`
-  // (which also matches author names, venues, fulltext keywords). For a
-  // keyword-style query, this dramatically reduces off-topic noise.
   url.searchParams.set("filter", `title_and_abstract.search:${q}`);
   url.searchParams.set("per-page", "8");
   url.searchParams.set("sort", "relevance_score:desc");
-  url.searchParams.set("mailto", "ai-scientist@lovable.dev"); // polite pool
+  url.searchParams.set("mailto", "ai-scientist@lovable.dev");
   const res = await fetch(url.toString(), {
     headers: { "User-Agent": UA },
-    signal: AbortSignal.timeout(8000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!res.ok) return [];
   const json = await res.json();
@@ -111,7 +110,7 @@ async function searchOpenAlex(q: string): Promise<LitPaper[]> {
   });
 }
 
-async function searchPubMed(q: string): Promise<LitPaper[]> {
+async function searchPubMed(q: string, timeoutMs = DEFAULT_TIMEOUT): Promise<LitPaper[]> {
   // 1) esearch for PMIDs
   const search = new URL("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi");
   search.searchParams.set("db", "pubmed");
@@ -120,7 +119,7 @@ async function searchPubMed(q: string): Promise<LitPaper[]> {
   search.searchParams.set("retmax", "8");
   const sRes = await fetch(search.toString(), {
     headers: { "User-Agent": UA },
-    signal: AbortSignal.timeout(8000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!sRes.ok) return [];
   const sJson = await sRes.json();
@@ -133,7 +132,7 @@ async function searchPubMed(q: string): Promise<LitPaper[]> {
   sum.searchParams.set("retmode", "json");
   const uRes = await fetch(sum.toString(), {
     headers: { "User-Agent": UA },
-    signal: AbortSignal.timeout(8000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!uRes.ok) return [];
   const uJson = await uRes.json();
@@ -166,39 +165,48 @@ function titleKey(t: string): string {
   return t.toLowerCase().replace(/[^a-z0-9 ]+/g, "").replace(/\s+/g, " ").trim().slice(0, 80);
 }
 
-/** Run S2 + OpenAlex + PubMed in parallel for a single query string. */
-async function runOnce(q: string) {
-  const [s2, oa, pm] = await Promise.allSettled([
-    searchS2(q),
-    searchOpenAlex(q),
-    searchPubMed(q),
-  ]);
-  return {
-    s2: s2.status === "fulfilled" ? s2.value : [],
-    oa: oa.status === "fulfilled" ? oa.value : [],
-    pm: pm.status === "fulfilled" ? pm.value : [],
-    s2Status: s2.status, oaStatus: oa.status, pmStatus: pm.status,
-  };
+/**
+ * For a single source, try each query in order until one returns results.
+ * Uses shorter timeouts for degraded (non-first) queries.
+ */
+async function searchSourceWithFallback(
+  sourceFn: (q: string, t: number) => Promise<LitPaper[]>,
+  queries: string[],
+): Promise<{ papers: LitPaper[]; status: PromiseSettledResult<LitPaper[]>["status"] }> {
+  for (let i = 0; i < queries.length; i++) {
+    const timeout = i === 0 ? DEFAULT_TIMEOUT : DEGRADED_TIMEOUT;
+    try {
+      const papers = await sourceFn(queries[i], timeout);
+      if (papers.length > 0) return { papers, status: "fulfilled" };
+    } catch {
+      if (i === queries.length - 1) return { papers: [], status: "rejected" };
+    }
+  }
+  return { papers: [], status: "fulfilled" };
 }
 
 export async function searchLiterature(query: string): Promise<LitResult> {
-  // Try the full hypothesis first; if it returns nothing across all sources,
-  // back off to progressively-broader keyword queries (e.g. "PCR GAPDH human"
-  // → "PCR GAPDH"). This rescues the common failure mode where a precisely
-  // worded sentence finds zero keyword matches in any database.
+  // Fire all three sources in parallel. Each source independently tries
+  // degraded queries, so worst-case wall-time = max(single-source cascade)
+  // instead of sum(all-sources × all-queries).
   const queries = degradedQueries(query);
-  let attempt: Awaited<ReturnType<typeof runOnce>> | null = null;
-  let usedQueryIdx = 0;
-  for (let i = 0; i < queries.length; i++) {
-    attempt = await runOnce(queries[i]);
-    const total = attempt.s2.length + attempt.oa.length + attempt.pm.length;
-    if (total > 0) { usedQueryIdx = i; break; }
-    usedQueryIdx = i;
-  }
-  // attempt is non-null because queries always has ≥1 entry
-  const { s2: s2Papers, oa: oaPapers, pm: pmPapers, s2Status, oaStatus, pmStatus } = attempt!;
-  if (usedQueryIdx > 0) {
-    console.log(`[literature] degraded query #${usedQueryIdx}: "${queries[usedQueryIdx]}" recovered ${s2Papers.length + oaPapers.length + pmPapers.length} hits`);
+
+  const [s2Result, oaResult, pmResult] = await Promise.all([
+    searchSourceWithFallback(searchS2, queries),
+    searchSourceWithFallback(searchOpenAlex, queries),
+    searchSourceWithFallback(searchPubMed, queries),
+  ]);
+
+  const s2Papers = s2Result.papers;
+  const oaPapers = oaResult.papers;
+  const pmPapers = pmResult.papers;
+  const s2Status = s2Result.status;
+  const oaStatus = oaResult.status;
+  const pmStatus = pmResult.status;
+
+  const total = s2Papers.length + oaPapers.length + pmPapers.length;
+  if (total > 0 && queries.length > 1) {
+    console.log(`[literature] parallel degraded search recovered ${total} hits`);
   }
 
   // Dedup priority: prefer the source with abstract (S2 / OpenAlex over PubMed).
