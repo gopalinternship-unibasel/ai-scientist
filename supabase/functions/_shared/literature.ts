@@ -36,7 +36,7 @@ const UA = "AI-Scientist/1.0 (Lovable)";
 const DEFAULT_TIMEOUT = 8000;
 const DEGRADED_TIMEOUT = 4000; // shorter timeout for retry queries
 
-async function searchS2(q: string): Promise<LitPaper[]> {
+async function searchS2(q: string, timeoutMs = DEFAULT_TIMEOUT): Promise<LitPaper[]> {
   const url = new URL("https://api.semanticscholar.org/graph/v1/paper/search");
   url.searchParams.set("query", q);
   url.searchParams.set("limit", "8");
@@ -46,7 +46,7 @@ async function searchS2(q: string): Promise<LitPaper[]> {
   );
   const res = await fetch(url.toString(), {
     headers: { "User-Agent": UA },
-    signal: AbortSignal.timeout(8000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!res.ok) return [];
   const json = await res.json();
