@@ -185,12 +185,19 @@ function expandAbbreviations(s: string): string | null {
  * The caller fires them in order until one returns hits.
  */
 export function degradedQueries(hypothesis: string): string[] {
-  const full = hypothesis.replace(/\s+/g, " ").trim().slice(0, 280);
+  // Normalize Unicode subscripts/superscripts up-front (LiFePO₄ → LiFePO4)
+  // so both keyword extraction and abbreviation expansion can match.
+  const normalized = normalizeUnicodeNumerics(hypothesis);
+  const full = normalized.replace(/\s+/g, " ").trim().slice(0, 280);
   const expandedFull = expandAbbreviations(full);
-  const kw = extractKeywords(hypothesis, 6);
+  const kw = extractKeywords(normalized, 6);
   const expandedKw = expandedFull ? extractKeywords(expandedFull, 6) : [];
 
   const out: string[] = [full];
+  // Also include the raw original if it differed (covers papers indexed with the unicode form).
+  if (full !== hypothesis.replace(/\s+/g, " ").trim().slice(0, 280)) {
+    out.push(hypothesis.replace(/\s+/g, " ").trim().slice(0, 280));
+  }
   // Interleave expanded variants so they fire early enough to matter.
   if (expandedFull) out.push(expandedFull);
   if (kw.length >= 4) out.push(kw.slice(0, Math.min(5, kw.length)).join(" "));
