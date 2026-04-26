@@ -8,6 +8,7 @@ import { Logo } from "@/components/Logo";
 import { UserMenu } from "@/components/UserMenu";
 import { LiteratureQCCard } from "@/components/LiteratureQCCard";
 import { ExperimentPlanView } from "@/components/ExperimentPlanView";
+import { SolicitationBanner } from "@/components/SolicitationBanner";
 import { GenerationProgress } from "@/components/GenerationProgress";
 import { PlanCritiqueCard } from "@/components/PlanCritiqueCard";
 import { RefineDialog } from "@/components/RefineDialog";
