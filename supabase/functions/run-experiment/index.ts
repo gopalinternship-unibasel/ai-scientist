@@ -16,6 +16,8 @@ import { findCatalogIssues } from "../_shared/catalogCheck.ts";
 import { checkFeasibility } from "../_shared/feasibilityCheck.ts";
 import { detectCanonicalTechnique } from "../_shared/canonicalTechniques.ts";
 import { rankByRelevance } from "../_shared/relevanceRank.ts";
+import { checkTimelineConsistency } from "../_shared/timelineCheck.ts";
+import { verifyMaterialsLive } from "../_shared/skuVerify.ts";
 
 const planSchema = {
   type: "object",
@@ -886,17 +888,40 @@ ${COST_CATALOG_PROMPT}`;
           //    Feed catalog-mismatch findings as extra reviewer context so the
           //    critique surfaces wrong-form / wrong-cat# materials concretely.
           try {
-            const catIssues = findCatalogIssues((planObj as { materials?: { name?: string; catalog_number?: string; supplier?: string }[] })?.materials);
-            const extraContext = catIssues.length
-              ? `\n\nDETERMINISTIC CATALOG CHECK FOUND ${catIssues.length} ISSUE(S) — please raise these in 'concerns' with severity 'high':\n${catIssues.map((i) => {
-                  if (i.reason === "format_mismatch") {
-                    return `- Material #${i.material_index + 1} ("${i.declared_name}") has catalog number ${i.catalog_number}, which does NOT match the supplier's catalog format. ${i.canonical_name} Verify on the supplier site before ordering.`;
-                  }
-                  return `- Material #${i.material_index + 1} declares "${i.declared_name}" with catalog number ${i.catalog_number}, but that catalog number is actually "${i.canonical_name}" (${i.reason}).`;
-                }).join("\n")}`
+            const planMaterials = (planObj as { materials?: { name?: string; catalog_number?: string; supplier?: string }[] })?.materials;
+            const catIssues = findCatalogIssues(planMaterials);
+            // Live SKU verification + timeline check (best-effort, parallel).
+            const skuIssues = await verifyMaterialsLive(planMaterials).catch(() => []);
+            const timelineIssue = checkTimelineConsistency(
+              (planObj as { protocol?: { duration?: string; title?: string }[] })?.protocol,
+              (planObj as { timeline?: { duration?: string; phase?: string }[] })?.timeline,
+            );
+
+            const issueLines: string[] = [];
+            for (const i of catIssues) {
+              if (i.reason === "format_mismatch") {
+                issueLines.push(`- Material #${i.material_index + 1} ("${i.declared_name}") has catalog number ${i.catalog_number}, which does NOT match the supplier's catalog format. ${i.canonical_name} Verify on the supplier site before ordering.`);
+              } else {
+                issueLines.push(`- Material #${i.material_index + 1} declares "${i.declared_name}" with catalog number ${i.catalog_number}, but that catalog number is actually "${i.canonical_name}" (${i.reason}).`);
+              }
+            }
+            for (const s of skuIssues) {
+              issueLines.push(`- Material #${s.material_index + 1} ("${s.declared_name}", cat# ${s.catalog_number}): ${s.supplier_hint ?? s.reason}. The supplier's live catalog could not confirm this exact SKU/name pairing.`);
+            }
+            if (timelineIssue) {
+              issueLines.push(`- Timeline inconsistency (${timelineIssue.reason}): ${timelineIssue.detail} Either extend the timeline phases or compress the protocol.`);
+            }
+
+            const extraContext = issueLines.length
+              ? `\n\nDETERMINISTIC PRE-CHECKS FOUND ${issueLines.length} ISSUE(S) — please raise these in 'concerns' with severity 'high':\n${issueLines.join("\n")}`
               : "";
-            if (catIssues.length) {
-              console.log("catalog-check", JSON.stringify({ run_id: runId, issues: catIssues.length }));
+            if (catIssues.length || skuIssues.length || timelineIssue) {
+              console.log("pre-checks", JSON.stringify({
+                run_id: runId,
+                catalog: catIssues.length,
+                live_sku: skuIssues.length,
+                timeline: timelineIssue?.reason ?? null,
+              }));
             }
             const critique = await critiquePlan(hypothesis, plan, LOVABLE_API_KEY, extraContext);
             if (critique) {
