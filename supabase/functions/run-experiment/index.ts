@@ -6,7 +6,7 @@ import { fetchWithRetry } from "../_shared/fetch-with-retry.ts";
 import { sanitizeCitationsWithReport } from "../_shared/citations.ts";
 import { checkHypothesis } from "../_shared/hypothesisValidation.ts";
 import { searchLiterature, type LitPaper } from "../_shared/literature.ts";
-import { screenSafety, safetyPromptFragment } from "../_shared/safety.ts";
+import { screenSafety } from "../_shared/safety.ts";
 import {
   callAIWithFallback, PLAN_MODELS, FAST_MODELS,
   classifyHttpError, encodeError, type ErrorKind,
@@ -20,7 +20,7 @@ import { checkTimelineConsistency } from "../_shared/timelineCheck.ts";
 import { verifyMaterialsLive } from "../_shared/skuVerify.ts";
 import { retrieveRelevantFeedback, feedbackPromptFragment, type FeedbackHint } from "../_shared/feedbackRetrieval.ts";
 import { normalizeDomain, resolveDomain } from "../_shared/domainNormalize.ts";
-import { fetchHouseRules, houseRulesPromptFragment } from "../_shared/houseRules.ts";
+import { fetchHouseRules } from "../_shared/houseRules.ts";
 import { planSchema, buildPlannerSystemPrompt, buildPlannerUserMessage } from "../_shared/plannerCore.ts";
 
 
