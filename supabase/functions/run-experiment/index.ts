@@ -1038,7 +1038,7 @@ ${COST_CATALOG_PROMPT}${feedbackContext}`;
                 .eq("id", runId);
             }
 
-            const critique = await critiquePlan(hypothesis, plan, LOVABLE_API_KEY, extraContext);
+            const critique = await critiquePlan(hypothesis, plan, LOVABLE_API_KEY, extraContext, feedbackHints);
             if (critique) {
               // Persist FIRST so the result is durable even if the client
               // already disconnected (which would close the SSE controller
