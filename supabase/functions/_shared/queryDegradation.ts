@@ -140,7 +140,26 @@ const ABBREVIATIONS: Array<[RegExp, string]> = [
   [/\bFACS\b/, "fluorescence activated cell sorting"],
   [/\bAAV\b/, "adeno-associated virus"],
   [/\bCAR-?T\b/i, "chimeric antigen receptor T cell"],
+  // Materials science / batteries
+  [/\bLiFePO4\b/i, "lithium iron phosphate"],
+  [/\bLFP\b/, "lithium iron phosphate"],
+  [/\bLiCoO2\b/i, "lithium cobalt oxide"],
+  [/\bLiMn2O4\b/i, "lithium manganese oxide"],
+  [/\bNMC\b|\bNCM\b/, "nickel manganese cobalt"],
+  [/\bNCA\b/, "nickel cobalt aluminum"],
+  [/\bSEI\b/, "solid electrolyte interphase"],
 ];
+
+// Normalize Unicode subscripts/superscripts to ASCII so "LiFePO₄" matches
+// papers indexed as "LiFePO4". Applied before keyword extraction and
+// abbreviation expansion.
+const SUBSCRIPT_MAP: Record<string, string> = {
+  "₀":"0","₁":"1","₂":"2","₃":"3","₄":"4","₅":"5","₆":"6","₇":"7","₈":"8","₉":"9",
+  "⁰":"0","¹":"1","²":"2","³":"3","⁴":"4","⁵":"5","⁶":"6","⁷":"7","⁸":"8","⁹":"9",
+};
+function normalizeUnicodeNumerics(s: string): string {
+  return s.replace(/[₀-₉⁰-⁹]/g, (c) => SUBSCRIPT_MAP[c] ?? c);
+}
 
 /** Replace abbreviations in `s` with their expansions. Returns null if nothing changed. */
 function expandAbbreviations(s: string): string | null {
