@@ -962,11 +962,13 @@ ${COST_CATALOG_PROMPT}${feedbackContext}`;
 
           // Persist a normalized domain on the run so future feedback rows
           // and cross-run retrieval all share the same controlled vocabulary.
-          const normalizedDomain = normalizeDomain(
-            (planObj as { domain?: string })?.domain,
-            hypothesis,
-            (planObj as { summary?: string })?.summary,
-          );
+          // Reuse the earlier resolved domain when we have one (already paid
+          // the LLM call, if any) — only re-resolve if the planner returned
+          // a more specific label that the regex now matches.
+          const planDomainStrict = (planObj as { domain?: string })?.domain;
+          const normalizedDomain = planDomainStrict
+            ? await resolveDomain(LOVABLE_API_KEY, planDomainStrict, domainGuess, hypothesis, (planObj as { summary?: string })?.summary)
+            : domainGuess;
           await supabase.from("runs").update({
             plan: planObj, status: "done", domain: normalizedDomain,
           }).eq("id", runId);
