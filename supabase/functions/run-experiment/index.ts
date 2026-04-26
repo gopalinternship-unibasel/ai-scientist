@@ -908,9 +908,11 @@ ${COST_CATALOG_PROMPT}`;
             console.error("critique failed", e);
           }
 
+          stopHeartbeat();
           try { controller.close(); } catch { /* already closed */ }
         } catch (e) {
           console.error("stream error", e);
+          stopHeartbeat();
           // Only mark as failed if the run isn't already done. A late stream
           // error (client disconnect after `done` was sent) must NOT demote
           // a successful run to `failed`.
