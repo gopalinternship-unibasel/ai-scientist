@@ -104,18 +104,80 @@ export function extractKeywords(hypothesis: string, k = 6): string[] {
   return out.slice(0, k);
 }
 
+// Common scientific abbreviations → expanded forms. Literature APIs do
+// keyword matching: a paper indexed under "5-fluorouracil" won't match "5-FU".
+// When any of these abbreviations appear in the hypothesis, we generate an
+// extra query with the expanded form to recover those hits.
+const ABBREVIATIONS: Array<[RegExp, string]> = [
+  [/\b5-?FU\b/i, "5-fluorouracil"],
+  [/\bara-?C\b/i, "cytarabine"],
+  [/\bDOX\b/, "doxorubicin"],
+  [/\bCDDP\b/, "cisplatin"],
+  [/\bMTX\b/, "methotrexate"],
+  [/\bLPS\b/, "lipopolysaccharide"],
+  [/\bPMA\b/, "phorbol myristate acetate"],
+  [/\bIFN-?γ\b|\bIFNg\b|\bIFN-?gamma\b/i, "interferon gamma"],
+  [/\bTNF-?α\b|\bTNFa\b|\bTNF-?alpha\b/i, "tumor necrosis factor alpha"],
+  [/\bIL-?(\d+)\b/i, "interleukin"],
+  [/\bMPP[1-4]\b/, "multipotent progenitor"],
+  [/\bHSPCs?\b/, "hematopoietic stem progenitor"],
+  [/\bHSCs?\b/, "hematopoietic stem cell"],
+  [/\bBMDMs?\b/, "bone marrow derived macrophage"],
+  [/\bDCs?\b/, "dendritic cell"],
+  [/\bMSCs?\b/, "mesenchymal stem cell"],
+  [/\bPBMCs?\b/, "peripheral blood mononuclear cell"],
+  [/\bGFP\b/, "green fluorescent protein"],
+  [/\bRT-?qPCR\b/i, "reverse transcription quantitative PCR"],
+  [/\bIHC\b/, "immunohistochemistry"],
+  [/\bIF\b(?=\s+(?:staining|imaging|microscopy))/, "immunofluorescence"],
+  [/\bFACS\b/, "fluorescence activated cell sorting"],
+  [/\bAAV\b/, "adeno-associated virus"],
+  [/\bCAR-?T\b/i, "chimeric antigen receptor T cell"],
+];
+
+/** Replace abbreviations in `s` with their expansions. Returns null if nothing changed. */
+function expandAbbreviations(s: string): string | null {
+  let out = s;
+  let changed = false;
+  for (const [re, exp] of ABBREVIATIONS) {
+    if (re.test(out)) {
+      out = out.replace(re, exp);
+      changed = true;
+    }
+  }
+  return changed ? out : null;
+}
+
 /**
  * Build a sequence of progressively-broader query strings, from
  * full-hypothesis at the top to a 2-keyword core at the bottom.
+ *
+ * If the hypothesis contains common scientific abbreviations (5-FU, MPP3,
+ * IFN-γ, …), we also emit expanded variants — literature APIs index papers
+ * under the long form and won't match the abbreviation.
  *
  * The caller fires them in order until one returns hits.
  */
 export function degradedQueries(hypothesis: string): string[] {
   const full = hypothesis.replace(/\s+/g, " ").trim().slice(0, 280);
+  const expandedFull = expandAbbreviations(full);
   const kw = extractKeywords(hypothesis, 6);
+  const expandedKw = expandedFull ? extractKeywords(expandedFull, 6) : [];
+
   const out: string[] = [full];
+  // Interleave expanded variants so they fire early enough to matter.
+  if (expandedFull) out.push(expandedFull);
   if (kw.length >= 4) out.push(kw.slice(0, Math.min(5, kw.length)).join(" "));
+  if (expandedKw.length >= 4) out.push(expandedKw.slice(0, Math.min(5, expandedKw.length)).join(" "));
   if (kw.length >= 2) out.push(kw.slice(0, Math.min(3, kw.length)).join(" "));
-  // Dedup neighbouring identical entries (very short hypotheses).
-  return out.filter((q, i) => i === 0 || q !== out[i - 1]);
+  if (expandedKw.length >= 2) out.push(expandedKw.slice(0, Math.min(3, expandedKw.length)).join(" "));
+
+  // Dedup while preserving order.
+  const seen = new Set<string>();
+  return out.filter((q) => {
+    const k = q.toLowerCase();
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
 }

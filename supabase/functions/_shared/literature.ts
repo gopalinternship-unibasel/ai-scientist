@@ -176,16 +176,37 @@ async function searchSourceWithFallback(
   sourceFn: (q: string, t: number) => Promise<LitPaper[]>,
   queries: string[],
 ): Promise<{ papers: LitPaper[]; status: PromiseSettledResult<LitPaper[]>["status"] }> {
+  // Keep firing queries (full → expanded → degraded → expanded-degraded)
+  // and merge results, deduped by externalId/title, until we have ≥10
+  // candidates or run out of queries. Earlier (more-specific) queries
+  // are tried first; later queries top-up recall — important when an
+  // abbreviation expansion (5-FU → 5-fluorouracil) surfaces classic
+  // papers that the abbreviated query missed.
+  const merged: LitPaper[] = [];
+  const seen = new Set<string>();
+  let anyOk = false;
+  let lastErr = false;
+  const TARGET = 10;
   for (let i = 0; i < queries.length; i++) {
+    if (merged.length >= TARGET) break;
     const timeout = i === 0 ? DEFAULT_TIMEOUT : DEGRADED_TIMEOUT;
     try {
       const papers = await sourceFn(queries[i], timeout);
-      if (papers.length > 0) return { papers, status: "fulfilled" };
+      anyOk = true;
+      for (const p of papers) {
+        const key = (p.externalId && p.externalId.startsWith("10.") ? p.externalId : titleKey(p.title ?? ""))?.toLowerCase();
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        merged.push(p);
+        if (merged.length >= TARGET) break;
+      }
     } catch {
-      if (i === queries.length - 1) return { papers: [], status: "rejected" };
+      lastErr = true;
     }
   }
-  return { papers: [], status: "fulfilled" };
+  if (merged.length > 0) return { papers: merged, status: "fulfilled" };
+  if (anyOk) return { papers: [], status: "fulfilled" };
+  return { papers: [], status: lastErr ? "rejected" : "fulfilled" };
 }
 
 export async function searchLiterature(query: string): Promise<LitResult> {
