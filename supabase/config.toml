@@ -8,3 +8,6 @@ verify_jwt = false
 
 [functions.run-experiment]
 verify_jwt = false
+
+[functions.embed-feedback]
+verify_jwt = false

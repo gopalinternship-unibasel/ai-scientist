@@ -21,6 +21,50 @@ import { toast } from "sonner";
 import type { ExperimentPlan } from "@/lib/samples";
 import { exportPlanToPdf } from "@/lib/exportPdf";
 import { SectionFeedback, type FeedbackSection } from "@/components/SectionFeedback";
+import { Sparkles } from "lucide-react";
+import {
+  Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
+} from "@/components/ui/tooltip";
+
+export interface AppliedFeedbackEntry {
+  id: string;
+  section: string;
+  rating: number | null;
+  correction: string;
+  similarity: number;
+}
+
+/** Render a small "Applied N lessons" pill that, on hover, lists the
+ *  specific corrections the planner used for this section. */
+const AppliedLessonsBadge = ({ entries }: { entries: AppliedFeedbackEntry[] }) => {
+  if (entries.length === 0) return null;
+  return (
+    <TooltipProvider delayDuration={150}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className="no-print inline-flex cursor-help items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-primary"
+            aria-label={`${entries.length} learned lessons applied`}
+          >
+            <Sparkles className="h-2.5 w-2.5" />
+            Applied {entries.length} {entries.length === 1 ? "lesson" : "lessons"}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" align="end" className="max-w-sm space-y-2 p-3 text-xs">
+          <div className="font-semibold">Lessons from past feedback</div>
+          {entries.map((e) => (
+            <div key={e.id} className="border-l-2 border-primary/40 pl-2">
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                {e.section}{e.rating != null ? ` · ${e.rating}★` : ""} · {(e.similarity * 100 | 0)}% match
+              </div>
+              <div className="mt-0.5 text-foreground">{e.correction}</div>
+            </div>
+          ))}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+};
 
 /**
  * Plan section. On mobile (< md) the body is collapsible via a native <details>
@@ -115,6 +159,8 @@ interface PlanViewProps {
   runId?: string;
   /** Auth user id (if logged in) — written alongside owner_token on feedback rows. */
   ownerUserId?: string | null;
+  /** Past corrections that the planner pulled in for this run (cross-run learning loop). */
+  appliedFeedback?: AppliedFeedbackEntry[] | null;
 }
 
 /** Cheap structural diff: stringify each section and compare. */
@@ -134,7 +180,9 @@ function diffSections(a: ExperimentPlan, b: ExperimentPlan) {
   };
 }
 
-export const ExperimentPlanView = ({ plan, previousPlan, hypothesis, version = 1, runId, ownerUserId }: PlanViewProps) => {
+export const ExperimentPlanView = ({
+  plan, previousPlan, hypothesis, version = 1, runId, ownerUserId, appliedFeedback,
+}: PlanViewProps) => {
   const materialsTotal = useMemo(
     () => plan.materials.reduce((s, m) => s + (m.total_cost_usd ?? 0), 0),
     [plan.materials]
@@ -145,17 +193,36 @@ export const ExperimentPlanView = ({ plan, previousPlan, hypothesis, version = 1
     [plan, previousPlan],
   );
 
-  // Helper: render a feedback control for a given section, only when we have a runId.
-  const fb = (section: FeedbackSection) =>
-    runId ? (
-      <SectionFeedback
-        runId={runId}
-        section={section}
-        domain={plan.domain}
-        hypothesis={hypothesis ?? plan.hypothesis_restated}
-        ownerUserId={ownerUserId ?? null}
-      />
-    ) : undefined;
+  // Group applied lessons by section so each header shows only the relevant ones.
+  const lessonsBySection = useMemo(() => {
+    const map = new Map<string, AppliedFeedbackEntry[]>();
+    for (const e of appliedFeedback ?? []) {
+      const arr = map.get(e.section) ?? [];
+      arr.push(e);
+      map.set(e.section, arr);
+    }
+    return map;
+  }, [appliedFeedback]);
+
+  // Helper: render the badge + feedback button for a given section.
+  const fb = (section: FeedbackSection) => {
+    const lessons = lessonsBySection.get(section) ?? [];
+    if (!runId && lessons.length === 0) return undefined;
+    return (
+      <span className="inline-flex items-center gap-1.5">
+        {lessons.length > 0 && <AppliedLessonsBadge entries={lessons} />}
+        {runId && (
+          <SectionFeedback
+            runId={runId}
+            section={section}
+            domain={plan.domain}
+            hypothesis={hypothesis ?? plan.hypothesis_restated}
+            ownerUserId={ownerUserId ?? null}
+          />
+        )}
+      </span>
+    );
+  };
 
   const onShare = async () => {
     try {

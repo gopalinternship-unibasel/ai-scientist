@@ -19,6 +19,7 @@ export type Database = {
           correction: string | null
           created_at: string
           domain: string | null
+          embedding: string | null
           hypothesis_excerpt: string | null
           id: string
           owner_token: string | null
@@ -31,6 +32,7 @@ export type Database = {
           correction?: string | null
           created_at?: string
           domain?: string | null
+          embedding?: string | null
           hypothesis_excerpt?: string | null
           id?: string
           owner_token?: string | null
@@ -43,6 +45,7 @@ export type Database = {
           correction?: string | null
           created_at?: string
           domain?: string | null
+          embedding?: string | null
           hypothesis_excerpt?: string | null
           id?: string
           owner_token?: string | null
@@ -84,6 +87,7 @@ export type Database = {
       }
       runs: {
         Row: {
+          applied_feedback: Json | null
           created_at: string
           critique: Json | null
           error: string | null
@@ -102,6 +106,7 @@ export type Database = {
           version: number
         }
         Insert: {
+          applied_feedback?: Json | null
           created_at?: string
           critique?: Json | null
           error?: string | null
@@ -120,6 +125,7 @@ export type Database = {
           version?: number
         }
         Update: {
+          applied_feedback?: Json | null
           created_at?: string
           critique?: Json | null
           error?: string | null
@@ -155,6 +161,23 @@ export type Database = {
       claim_anonymous_runs: { Args: { _owner_token: string }; Returns: number }
       cleanup_old_rate_limits: { Args: never; Returns: number }
       cleanup_stale_runs: { Args: never; Returns: number }
+      match_plan_feedback: {
+        Args: {
+          match_count: number
+          match_threshold: number
+          query_embedding: string
+        }
+        Returns: {
+          correction: string
+          created_at: string
+          domain: string
+          hypothesis_excerpt: string
+          id: string
+          rating: number
+          section: string
+          similarity: number
+        }[]
+      }
     }
     Enums: {
       run_status: "pending" | "qc" | "plan" | "done" | "failed"

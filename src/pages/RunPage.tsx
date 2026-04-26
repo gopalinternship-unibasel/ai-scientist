@@ -23,6 +23,14 @@ import type { ExperimentPlan, LiteratureQC, PlanCritique } from "@/lib/samples";
 
 type Status = "pending" | "qc" | "plan" | "done" | "failed";
 
+interface AppliedFeedback {
+  id: string;
+  section: string;
+  rating: number | null;
+  correction: string;
+  similarity: number;
+}
+
 interface Run {
   id: string;
   hypothesis: string;
@@ -38,10 +46,11 @@ interface Run {
   share_token: string | null;
   owner_user_id: string | null;
   updated_at: string;
+  applied_feedback: AppliedFeedback[] | null;
 }
 
 const RUN_COLUMNS =
-  "id,hypothesis,status,qc,plan,critique,error,created_at,parent_run_id,version,refinement_instruction,share_token,owner_user_id,updated_at";
+  "id,hypothesis,status,qc,plan,critique,error,created_at,parent_run_id,version,refinement_instruction,share_token,owner_user_id,updated_at,applied_feedback";
 
 // Stall threshold: warn the user if no progress for 90s on an in-flight run.
 const STALL_THRESHOLD_MS = 150_000;
@@ -381,6 +390,7 @@ const RunPage = () => {
                     version={run.version}
                     runId={run.id}
                     ownerUserId={run.owner_user_id}
+                    appliedFeedback={run.applied_feedback ?? null}
                   />
                 </ErrorBoundary>
               )}
