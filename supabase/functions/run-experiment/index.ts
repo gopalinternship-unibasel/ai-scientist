@@ -21,8 +21,9 @@ import { verifyMaterialsLive } from "../_shared/skuVerify.ts";
 import { retrieveRelevantFeedback, feedbackPromptFragment, type FeedbackHint } from "../_shared/feedbackRetrieval.ts";
 import { normalizeDomain, resolveDomain } from "../_shared/domainNormalize.ts";
 import { fetchHouseRules, houseRulesPromptFragment } from "../_shared/houseRules.ts";
+import { planSchema, buildPlannerSystemPrompt, buildPlannerUserMessage } from "../_shared/plannerCore.ts";
 
-const planSchema = {
+const _planSchemaUnused = {
   type: "object",
   properties: {
     title: { type: "string" },
