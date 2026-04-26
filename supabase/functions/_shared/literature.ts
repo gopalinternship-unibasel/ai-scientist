@@ -33,6 +33,8 @@ export interface LitResult {
 }
 
 const UA = "AI-Scientist/1.0 (Lovable)";
+const DEFAULT_TIMEOUT = 8000;
+const DEGRADED_TIMEOUT = 4000; // shorter timeout for retry queries
 
 async function searchS2(q: string): Promise<LitPaper[]> {
   const url = new URL("https://api.semanticscholar.org/graph/v1/paper/search");
