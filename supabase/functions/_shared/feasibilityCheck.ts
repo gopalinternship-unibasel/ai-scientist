@@ -36,7 +36,17 @@ const RULES: Rule[] = [
       "Try cryo-EM, AFM, or STM if you need atomic resolution; or rephrase the hypothesis around a feature in the ~200 nm+ range.",
   },
   {
-    principle: "Faster-than-light signalling",
+    principle: "Abbe diffraction limit",
+    patterns: [
+      /\b(?:standard\s+)?(?:confocal|widefield|wide[-\s]?field|brightfield|bright[-\s]?field|optical|fluorescence|fluorescent)\s+microscop/i,
+      /\b(?:[1-9]\d?|1[0-7]\d)\s*nm\b[^.]{0,80}\b(?:resolution|lateral\s+resolution)\b|\b(?:resolution|lateral\s+resolution)\b[^.]{0,80}\b(?:[1-9]\d?|1[0-7]\d)\s*nm\b/i,
+    ],
+    explanation:
+      "Standard optical/confocal microscopy cannot achieve 50–170 nm lateral resolution without super-resolution methods; diffraction limits conventional resolution to ~200 nm.",
+    suggestion:
+      "Use STED, PALM/STORM, SIM, expansion microscopy, or relax the target to ~200 nm+ for standard confocal imaging.",
+  },
+  {
     patterns: [
       /\b(?:faster[-\s]than[-\s]light|greater\s+than\s+(?:the\s+speed\s+of\s+)?light|superluminal|FTL)\b/i,
     ],
