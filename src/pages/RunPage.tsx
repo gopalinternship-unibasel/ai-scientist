@@ -47,10 +47,12 @@ interface Run {
   owner_user_id: string | null;
   updated_at: string;
   applied_feedback: AppliedFeedback[] | null;
+  solicit_section: string | null;
+  solicit_reason: string | null;
 }
 
 const RUN_COLUMNS =
-  "id,hypothesis,status,qc,plan,critique,error,created_at,parent_run_id,version,refinement_instruction,share_token,owner_user_id,updated_at,applied_feedback";
+  "id,hypothesis,status,qc,plan,critique,error,created_at,parent_run_id,version,refinement_instruction,share_token,owner_user_id,updated_at,applied_feedback,solicit_section,solicit_reason";
 
 // Stall threshold: warn the user if no progress for 90s on an in-flight run.
 const STALL_THRESHOLD_MS = 150_000;
