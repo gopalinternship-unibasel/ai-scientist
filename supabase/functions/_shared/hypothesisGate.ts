@@ -46,7 +46,7 @@ export async function gateHypothesis(hypothesis: string, apiKey: string): Promis
       apiKey,
       models: GATE_MODELS,
       label: "hypothesis-gate",
-      timeoutMs: 15_000,
+      timeoutMs: 6_000,
       retries: 0,
       buildBody: (model) => ({
         model,
