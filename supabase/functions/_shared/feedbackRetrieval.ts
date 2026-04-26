@@ -84,8 +84,12 @@ export async function retrieveRelevantFeedback(
 
     const domainNorm = (domainGuess ?? "").toLowerCase().trim();
 
-    // 3) Re-rank: cosine × rating-weight × small domain bonus.
-    //    1- or 5-star = 2× weight (strongest signals); 3-star = 1×.
+    // 3) Re-rank: cosine × rating-weight × (1 + small domain bonus).
+    //    Weights: 1- or 5-star → 2× (strongest signals); 3-star → 1×.
+    //    Domain match adds +0.05 to the cosine before scaling.
+    //    Section relevance is applied at injection time (see below) — we
+    //    keep ALL sections in the candidate pool here so a strong cross-
+    //    section hit still surfaces, just down-weighted.
     const ranked: FeedbackHint[] = data
       .map((row: Record<string, unknown>) => {
         const correction = sanitizeCorrection(String(row.correction ?? ""));
