@@ -11,6 +11,9 @@ interface CanonicalTechnique {
   name: string;
   // Pattern must match the hypothesis (case-insensitive).
   pattern: RegExp;
+  // Optional: if this pattern ALSO matches, the technique is NOT considered
+  // canonical (e.g. growth curve + CRISPRi → the perturbation is the real subject).
+  disqualifyIf?: RegExp;
   // Human-readable rationale shown to the user when this rule fires.
   rationale: string;
 }
