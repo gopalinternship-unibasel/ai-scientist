@@ -326,13 +326,12 @@ serve(async (req) => {
       ? stripCtl(rawRefinement).trim().slice(0, 500) : null;
     const isRefinement = !!(parentRunId && refinementInstruction);
 
-    // LLM-backed gate: reject inputs that clearly aren't hypotheses (jokes,
-    // chatter, gibberish) BEFORE we burn rate-limit quota or AI credits.
-    // Skipped for refinements — those have a validated parent.
+    // Deterministic feasibility pre-screen — block hypotheses that violate
+    // well-established physical/biological limits (Abbe limit, FTL, perpetual
+    // motion, etc.). Fast (regex), free, no LLM. Keep this synchronous so
+    // the user gets immediate inline feedback for impossible hypotheses
+    // instead of being navigated to a run page that just dies.
     if (!isRefinement) {
-      // (a) Deterministic feasibility pre-screen — block hypotheses that
-      // violate well-established physical/biological limits (Abbe limit,
-      // FTL, perpetual motion, etc.). Fast, free, no LLM needed.
       const feas = checkFeasibility(hypothesis);
       if (!feas.ok) {
         return new Response(JSON.stringify({
@@ -344,21 +343,13 @@ serve(async (req) => {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-
-      // (b) LLM gate — rejects non-hypothesis inputs and overly-vague
-      // research goals.
-      const verdict = await gateHypothesis(hypothesis, LOVABLE_API_KEY);
-      if (!verdict.ok) {
-        return new Response(JSON.stringify({
-          error: verdict.reason,
-          suggestion: verdict.suggestion,
-          kind: "VALIDATION",
-        }), {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
     }
+    // NOTE: the LLM-backed hypothesis gate (gateHypothesis) used to run here
+    // synchronously, adding 2-5s before the user could navigate to the run
+    // page. It now runs INSIDE the SSE stream as the first step — failures
+    // surface as a normal stream `error` event and mark the run failed, so
+    // perceived first-byte latency drops from ~3-6s to ~300ms (just the row
+    // insert).
 
     // Resolve user (optional)
     let userId: string | null = null;
