@@ -9,6 +9,7 @@ import RunPage from "./pages/RunPage.tsx";
 import Auth from "./pages/Auth.tsx";
 import ResetPassword from "./pages/ResetPassword.tsx";
 import MyRuns from "./pages/MyRuns.tsx";
+import Admin from "./pages/Admin.tsx";
 import NotFound from "./pages/NotFound.tsx";
 
 const queryClient = new QueryClient();
@@ -22,6 +23,7 @@ const InnerApp = () => {
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/my-runs" element={<MyRuns />} />
       <Route path="/runs/:id" element={<RunPage />} />
+      <Route path="/admin" element={<Admin />} />
       {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
       <Route path="*" element={<NotFound />} />
     </Routes>

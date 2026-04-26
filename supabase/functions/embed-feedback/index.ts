@@ -33,7 +33,7 @@ serve(async (req) => {
 
     const { data: row, error: selErr } = await supabase
       .from("plan_feedback")
-      .select("id, section, domain, correction, hypothesis_excerpt, embedding")
+      .select("id, section, domain, correction, hypothesis_excerpt, embedding, embedding_attempts")
       .eq("id", feedback_id)
       .maybeSingle();
     if (selErr || !row) {
@@ -47,11 +47,22 @@ serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+    // Always bump attempts first, even if embedding succeeds — gives us a
+    // permanent audit trail of how many tries it took. Pairs with the daily
+    // cron that re-tries any rows still pending.
+    await supabase
+      .from("plan_feedback")
+      // deno-lint-ignore no-explicit-any
+      .update({ embedding_attempts: ((row as any).embedding_attempts ?? 0) + 1 } as any)
+      .eq("id", feedback_id);
+
     // Embed the combined correction + hypothesis context so retrieval matches
     // both "what's the lesson" and "what kind of experiment was it".
     const text = [row.correction, row.hypothesis_excerpt].filter(Boolean).join("\n\n");
     const vec = await embedText(text, LOVABLE_API_KEY);
     if (!vec) {
+      // Permanent failure (after embedText's internal 3 retries). The row
+      // stays embedding=null and the daily cron will pick it up.
       return new Response(JSON.stringify({ ok: false, error: "embedding failed" }), {
         status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -59,7 +70,7 @@ serve(async (req) => {
     const { error: updErr } = await supabase
       .from("plan_feedback")
       // deno-lint-ignore no-explicit-any
-      .update({ embedding: vec as any })
+      .update({ embedding: vec as any, embedded_at: new Date().toISOString() } as any)
       .eq("id", feedback_id);
     if (updErr) {
       return new Response(JSON.stringify({ ok: false, error: updErr.message }), {

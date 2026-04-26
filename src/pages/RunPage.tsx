@@ -8,6 +8,7 @@ import { Logo } from "@/components/Logo";
 import { UserMenu } from "@/components/UserMenu";
 import { LiteratureQCCard } from "@/components/LiteratureQCCard";
 import { ExperimentPlanView } from "@/components/ExperimentPlanView";
+import { SolicitationBanner } from "@/components/SolicitationBanner";
 import { GenerationProgress } from "@/components/GenerationProgress";
 import { PlanCritiqueCard } from "@/components/PlanCritiqueCard";
 import { RefineDialog } from "@/components/RefineDialog";
@@ -47,10 +48,12 @@ interface Run {
   owner_user_id: string | null;
   updated_at: string;
   applied_feedback: AppliedFeedback[] | null;
+  solicit_section: string | null;
+  solicit_reason: string | null;
 }
 
 const RUN_COLUMNS =
-  "id,hypothesis,status,qc,plan,critique,error,created_at,parent_run_id,version,refinement_instruction,share_token,owner_user_id,updated_at,applied_feedback";
+  "id,hypothesis,status,qc,plan,critique,error,created_at,parent_run_id,version,refinement_instruction,share_token,owner_user_id,updated_at,applied_feedback,solicit_section,solicit_reason";
 
 // Stall threshold: warn the user if no progress for 90s on an in-flight run.
 const STALL_THRESHOLD_MS = 150_000;
@@ -381,6 +384,16 @@ const RunPage = () => {
               )}
               {inFlight && !run.qc && <GenerationProgress stage="qc" refinement={refinementCtx} />}
               {inFlight && run.qc && !run.plan && <GenerationProgress stage="plan" refinement={refinementCtx} />}
+              {run.plan && run.solicit_section && run.solicit_reason && isOwner && (
+                <SolicitationBanner
+                  runId={run.id}
+                  ownerUserId={run.owner_user_id}
+                  hypothesis={run.hypothesis}
+                  domain={run.plan.domain}
+                  section={run.solicit_section}
+                  reason={run.solicit_reason}
+                />
+              )}
               {run.plan && (
                 <ErrorBoundary label="the experiment plan">
                   <ExperimentPlanView
