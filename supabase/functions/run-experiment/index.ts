@@ -19,6 +19,7 @@ import { rankByRelevance } from "../_shared/relevanceRank.ts";
 import { checkTimelineConsistency } from "../_shared/timelineCheck.ts";
 import { verifyMaterialsLive } from "../_shared/skuVerify.ts";
 import { retrieveRelevantFeedback, feedbackPromptFragment } from "../_shared/feedbackRetrieval.ts";
+import { normalizeDomain } from "../_shared/domainNormalize.ts";
 
 const planSchema = {
   type: "object",
@@ -926,7 +927,16 @@ ${COST_CATALOG_PROMPT}${feedbackContext}`;
             }
           }
 
-          await supabase.from("runs").update({ plan: planObj, status: "done" }).eq("id", runId);
+          // Persist a normalized domain on the run so future feedback rows
+          // and cross-run retrieval all share the same controlled vocabulary.
+          const normalizedDomain = normalizeDomain(
+            (planObj as { domain?: string })?.domain,
+            hypothesis,
+            (planObj as { summary?: string })?.summary,
+          );
+          await supabase.from("runs").update({
+            plan: planObj, status: "done", domain: normalizedDomain,
+          }).eq("id", runId);
           send("plan", planObj);
           send("done", { id: runId });
 
