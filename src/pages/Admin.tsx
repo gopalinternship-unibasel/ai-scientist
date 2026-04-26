@@ -351,6 +351,8 @@ const LoopOpsPanel = () => {
 
   return (
     <>
+      <EvalAlertBanner summary={summary} />
+
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <Card>
           <CardHeader className="pb-3">
