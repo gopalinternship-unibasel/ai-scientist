@@ -39,6 +39,13 @@ const SALIENT = new RegExp(
     "nanoparticle","microparticle","hydrogel","scaffold","polymer",
     "graphene","silicon","gold","silver","copper","platinum",
     "phycocyanin","Spirulina","oncolytic","virus","virotherapy",
+    // Batteries / electrochemistry / materials
+    "LiFePO4","LiFePO₄","LiCoO2","LiMn2O4","NMC","NCA","LFP","NCM",
+    "cathode","anode","electrolyte","electrode","battery","batteries",
+    "lithium[- ]?ion","sodium[- ]?ion","solid[- ]?state","capacity\\s+retention",
+    "cycle\\s+life","coulombic\\s+efficiency","SEI","dendrite","graphite",
+    "silicon\\s+anode","perovskite","photovoltaic","supercapacitor",
+    "fuel\\s+cell","catalyst","electrocatalyst","OER","ORR","HER",
   ].join("|") +
   String.raw`)\b`,
   "gi",
