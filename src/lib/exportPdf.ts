@@ -17,6 +17,37 @@ interface Ctx {
 const fmtUsd = (n: number) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n);
 
+// jsPDF's built-in Helvetica is WinAnsi-only. Unicode chars outside that range
+// (Greek letters, arrows, em-dashes, curly quotes, μ, •, →, ↳, etc.) either
+// render as the wrong glyph (α → ±, → → !') or break splitTextToSize so the
+// text comes out letter-spaced and clipped at the right margin. We don't ship
+// a custom TTF, so transliterate to ASCII before drawing.
+function ascii(s: string): string {
+  if (!s) return "";
+  return s
+    .replace(/\u00a0/g, " ")
+    .replace(/[\u2018\u2019\u201A\u2032]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u2033]/g, '"')
+    .replace(/[\u2013\u2014\u2212]/g, "-")
+    .replace(/\u2026/g, "...")
+    .replace(/[\u2022\u25cf\u00b7]/g, "-")
+    .replace(/\u2192/g, "->")
+    .replace(/\u21b3/g, "->")
+    .replace(/\u2190/g, "<-")
+    .replace(/\u2194/g, "<->")
+    .replace(/[\u2264]/g, "<=")
+    .replace(/[\u2265]/g, ">=")
+    .replace(/\u00d7/g, "x")
+    .replace(/\u03b1/g, "alpha")
+    .replace(/\u03b2/g, "beta")
+    .replace(/\u03b3/g, "gamma")
+    .replace(/\u03bc|\u00b5/g, "u")
+    .replace(/\u03c3/g, "sigma")
+    .replace(/\u00b0/g, "deg")
+    .replace(/\u00b1/g, "+/-")
+    .replace(/[^\x00-\xff]/g, "?");
+}
+
 function ensureSpace(ctx: Ctx, needed: number, footer: () => void) {
   if (ctx.y + needed > PAGE.h - M - 10) {
     footer();
@@ -89,6 +120,24 @@ function kv(ctx: Ctx, label: string, value: string, footer: () => void) {
 
 export function exportPlanToPdf(plan: ExperimentPlan, hypothesis: string, version = 1) {
   const doc = new jsPDF({ unit: "mm", format: "a4" });
+
+  // Wrap text-emitting APIs so every caller is sanitized to WinAnsi-safe ASCII.
+  // jsPDF's built-in fonts can't render arbitrary Unicode and silently break
+  // line-wrapping when they encounter unsupported codepoints.
+  const origText = doc.text.bind(doc);
+  // deno-lint-ignore no-explicit-any
+  doc.text = ((t: any, x: number, y: number, opts?: any) => {
+    if (typeof t === "string") return origText(ascii(t), x, y, opts);
+    if (Array.isArray(t)) return origText(t.map((s) => typeof s === "string" ? ascii(s) : s), x, y, opts);
+    return origText(t, x, y, opts);
+  }) as typeof doc.text;
+  const origSplit = doc.splitTextToSize.bind(doc);
+  // deno-lint-ignore no-explicit-any
+  doc.splitTextToSize = ((t: any, w: number, opts?: any) => {
+    if (typeof t === "string") return origSplit(ascii(t), w, opts);
+    return origSplit(t, w, opts);
+  }) as typeof doc.splitTextToSize;
+
   const ctx: Ctx = { doc, y: M, page: 1 };
   const footer = () => drawFooter(doc, plan, ctx.page, null);
 
