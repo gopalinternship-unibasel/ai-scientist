@@ -10,7 +10,7 @@ export type RunStreamEvent =
   | { type: "plan"; plan: ExperimentPlan }
   | { type: "critique"; critique: PlanCritique }
   | { type: "done"; id: string }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string; kind?: string; suggestion?: string };
 
 interface StartArgs {
   hypothesis: string;
@@ -55,11 +55,15 @@ export async function startRunStream({
 
   if (!resp.ok) {
     let msg = `Request failed (${resp.status})`;
+    let kind: string | undefined;
+    let suggestion: string | undefined;
     try {
       const j = await resp.json();
       if (j.error) msg = j.error;
+      if (j.kind) kind = j.kind;
+      if (j.suggestion) suggestion = j.suggestion;
     } catch { /* noop */ }
-    onEvent({ type: "error", message: msg });
+    onEvent({ type: "error", message: msg, kind, suggestion });
     return;
   }
   if (!resp.body) {
@@ -91,7 +95,7 @@ export async function startRunStream({
         case "plan": onEvent({ type: "plan", plan: data }); break;
         case "critique": onEvent({ type: "critique", critique: data }); break;
         case "done": onEvent({ type: "done", id: data.id }); break;
-        case "error": onEvent({ type: "error", message: data.message }); break;
+        case "error": onEvent({ type: "error", message: data.message, kind: data.kind, suggestion: data.suggestion }); break;
       }
     } catch {
       // ignore malformed
