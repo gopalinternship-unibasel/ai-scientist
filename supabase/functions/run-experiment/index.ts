@@ -517,8 +517,17 @@ serve(async (req) => {
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       async start(controller) {
+        let streamOpen = true;
         const send = (event: string, data: unknown) => {
-          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+          if (!streamOpen) return;
+          try {
+            controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+          } catch { /* client disconnected */ }
+        };
+        const closeStream = () => {
+          if (!streamOpen) return;
+          streamOpen = false;
+          try { controller.close(); } catch { /* already closed */ }
         };
 
         // Heartbeat: literature QC can take >90s when external APIs are slow,
