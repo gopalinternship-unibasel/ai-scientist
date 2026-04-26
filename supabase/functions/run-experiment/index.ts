@@ -784,7 +784,11 @@ serve(async (req) => {
           // Retrieve cross-run feedback hints via semantic similarity. Best-
           // effort; failure is silent. Domain guess prefers parent run's
           // canonical domain (refinements) and falls back to QC + hypothesis.
-          const domainGuess = normalizeDomain(
+          // Domain resolution: regex first (free, fast); LLM fallback only
+          // when regex returns no match. Doubles domain coverage on long-tail
+          // topics, which directly unlocks the domain-boost in retrieval.
+          const domainGuess = await resolveDomain(
+            LOVABLE_API_KEY,
             (parentRun as { domain?: string } | null)?.domain,
             (qc as { domain?: string })?.domain,
             hypothesis,
