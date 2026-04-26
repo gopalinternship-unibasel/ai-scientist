@@ -490,12 +490,12 @@ serve(async (req) => {
     }
 
     // Look up parent run (for refinement) and compute next version.
-    let parentRun: { plan: unknown; qc: unknown; version: number } | null = null;
+    let parentRun: { plan: unknown; qc: unknown; version: number; domain: string | null } | null = null;
     let nextVersion = 1;
     if (isRefinement) {
       const { data: parent } = await supabase
         .from("runs")
-        .select("plan, qc, version, hypothesis_hash, owner_user_id, owner_token")
+        .select("plan, qc, version, hypothesis_hash, owner_user_id, owner_token, domain")
         .eq("id", parentRunId)
         .maybeSingle();
       if (!parent || !parent.plan) {
@@ -512,7 +512,11 @@ serve(async (req) => {
           status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      parentRun = { plan: parent.plan, qc: parent.qc, version: parent.version ?? 1 };
+      parentRun = {
+        plan: parent.plan, qc: parent.qc,
+        version: parent.version ?? 1,
+        domain: (parent.domain as string | null) ?? null,
+      };
       // Find max version in the chain (root + descendants).
       const { data: siblings } = await supabase
         .from("runs")
