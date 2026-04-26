@@ -422,6 +422,192 @@ const LoopOpsPanel = () => {
   );
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Eval CI gate: surface a prominent banner when the most recent eval batch's
+// `with_feedback - without_feedback` delta is negative, or has dropped >0.5
+// vs the prior baseline. This is what closes the loop on the loop — every
+// prompt change gets graded automatically once the daily cron runs.
+const ALERT_DROP_THRESHOLD = 0.5;
+const EvalAlertBanner = ({ summary }: { summary: EvalSummaryRow[] | null }) => {
+  if (!summary || summary.length === 0) return null;
+  const [latest, prior] = summary; // newest-first by RPC contract
+  const latestDelta = (latest.avg_with ?? 0) - (latest.avg_without ?? 0);
+  const priorDelta = prior ? (prior.avg_with ?? 0) - (prior.avg_without ?? 0) : null;
+  const regressed = priorDelta !== null && priorDelta - latestDelta > ALERT_DROP_THRESHOLD;
+  const negative = latestDelta < 0;
+  if (!regressed && !negative) return null;
+
+  return (
+    <Card className="border-destructive/50 bg-destructive/5">
+      <CardContent className="flex items-start gap-3 py-4">
+        <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
+        <div className="min-w-0 flex-1">
+          <div className="font-semibold text-destructive">
+            {negative
+              ? "Feedback retriever is HURTING plan quality"
+              : "Eval delta dropped sharply"}
+          </div>
+          <p className="mt-1 text-sm text-foreground/80">
+            Latest batch ({new Date(latest.ts).toLocaleString()}):
+            with-feedback Δ {latestDelta >= 0 ? "+" : ""}{latestDelta.toFixed(2)}
+            {priorDelta !== null && (
+              <> · prior batch Δ {priorDelta >= 0 ? "+" : ""}{priorDelta.toFixed(2)}</>
+            )}.
+            {" "}Investigate recent prompt / retrieval changes before the next deploy.
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// House-rules admin: list all rules per domain, toggle active, edit text.
+// RLS allows moderators to UPDATE any row in domain_rules.
+interface HouseRule {
+  id: string; domain: string; rule: string;
+  source_count: number; confidence: number; active: boolean; updated_at: string;
+}
+const HouseRulesPanel = () => {
+  const [rules, setRules] = useState<HouseRule[] | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draftText, setDraftText] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const load = async () => {
+    const { data, error } = await supabase
+      .from("domain_rules")
+      .select("id,domain,rule,source_count,confidence,active,updated_at")
+      .order("domain", { ascending: true })
+      .order("active", { ascending: false })
+      .order("confidence", { ascending: false });
+    if (error) { toast.error("Could not load house rules."); return; }
+    setRules((data ?? []) as HouseRule[]);
+  };
+  useEffect(() => { load(); }, []);
+
+  const toggleActive = async (r: HouseRule) => {
+    const next = !r.active;
+    const { error } = await supabase
+      .from("domain_rules")
+      .update({ active: next })
+      .eq("id", r.id);
+    if (error) { toast.error("Could not update rule."); return; }
+    setRules((prev) => (prev ?? []).map((x) => x.id === r.id ? { ...x, active: next } : x));
+    toast.success(next ? "Rule activated" : "Rule deactivated");
+  };
+
+  const startEdit = (r: HouseRule) => { setEditingId(r.id); setDraftText(r.rule); };
+  const cancelEdit = () => { setEditingId(null); setDraftText(""); };
+  const saveEdit = async (r: HouseRule) => {
+    const trimmed = draftText.trim();
+    if (trimmed.length < 10) { toast.error("Rule must be at least 10 characters."); return; }
+    if (trimmed.length > 280) { toast.error("Rule must be ≤ 280 characters."); return; }
+    setSaving(true);
+    const { error } = await supabase
+      .from("domain_rules")
+      .update({ rule: trimmed })
+      .eq("id", r.id);
+    setSaving(false);
+    if (error) { toast.error("Could not save."); return; }
+    setRules((prev) => (prev ?? []).map((x) => x.id === r.id ? { ...x, rule: trimmed } : x));
+    cancelEdit();
+    toast.success("Rule updated");
+  };
+
+  if (rules === null) {
+    return <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />;
+  }
+  if (rules.length === 0) {
+    return (
+      <Card>
+        <CardContent className="py-8 text-center text-sm text-muted-foreground">
+          No distilled rules yet. Run distillation in the Loop ops tab once you have feedback in a domain.
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // Group by domain for display.
+  const byDomain = new Map<string, HouseRule[]>();
+  for (const r of rules) {
+    const arr = byDomain.get(r.domain) ?? [];
+    arr.push(r);
+    byDomain.set(r.domain, arr);
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">
+        Distilled per-domain conventions injected into every plan prompt for the matching domain.
+        Toggle off anything that's gone stale; edit text to refine. Inactive rules are kept for audit.
+      </p>
+      {Array.from(byDomain.entries()).map(([domain, items]) => (
+        <Card key={domain}>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base capitalize">{domain.replace(/-/g, " ")}</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {items.map((r) => (
+              <div
+                key={r.id}
+                className={`rounded-md border p-3 ${r.active ? "border-border bg-paper" : "border-dashed border-border opacity-60"}`}
+              >
+                <div className="mb-1.5 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+                    <Badge variant={r.active ? "default" : "outline"} className="font-mono text-[9px]">
+                      {r.active ? "active" : "inactive"}
+                    </Badge>
+                    <span>n={r.source_count} · conf {Number(r.confidence).toFixed(2)}</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    {editingId !== r.id && (
+                      <Button variant="ghost" size="sm" onClick={() => startEdit(r)} className="h-7 px-2 text-xs">
+                        Edit
+                      </Button>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => toggleActive(r)}
+                      className="h-7 gap-1 px-2 text-xs"
+                    >
+                      <Power className="h-3 w-3" />
+                      {r.active ? "Disable" : "Enable"}
+                    </Button>
+                  </div>
+                </div>
+                {editingId === r.id ? (
+                  <div className="space-y-2">
+                    <Textarea
+                      value={draftText}
+                      onChange={(e) => setDraftText(e.target.value)}
+                      rows={3}
+                      maxLength={280}
+                      className="text-sm"
+                    />
+                    <div className="flex items-center justify-end gap-1">
+                      <Button variant="ghost" size="sm" onClick={cancelEdit} disabled={saving} className="gap-1">
+                        <X className="h-3 w-3" /> Cancel
+                      </Button>
+                      <Button size="sm" onClick={() => saveEdit(r)} disabled={saving} className="gap-1">
+                        {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+                        Save
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="whitespace-pre-wrap break-words text-sm text-foreground/90">{r.rule}</p>
+                )}
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  );
+};
+
 // Shown to signed-in users without the moderator/admin role. Offers a one-
 // time "claim first admin" path: the bootstrap_first_admin RPC will only
 // succeed if zero admins exist yet, so this is safe to expose broadly.
