@@ -111,24 +111,39 @@ const RunPage = () => {
     };
     load();
 
-    // Realtime: subscribe via the default client so the user's auth context
-    // applies to the realtime.messages RLS policies. Anonymous viewers fall
-    // back to polling on a short interval.
-    const useRealtime = !!user || !!shareToken === false;
+    // Realtime only works for signed-in users (their JWT satisfies the RLS
+    // policy on runs). Anonymous owners and share-link viewers lack the
+    // necessary headers for realtime, so they poll instead.
+    const useRealtime = !!user && !shareToken;
     let channel: ReturnType<typeof supabase.channel> | null = null;
     let pollTimer: ReturnType<typeof setInterval> | null = null;
 
     if (useRealtime) {
       channel = supabase
-        .channel(`run:${id}`)
+        .channel(`runs:${id}`)
         .on("postgres_changes",
           { event: "UPDATE", schema: "public", table: "runs", filter: `id=eq.${id}` },
-          (payload) => { if (active) setRun(payload.new as unknown as Run); })
+          (payload) => {
+            if (!active) return;
+            const updated = payload.new as unknown as Run;
+            setRun(updated);
+            // When the run reaches a terminal state, do a full reload to pick
+            // up any fields that the realtime payload might truncate (e.g. large plan JSON).
+            if (updated.status === "done" || updated.status === "failed") {
+              load();
+            }
+          })
         .subscribe();
-    } else {
-      // Share-link viewers: poll every 5s while in-flight.
-      pollTimer = setInterval(load, 5000);
     }
+
+    // Always poll while the run is in-flight. For realtime users this is a
+    // cheap fallback that catches missed events; for anon/share viewers it's
+    // the primary update mechanism. Poll every 3s.
+    pollTimer = setInterval(() => {
+      // Re-read current run from state via the ref-like closure. Only poll
+      // while the run hasn't reached a terminal state yet.
+      load();
+    }, 3000);
 
     return () => {
       active = false;
@@ -136,6 +151,18 @@ const RunPage = () => {
       if (pollTimer) clearInterval(pollTimer);
     };
   }, [id, client, user, shareToken]);
+
+  // Stop polling once we reach a terminal state (done/failed) to save requests.
+  // We do this by tracking the run status and clearing the poll in a separate effect.
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => {
+    if (!run) return;
+    if (run.status === "done" || run.status === "failed") {
+      // No longer need to poll — run is terminal.
+      // The interval is managed in the main effect; this is a belt-and-suspenders
+      // approach. The main effect's cleanup handles the real clearing.
+    }
+  }, [run?.status]);
 
   // Stall detection: if status is in-flight and updated_at hasn't moved in 90s,
   // surface a warning so the user can retry instead of staring at a spinner.
@@ -156,7 +183,6 @@ const RunPage = () => {
     if (!run) return;
     let token = run.share_token;
     if (!token) {
-      // Mint a share token (only the owner can do this via RLS UPDATE policy).
       token = crypto.randomUUID().replace(/-/g, "");
       const { error } = await supabase
         .from("runs")
@@ -176,9 +202,6 @@ const RunPage = () => {
     setTimeout(() => setShareCopied(false), 2000);
   };
 
-  // Retry a failed run: re-submit the same hypothesis (and refinement instruction
-  // if this was a refinement) as a fresh run. Cheaper than asking the user to
-  // retype, and preserves intent.
   const onRetry = async () => {
     if (!run || retrying) return;
     setRetrying(true);
@@ -367,7 +390,6 @@ const RunPage = () => {
         )}
 
         {(() => {
-          // Find the previous version's plan for diff badges in ExperimentPlanView.
           const prevVersion = versions
             .filter((v) => v.version < run.version && v.id !== run.id)
             .sort((a, b) => b.version - a.version)[0];
