@@ -18,6 +18,7 @@ import { detectCanonicalTechnique } from "../_shared/canonicalTechniques.ts";
 import { rankByRelevance } from "../_shared/relevanceRank.ts";
 import { checkTimelineConsistency } from "../_shared/timelineCheck.ts";
 import { verifyMaterialsLive } from "../_shared/skuVerify.ts";
+import { retrieveRelevantFeedback, feedbackPromptFragment } from "../_shared/feedbackRetrieval.ts";
 
 const planSchema = {
   type: "object",
@@ -759,6 +760,15 @@ serve(async (req) => {
           // the resulting plan addresses regulatory / containment requirements.
           const safetyFlags = screenSafety(hypothesis);
 
+          // Retrieve cross-run feedback hints. Best-effort; failure is silent.
+          // Domain guess is the QC's classifier-derived hint when present.
+          const domainGuess = (qc as { domain?: string })?.domain ?? null;
+          const feedbackHints = await retrieveRelevantFeedback(supabase, hypothesis, domainGuess);
+          if (feedbackHints.length > 0) {
+            console.log(JSON.stringify({ run_id: runId, step: "feedback_injected", hint_count: feedbackHints.length }));
+          }
+          const feedbackContext = feedbackPromptFragment(feedbackHints);
+
           // 2) Plan generation (streamed)
           const refContext = references.length
             ? `\n\nKNOWN RELATED WORK — use ONLY the strict canonical citation format:\n  • Bare reference:   [N]\n  • Multiple refs:    (see [N, M])\n  • DO NOT use any other form ((ref. 1), [ref. 1], (1), etc.)\n${references.map((r: Reference, i: number) => `[${i + 1}] ${r.title} (${r.year ?? "n.d."}) — ${r.url ?? ""}`).join("\n")}`
@@ -783,7 +793,7 @@ REQUIREMENTS:
 - Risks must be specific, not generic.
 - Be precise. Use exact concentrations, volumes, durations.
 ${safetyPromptFragment(safetyFlags)}
-${COST_CATALOG_PROMPT}`;
+${COST_CATALOG_PROMPT}${feedbackContext}`;
 
 
           // Streaming plan generation with model fallback. Once tokens are

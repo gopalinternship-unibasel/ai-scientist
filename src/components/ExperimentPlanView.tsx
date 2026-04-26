@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import type { ExperimentPlan } from "@/lib/samples";
 import { exportPlanToPdf } from "@/lib/exportPdf";
+import { SectionFeedback, type FeedbackSection } from "@/components/SectionFeedback";
 
 /**
  * Plan section. On mobile (< md) the body is collapsible via a native <details>
@@ -33,6 +34,7 @@ const Section = ({
   children,
   defaultOpen = true,
   changed = false,
+  feedback,
 }: {
   icon: React.ElementType;
   label: string;
@@ -41,6 +43,8 @@ const Section = ({
   defaultOpen?: boolean;
   /** Render a "modified" badge when this section differs from the previous version. */
   changed?: boolean;
+  /** Optional inline feedback control (rendered to the right of the header). */
+  feedback?: React.ReactNode;
 }) => {
   const header = (
     <>
@@ -68,8 +72,9 @@ const Section = ({
       <details open={defaultOpen} className="md:hidden group">
         <summary className="mb-5 flex cursor-pointer list-none items-center gap-3 [&::-webkit-details-marker]:hidden">
           {header}
+          {feedback && <span className="no-print ml-auto mr-1" onClick={(e) => e.preventDefault()}>{feedback}</span>}
           <svg
-            className="ml-auto h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180"
+            className={`${feedback ? "" : "ml-auto"} h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180`}
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
@@ -85,7 +90,10 @@ const Section = ({
       </details>
       {/* Desktop / print: always expanded */}
       <div className="hidden md:block">
-        <header className="mb-5 flex items-center gap-3">{header}</header>
+        <header className="mb-5 flex items-center gap-3">
+          {header}
+          {feedback && <span className="no-print ml-auto">{feedback}</span>}
+        </header>
         {children}
       </div>
     </section>
@@ -103,6 +111,10 @@ interface PlanViewProps {
   hypothesis?: string;
   /** Version number for the PDF filename / cover sheet. */
   version?: number;
+  /** Run id — enables per-section feedback collection that powers the learning loop. */
+  runId?: string;
+  /** Auth user id (if logged in) — written alongside owner_token on feedback rows. */
+  ownerUserId?: string | null;
 }
 
 /** Cheap structural diff: stringify each section and compare. */
@@ -122,7 +134,7 @@ function diffSections(a: ExperimentPlan, b: ExperimentPlan) {
   };
 }
 
-export const ExperimentPlanView = ({ plan, previousPlan, hypothesis, version = 1 }: PlanViewProps) => {
+export const ExperimentPlanView = ({ plan, previousPlan, hypothesis, version = 1, runId, ownerUserId }: PlanViewProps) => {
   const materialsTotal = useMemo(
     () => plan.materials.reduce((s, m) => s + (m.total_cost_usd ?? 0), 0),
     [plan.materials]
@@ -132,6 +144,18 @@ export const ExperimentPlanView = ({ plan, previousPlan, hypothesis, version = 1
     () => previousPlan ? diffSections(plan, previousPlan) : null,
     [plan, previousPlan],
   );
+
+  // Helper: render a feedback control for a given section, only when we have a runId.
+  const fb = (section: FeedbackSection) =>
+    runId ? (
+      <SectionFeedback
+        runId={runId}
+        section={section}
+        domain={plan.domain}
+        hypothesis={hypothesis ?? plan.hypothesis_restated}
+        ownerUserId={ownerUserId ?? null}
+      />
+    ) : undefined;
 
   const onShare = async () => {
     try {
@@ -232,7 +256,7 @@ export const ExperimentPlanView = ({ plan, previousPlan, hypothesis, version = 1
         </ul>
       </Section>
 
-      <Section number="02" label="Protocol" icon={FlaskConical} changed={changed?.protocol}>
+      <Section number="02" label="Protocol" icon={FlaskConical} changed={changed?.protocol} feedback={fb("protocol")}>
         <ol className="relative space-y-5 border-l border-rule pl-6">
           {plan.protocol.map((s) => (
             <li key={s.step} className="relative">
@@ -254,7 +278,7 @@ export const ExperimentPlanView = ({ plan, previousPlan, hypothesis, version = 1
         </ol>
       </Section>
 
-      <Section number="03" label="Materials & supply chain" icon={ShoppingCart} changed={changed?.materials}>
+      <Section number="03" label="Materials & supply chain" icon={ShoppingCart} changed={changed?.materials} feedback={fb("materials")}>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -302,7 +326,7 @@ export const ExperimentPlanView = ({ plan, previousPlan, hypothesis, version = 1
         </div>
       </Section>
 
-      <Section number="04" label="Budget" icon={CircleDollarSign} changed={changed?.budget}>
+      <Section number="04" label="Budget" icon={CircleDollarSign} changed={changed?.budget} feedback={fb("budget")}>
         <div className="grid gap-4 md:grid-cols-[1fr,auto]">
           <ul className="divide-y divide-rule">
             {plan.budget.line_items.map((li, i) => (
@@ -331,7 +355,7 @@ export const ExperimentPlanView = ({ plan, previousPlan, hypothesis, version = 1
         </div>
       </Section>
 
-      <Section number="05" label="Timeline" icon={CalendarRange} changed={changed?.timeline}>
+      <Section number="05" label="Timeline" icon={CalendarRange} changed={changed?.timeline} feedback={fb("timeline")}>
         <div className="space-y-4">
           {plan.timeline.map((p, i) => (
             <div key={i} className="grid gap-2 rounded-md border border-rule p-4 md:grid-cols-[180px,1fr]">
@@ -368,7 +392,7 @@ export const ExperimentPlanView = ({ plan, previousPlan, hypothesis, version = 1
         </div>
       </Section>
 
-      <Section number="06" label="Validation" icon={Beaker} changed={changed?.validation}>
+      <Section number="06" label="Validation" icon={Beaker} changed={changed?.validation} feedback={fb("validation")}>
         <div className="space-y-4">
           <p className="font-serif text-[15px] leading-relaxed text-foreground/90">
             {plan.validation.approach}
@@ -426,7 +450,7 @@ export const ExperimentPlanView = ({ plan, previousPlan, hypothesis, version = 1
       )}
 
       {plan.safety && (
-        <Section number="08" label="Safety & approvals" icon={ShieldAlert} changed={changed?.safety}>
+        <Section number="08" label="Safety & approvals" icon={ShieldAlert} changed={changed?.safety} feedback={fb("safety")}>
           <div className="space-y-4">
             <div className="flex flex-wrap gap-2">
               <span className="stamp border-warning/40 bg-warning/10 text-foreground">

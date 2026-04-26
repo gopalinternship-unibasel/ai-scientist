@@ -14,6 +14,53 @@ export type Database = {
   }
   public: {
     Tables: {
+      plan_feedback: {
+        Row: {
+          correction: string | null
+          created_at: string
+          domain: string | null
+          hypothesis_excerpt: string | null
+          id: string
+          owner_token: string | null
+          owner_user_id: string | null
+          rating: number | null
+          run_id: string
+          section: string
+        }
+        Insert: {
+          correction?: string | null
+          created_at?: string
+          domain?: string | null
+          hypothesis_excerpt?: string | null
+          id?: string
+          owner_token?: string | null
+          owner_user_id?: string | null
+          rating?: number | null
+          run_id: string
+          section: string
+        }
+        Update: {
+          correction?: string | null
+          created_at?: string
+          domain?: string | null
+          hypothesis_excerpt?: string | null
+          id?: string
+          owner_token?: string | null
+          owner_user_id?: string | null
+          rating?: number | null
+          run_id?: string
+          section?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "plan_feedback_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       rate_limits: {
         Row: {
           created_at: string

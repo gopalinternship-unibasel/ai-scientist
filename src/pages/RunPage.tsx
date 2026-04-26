@@ -379,6 +379,8 @@ const RunPage = () => {
                     previousPlan={previousPlan}
                     hypothesis={run.hypothesis}
                     version={run.version}
+                    runId={run.id}
+                    ownerUserId={run.owner_user_id}
                   />
                 </ErrorBoundary>
               )}
