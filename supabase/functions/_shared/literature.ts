@@ -110,7 +110,7 @@ async function searchOpenAlex(q: string, timeoutMs = DEFAULT_TIMEOUT): Promise<L
   });
 }
 
-async function searchPubMed(q: string): Promise<LitPaper[]> {
+async function searchPubMed(q: string, timeoutMs = DEFAULT_TIMEOUT): Promise<LitPaper[]> {
   // 1) esearch for PMIDs
   const search = new URL("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi");
   search.searchParams.set("db", "pubmed");
