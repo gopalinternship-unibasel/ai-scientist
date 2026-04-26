@@ -66,18 +66,15 @@ async function searchS2(q: string, timeoutMs = DEFAULT_TIMEOUT): Promise<LitPape
   }));
 }
 
-async function searchOpenAlex(q: string): Promise<LitPaper[]> {
+async function searchOpenAlex(q: string, timeoutMs = DEFAULT_TIMEOUT): Promise<LitPaper[]> {
   const url = new URL("https://api.openalex.org/works");
-  // `title_and_abstract.search` is far more topical than the default `search`
-  // (which also matches author names, venues, fulltext keywords). For a
-  // keyword-style query, this dramatically reduces off-topic noise.
   url.searchParams.set("filter", `title_and_abstract.search:${q}`);
   url.searchParams.set("per-page", "8");
   url.searchParams.set("sort", "relevance_score:desc");
-  url.searchParams.set("mailto", "ai-scientist@lovable.dev"); // polite pool
+  url.searchParams.set("mailto", "ai-scientist@lovable.dev");
   const res = await fetch(url.toString(), {
     headers: { "User-Agent": UA },
-    signal: AbortSignal.timeout(8000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!res.ok) return [];
   const json = await res.json();
