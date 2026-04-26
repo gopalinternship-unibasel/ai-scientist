@@ -10,7 +10,7 @@
 // boundary.
 import { useEffect, useMemo, useState } from "react";
 import { Link, Navigate } from "react-router-dom";
-import { Loader2, EyeOff, Eye, ArrowLeft } from "lucide-react";
+import { Loader2, EyeOff, Eye, ArrowLeft, Sparkles, Gauge } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -140,6 +140,7 @@ const Admin = () => {
           <TabsList>
             <TabsTrigger value="stats">Stats</TabsTrigger>
             <TabsTrigger value="moderate">Moderate ({rows.length})</TabsTrigger>
+            <TabsTrigger value="loop">Loop ops</TabsTrigger>
           </TabsList>
 
           <TabsContent value="stats" className="space-y-6 pt-4">
