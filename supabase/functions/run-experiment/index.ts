@@ -236,7 +236,7 @@ serve(async (req) => {
         userId = data.user?.id ?? null;
       }
     }
-    const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || "unknown";
+    const ip = clientIp(req);
     const ident = userId ? `user:${userId}` : `ip:${ip}`;
     const limit = userId ? 100 : 100;
     const since = new Date(Date.now() - 60 * 60_000).toISOString();
