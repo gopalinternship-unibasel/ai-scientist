@@ -256,7 +256,7 @@ export const ExperimentPlanView = ({ plan, previousPlan, hypothesis, version = 1
         </ul>
       </Section>
 
-      <Section number="02" label="Protocol" icon={FlaskConical} changed={changed?.protocol}>
+      <Section number="02" label="Protocol" icon={FlaskConical} changed={changed?.protocol} feedback={fb("protocol")}>
         <ol className="relative space-y-5 border-l border-rule pl-6">
           {plan.protocol.map((s) => (
             <li key={s.step} className="relative">
@@ -278,7 +278,7 @@ export const ExperimentPlanView = ({ plan, previousPlan, hypothesis, version = 1
         </ol>
       </Section>
 
-      <Section number="03" label="Materials & supply chain" icon={ShoppingCart} changed={changed?.materials}>
+      <Section number="03" label="Materials & supply chain" icon={ShoppingCart} changed={changed?.materials} feedback={fb("materials")}>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -326,7 +326,7 @@ export const ExperimentPlanView = ({ plan, previousPlan, hypothesis, version = 1
         </div>
       </Section>
 
-      <Section number="04" label="Budget" icon={CircleDollarSign} changed={changed?.budget}>
+      <Section number="04" label="Budget" icon={CircleDollarSign} changed={changed?.budget} feedback={fb("budget")}>
         <div className="grid gap-4 md:grid-cols-[1fr,auto]">
           <ul className="divide-y divide-rule">
             {plan.budget.line_items.map((li, i) => (
@@ -355,7 +355,7 @@ export const ExperimentPlanView = ({ plan, previousPlan, hypothesis, version = 1
         </div>
       </Section>
 
-      <Section number="05" label="Timeline" icon={CalendarRange} changed={changed?.timeline}>
+      <Section number="05" label="Timeline" icon={CalendarRange} changed={changed?.timeline} feedback={fb("timeline")}>
         <div className="space-y-4">
           {plan.timeline.map((p, i) => (
             <div key={i} className="grid gap-2 rounded-md border border-rule p-4 md:grid-cols-[180px,1fr]">
@@ -392,7 +392,7 @@ export const ExperimentPlanView = ({ plan, previousPlan, hypothesis, version = 1
         </div>
       </Section>
 
-      <Section number="06" label="Validation" icon={Beaker} changed={changed?.validation}>
+      <Section number="06" label="Validation" icon={Beaker} changed={changed?.validation} feedback={fb("validation")}>
         <div className="space-y-4">
           <p className="font-serif text-[15px] leading-relaxed text-foreground/90">
             {plan.validation.approach}
@@ -450,7 +450,7 @@ export const ExperimentPlanView = ({ plan, previousPlan, hypothesis, version = 1
       )}
 
       {plan.safety && (
-        <Section number="08" label="Safety & approvals" icon={ShieldAlert} changed={changed?.safety}>
+        <Section number="08" label="Safety & approvals" icon={ShieldAlert} changed={changed?.safety} feedback={fb("safety")}>
           <div className="space-y-4">
             <div className="flex flex-wrap gap-2">
               <span className="stamp border-warning/40 bg-warning/10 text-foreground">
