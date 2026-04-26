@@ -23,6 +23,26 @@ import { normalizeDomain, resolveDomain } from "../_shared/domainNormalize.ts";
 import { fetchHouseRules } from "../_shared/houseRules.ts";
 import { planSchema, buildPlannerSystemPrompt, buildPlannerUserMessage } from "../_shared/plannerCore.ts";
 
+/**
+ * Resolve the caller's IP for rate-limiting in a way that resists header
+ * spoofing. Prefers infrastructure-injected headers (cf-connecting-ip,
+ * x-real-ip) which the client cannot forge. Falls back to the LAST entry
+ * in x-forwarded-for (the value appended by the closest trusted proxy)
+ * rather than the first (which is client-controlled).
+ */
+function clientIp(req: Request): string {
+  const cf = req.headers.get("cf-connecting-ip")?.trim();
+  if (cf) return cf;
+  const real = req.headers.get("x-real-ip")?.trim();
+  if (real) return real;
+  const xff = req.headers.get("x-forwarded-for");
+  if (xff) {
+    const parts = xff.split(",").map((p) => p.trim()).filter(Boolean);
+    if (parts.length > 0) return parts[parts.length - 1];
+  }
+  return "unknown";
+}
+
 
 const critiqueSchema = {
   type: "object",
@@ -344,7 +364,8 @@ serve(async (req) => {
     }
 
     // Rate limit: 100 runs / hour for both signed-in users and anon IPs.
-    const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || "unknown";
+    // Rate limit: 100 runs / hour for both signed-in users and anon IPs.
+    const ip = clientIp(req);
     const rlIdent = userId ? `user:${userId}` : `ip:${ip}`;
     const rl = await checkRateLimit(supabase, rlIdent, "run", 60, 100);
     if (!rl.ok) {
