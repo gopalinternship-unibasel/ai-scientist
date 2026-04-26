@@ -862,8 +862,10 @@ serve(async (req) => {
           }).eq("id", runId);
           send("plan", planObj);
           send("done", { id: runId });
+          stopHeartbeat();
+          try { controller.close(); } catch { /* already closed */ }
 
-          // 3) Reviewer critique pass (best-effort, fire-and-forget after main plan is sent).
+          // 3) Reviewer critique pass (best-effort, async after the user-facing stream closes).
           //    Feed catalog-mismatch findings as extra reviewer context so the
           //    critique surfaces wrong-form / wrong-cat# materials concretely.
           try {
