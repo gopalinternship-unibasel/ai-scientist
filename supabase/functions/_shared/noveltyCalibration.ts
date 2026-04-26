@@ -1,11 +1,11 @@
 // Calibration set for the novelty classifier.
 //
-// This is NOT a unit test of the LLM — we don't want to spend tokens in CI
-// on every commit. Instead it's a documented fixture you can replay manually
-// (or on a nightly cron) to detect drift in `classifyNovelty`.
+// This is NOT a per-commit unit test (we don't spend tokens in CI). It's a
+// documented fixture for manual or nightly drift checks of `classifyNovelty`.
 //
-// Each case lists the signal we believe is correct, plus alternatives we'd
-// also accept (the classifier model is non-deterministic at the boundary).
+// Each case names the expected signal plus tolerated alternatives, since the
+// classifier model is non-deterministic at the boundary between similar and
+// exact_match.
 
 export interface CalibrationCase {
   hypothesis: string;
@@ -15,19 +15,48 @@ export interface CalibrationCase {
 }
 
 export const NOVELTY_CALIBRATION: CalibrationCase[] = [
-  // ── Should fire as exact_match (canonical-technique override path) ──
+  // exact_match — textbook canonical methods
   {
-    hypothesis:
-      "Use standard PCR with Taq polymerase to amplify the GAPDH housekeeping gene from human genomic DNA.",
+    hypothesis: "Use standard PCR with Taq polymerase to amplify the GAPDH housekeeping gene from human genomic DNA.",
     expected_signal: "exact_match",
-    rationale: "PCR is a textbook canonical technique; canonical-detector forces exact_match.",
+    rationale: "PCR is canonical; the canonical-detector override forces exact_match.",
   },
   {
-    hypothesis:
-      "Perform a Western blot to detect β-actin in HeLa cell lysate using a commercial anti-actin antibody.",
+    hypothesis: "Perform a Western blot to detect beta-actin in HeLa cell lysate using a commercial anti-actin antibody.",
     expected_signal: "exact_match",
-    rationale: "Western blot is canonical and β-actin is the standard loading control.",
+    rationale: "Western blot is canonical and beta-actin is the standard loading control.",
   },
   {
-    hypothesis:
-      "Quantify TNF-α in serum samples by sandwich ELISA using a commercial k
+    hypothesis: "Quantify TNF-alpha in human serum by sandwich ELISA using a commercial DuoSet kit.",
+    expected_signal: "exact_match",
+    rationale: "ELISA is canonical; TNF-alpha quantification is heavily published.",
+  },
+
+  // similar — known technique, unusual context (in-between case)
+  {
+    hypothesis: "Apply CRISPR-Cas9 knockout of the PER2 gene in cultured axolotl limb-blastema cells to study circadian regulation of regeneration.",
+    expected_signal: "similar",
+    rationale: "CRISPR + circadian biology are well-studied, but the axolotl-blastema combination is unusual.",
+    tolerance: ["not_found"],
+  },
+  {
+    hypothesis: "Use single-cell RNA-seq to profile gene expression in the brain of the naked mole-rat after hypoxic exposure.",
+    expected_signal: "similar",
+    rationale: "scRNA-seq + hypoxia is well-published; naked-mole-rat brain hypoxia studies exist but are rarer.",
+    tolerance: ["exact_match"],
+  },
+
+  // not_found — novel / highly specific
+  {
+    hypothesis: "Engineer a synthetic riboswitch that responds to ferrocene-derivative concentration to drive GFP expression in B. subtilis biofilms grown on lunar-regolith simulant.",
+    expected_signal: "not_found",
+    rationale: "The combination of ferrocene-responsive riboswitch + lunar-regolith biofilm is highly unlikely to have prior art.",
+    tolerance: ["similar"],
+  },
+  {
+    hypothesis: "Test whether sonication at 7.3 MHz selectively disrupts the membrane of Toxoplasma gondii tachyzoites without harming co-cultured human fibroblasts.",
+    expected_signal: "not_found",
+    rationale: "Specific frequency + specific organism + selective membrane disruption — unlikely combination.",
+    tolerance: ["similar"],
+  },
+];
