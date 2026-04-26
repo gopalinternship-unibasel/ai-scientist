@@ -1,5 +1,5 @@
 import { Link, useNavigate } from "react-router-dom";
-import { LogIn, LogOut, FlaskConical, ChevronDown } from "lucide-react";
+import { LogIn, LogOut, FlaskConical, ChevronDown, MessageSquareText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -48,6 +48,9 @@ export const UserMenu = () => {
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={() => navigate("/my-runs")} className="gap-2">
           <FlaskConical className="h-3.5 w-3.5" /> My runs
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => navigate("/my-feedback")} className="gap-2">
+          <MessageSquareText className="h-3.5 w-3.5" /> My feedback
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={signOut} className="gap-2 text-destructive focus:text-destructive">

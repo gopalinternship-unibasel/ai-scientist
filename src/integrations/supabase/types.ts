@@ -14,6 +14,87 @@ export type Database = {
   }
   public: {
     Tables: {
+      domain_rules: {
+        Row: {
+          active: boolean
+          confidence: number
+          created_at: string
+          domain: string
+          id: string
+          rule: string
+          source_count: number
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          confidence?: number
+          created_at?: string
+          domain: string
+          id?: string
+          rule: string
+          source_count?: number
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          confidence?: number
+          created_at?: string
+          domain?: string
+          id?: string
+          rule?: string
+          source_count?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      eval_runs: {
+        Row: {
+          applied_lesson_count: number
+          arm: string
+          batch_id: string
+          created_at: string
+          hypothesis: string
+          id: string
+          judge_notes: string | null
+          plan_excerpt: string | null
+          score_feasibility: number | null
+          score_overall: number | null
+          score_sku: number | null
+          score_specificity: number | null
+          score_timeline: number | null
+        }
+        Insert: {
+          applied_lesson_count?: number
+          arm: string
+          batch_id: string
+          created_at?: string
+          hypothesis: string
+          id?: string
+          judge_notes?: string | null
+          plan_excerpt?: string | null
+          score_feasibility?: number | null
+          score_overall?: number | null
+          score_sku?: number | null
+          score_specificity?: number | null
+          score_timeline?: number | null
+        }
+        Update: {
+          applied_lesson_count?: number
+          arm?: string
+          batch_id?: string
+          created_at?: string
+          hypothesis?: string
+          id?: string
+          judge_notes?: string | null
+          plan_excerpt?: string | null
+          score_feasibility?: number | null
+          score_overall?: number | null
+          score_sku?: number | null
+          score_specificity?: number | null
+          score_timeline?: number | null
+        }
+        Relationships: []
+      }
       plan_feedback: {
         Row: {
           correction: string | null
@@ -211,6 +292,17 @@ export type Database = {
       claim_anonymous_runs: { Args: { _owner_token: string }; Returns: number }
       cleanup_old_rate_limits: { Args: never; Returns: number }
       cleanup_stale_runs: { Args: never; Returns: number }
+      corrections_for_distillation: {
+        Args: { _domain: string; _limit?: number }
+        Returns: {
+          correction: string
+          dup_count: number
+          id: string
+          rating: number
+          section: string
+        }[]
+      }
+      eval_summary: { Args: { _limit?: number }; Returns: Json }
       feedback_loop_stats: { Args: never; Returns: Json }
       find_duplicate_feedback: {
         Args: {

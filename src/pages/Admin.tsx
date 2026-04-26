@@ -10,7 +10,7 @@
 // boundary.
 import { useEffect, useMemo, useState } from "react";
 import { Link, Navigate } from "react-router-dom";
-import { Loader2, EyeOff, Eye, ArrowLeft } from "lucide-react";
+import { Loader2, EyeOff, Eye, ArrowLeft, Sparkles, Gauge } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -140,6 +140,7 @@ const Admin = () => {
           <TabsList>
             <TabsTrigger value="stats">Stats</TabsTrigger>
             <TabsTrigger value="moderate">Moderate ({rows.length})</TabsTrigger>
+            <TabsTrigger value="loop">Loop ops</TabsTrigger>
           </TabsList>
 
           <TabsContent value="stats" className="space-y-6 pt-4">
@@ -277,6 +278,10 @@ const Admin = () => {
               </Card>
             ))}
           </TabsContent>
+
+          <TabsContent value="loop" className="space-y-4 pt-4">
+            <LoopOpsPanel />
+          </TabsContent>
         </Tabs>
       </main>
     </div>
@@ -293,6 +298,121 @@ const Stat = ({ label, value, sub }: StatProps) => (
     </CardContent>
   </Card>
 );
+
+// Loop ops: trigger distillation + eval harness, view recent eval batches.
+interface EvalSummaryRow {
+  batch_id: string; ts: string;
+  avg_with: number; avg_without: number;
+  n_with: number; n_without: number;
+}
+const LoopOpsPanel = () => {
+  const [distilling, setDistilling] = useState(false);
+  const [evaling, setEvaling] = useState(false);
+  const [summary, setSummary] = useState<EvalSummaryRow[] | null>(null);
+
+  const loadSummary = async () => {
+    const { data, error } = await supabase.rpc("eval_summary", { _limit: 8 });
+    if (error) { console.warn("eval_summary failed", error); return; }
+    setSummary((data as unknown as EvalSummaryRow[]) ?? []);
+  };
+  useEffect(() => { loadSummary(); }, []);
+
+  const distill = async () => {
+    setDistilling(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("distill-house-rules", { body: {} });
+      if (error) throw error;
+      const created = (data?.results ?? []).reduce((s: number, r: { created: number }) => s + r.created, 0);
+      toast.success(`Distilled ${created} house rules across ${data?.results?.length ?? 0} domains.`);
+    } catch (e) {
+      console.error(e);
+      toast.error("Distillation failed.");
+    } finally { setDistilling(false); }
+  };
+
+  const runEval = async () => {
+    setEvaling(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("eval-harness", { body: { pilot_size: 4 } });
+      if (error) throw error;
+      toast.success(`Eval batch complete: ${data?.evaluated ?? 0} hypotheses scored.`);
+      await loadSummary();
+    } catch (e) {
+      console.error(e);
+      toast.error("Eval harness failed.");
+    } finally { setEvaling(false); }
+  };
+
+  return (
+    <>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-accent" /> House rules
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Distill recent corrections into stable per-domain rules. Replaces the previous active batch.
+            </p>
+            <Button onClick={distill} disabled={distilling} size="sm" className="gap-1.5">
+              {distilling && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              Run distillation
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Gauge className="h-4 w-4 text-primary" /> Eval harness
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Score the frozen hypothesis suite with vs without the feedback retriever. Pilot mode: 4 hypotheses.
+            </p>
+            <Button onClick={runEval} disabled={evaling} size="sm" className="gap-1.5">
+              {evaling && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              Run pilot eval (4 hypotheses)
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader className="pb-3"><CardTitle className="text-base">Recent eval batches</CardTitle></CardHeader>
+        <CardContent>
+          {summary === null ? (
+            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          ) : summary.length === 0 ? (
+            <div className="text-sm text-muted-foreground">No eval runs yet.</div>
+          ) : (
+            <ul className="divide-y divide-border">
+              {summary.map((b) => {
+                const delta = (b.avg_with ?? 0) - (b.avg_without ?? 0);
+                return (
+                  <li key={b.batch_id} className="flex items-center justify-between py-2 text-sm">
+                    <span className="font-mono text-xs text-muted-foreground">
+                      {new Date(b.ts).toLocaleString()}
+                    </span>
+                    <span className="font-mono text-xs">
+                      with {b.avg_with?.toFixed(2) ?? "—"} / without {b.avg_without?.toFixed(2) ?? "—"}
+                      <span className={`ml-2 font-semibold ${delta > 0 ? "text-success" : delta < 0 ? "text-destructive" : ""}`}>
+                        Δ {delta >= 0 ? "+" : ""}{delta.toFixed(2)}
+                      </span>
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+    </>
+  );
+};
 
 // Shown to signed-in users without the moderator/admin role. Offers a one-
 // time "claim first admin" path: the bootstrap_first_admin RPC will only
