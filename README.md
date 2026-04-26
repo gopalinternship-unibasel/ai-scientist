@@ -1,59 +1,68 @@
+<div align="center">
+
+<img src="docs/banner.png" alt="AI Scientist — Hypothesis to Peer-reviewed Experiment Plan" width="100%" />
+
 # AI Scientist
 
-> Turn a natural-language **scientific hypothesis** into a fully-costed,
-> peer-reviewed **experiment plan** — backed by real literature, deterministic
-> safety/feasibility checks, and a structured AI critique.
+**Turn a natural-language scientific hypothesis into a fully-costed,
+peer-reviewed experiment plan — backed by real literature, deterministic
+safety/feasibility checks, and a structured AI critique.**
 
-**Live:** [ai-scientist.lovable.app](https://ai-scientist.lovable.app)
+[![Live app](https://img.shields.io/badge/live-ai--scientist.lovable.app-0f172a?style=flat-square)](https://ai-scientist.lovable.app)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](./LICENSE)
+[![CI](https://img.shields.io/github/actions/workflow/status/lovable-dev/ai-scientist/ci.yml?branch=main&style=flat-square&label=CI)](./.github/workflows/ci.yml)
+[![Built with Lovable](https://img.shields.io/badge/built%20with-Lovable-ff5c8a?style=flat-square)](https://lovable.dev)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](./CONTRIBUTING.md)
+
+[**Try it live**](https://ai-scientist.lovable.app) ·
+[**Report a bug**](https://github.com/lovable-dev/ai-scientist/issues/new?template=bug_report.yml) ·
+[**Request a feature**](https://github.com/lovable-dev/ai-scientist/issues/new?template=feature_request.yml) ·
+[**Contributing**](./CONTRIBUTING.md)
+
+</div>
 
 ---
 
-## What it does
+## ✨ What it does
 
 You type a hypothesis like:
 
 > *"CRISPR-Cas9 knockout of sox2 in axolotl limb blastema cells will reduce
 > regeneration rate by ≥50% compared to wild-type controls over 28 days."*
 
-…and the system streams back, in ~60–90 seconds:
+…and the system streams back, in **~60–90 seconds**:
 
-1. **Literature QC** — searches Semantic Scholar, OpenAlex, and PubMed in
-   parallel and classifies the hypothesis as `exact_match` / `similar` /
-   `not_found`, with real citations (no hallucinations — papers are pulled
-   live, not invented).
-2. **An experimental plan** — title, summary, success criteria, full step-by-step
-   protocol with citations, materials list with real supplier catalog numbers
-   (Sigma, Thermo, IDT, NEB, ATCC, Qiagen, Promega, Bio-Rad), itemised budget,
-   timeline with dependencies, statistical design, validation strategy,
-   safety considerations, risks, and team requirements.
-3. **A reviewer critique** — strengths, concerns (with severity), missing
-   controls, statistical notes, ethical notes, and an overall score.
+| Stage | Output |
+|---|---|
+| 🔍 **Literature QC** | Parallel search across Semantic Scholar, OpenAlex & PubMed. Classifies as `exact_match` / `similar` / `not_found` with **real** citations (papers are pulled live, never invented). |
+| 🧪 **Experiment plan** | Title, summary, success criteria, step-by-step protocol with citations, materials with real supplier catalog numbers (Sigma, Thermo, IDT, NEB, ATCC, Qiagen, Promega, Bio-Rad), itemised budget, timeline, statistical design, validation, safety, risks, team. |
+| 🧐 **Reviewer critique** | Strengths, concerns (with severity), missing controls, statistical notes, ethical notes, overall score. |
 
-Every plan is exportable to **PDF**, shareable via a public link, and
-**refinable** through natural-language follow-ups ("add a vehicle control",
-"swap to ICR mice", "halve the budget"), which produces a new versioned plan
+Every plan is **exportable to PDF**, **shareable** via a public link, and
+**refinable** through natural-language follow-ups (*"add a vehicle control"*,
+*"swap to ICR mice"*, *"halve the budget"*) — producing a new versioned plan
 linked to the parent.
 
-## Why it doesn't hallucinate (much)
+## 🛡️ Why it doesn't hallucinate (much)
 
 Generic LLMs happily invent fake citations, impossible reagents, and plans
-for experiments that violate physics. We layer four deterministic guards
-**outside** the LLM:
+for experiments that violate physics. We layer **six deterministic guards
+outside the LLM**:
 
-| Guard | Where | What it catches |
+| Guard | Where | Catches |
 |---|---|---|
 | **Hypothesis gate** | `_shared/hypothesisGate.ts` | Vague goals (`"improve cancer treatment"`), non-scientific input (`"my cat likes tuna"`), instructions to the AI, gibberish. Returns HTTP 400 + suggestion. |
 | **Feasibility check** | `_shared/feasibilityCheck.ts` | Hard physical/biological impossibilities — Abbe diffraction limit, FTL signalling, perpetual motion, absolute zero, **cryogenic exposure of living vertebrates**, no-communication theorem. Pure regex, fast and free. |
 | **Safety screen** | `_shared/safety.ts` | Human/animal subjects, BSL ≥2, controlled substances, recombinant DNA, hazardous chemicals — feeds requirements into the planning prompt. |
 | **Catalog cross-check** | `_shared/catalogCheck.ts` | Validates supplier-specific catalog-number formats (Sigma `A1234-5G`, Thermo 7–9 digits, etc.) and flags name/SKU mismatches against a canonical dictionary. |
 | **Citation sanitiser** | `_shared/citations.ts` | Strips out-of-range or malformed `[N]` references in protocol steps and reports the count of hallucinated/rewritten/valid citations. |
-| **Query degradation** | `_shared/queryDegradation.ts` | When the full hypothesis returns 0 lit hits, retries with progressively broader keyword queries (e.g. `"PCR amplification of GAPDH in human cells"` → `"PCR GAPDH"`). |
+| **Query degradation** | `_shared/queryDegradation.ts` | When the full hypothesis returns 0 lit hits, retries with progressively broader keyword queries. |
 
 The plan and its critique are also generated by **two independent AI calls**
 so the reviewer can flag the planner's mistakes (and we feed deterministic
 catalog issues into the reviewer as extra context).
 
-## Architecture
+## 🏗️ Architecture
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -82,114 +91,37 @@ catalog issues into the reviewer as extra context).
 ┌──────────────────────────────────────────────────────────────────────┐
 │  Lovable Cloud (Postgres + Realtime + Auth)                          │
 │  ├── runs        — hypothesis, qc, plan, critique, status, version   │
+│  ├── plan_feedback — section-level corrections + embeddings          │
+│  ├── domain_rules — distilled house rules per domain                 │
 │  └── rate_limits — sliding-window counter                            │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Tech stack
 
-- **Frontend:** React 18, Vite 5, TypeScript 5, Tailwind CSS 3, shadcn/ui,
-  TanStack Query, React Router, sonner (toasts), jsPDF (export).
-- **Backend:** Supabase Edge Functions (Deno), Postgres with RLS,
-  Supabase Realtime for live run updates.
-- **AI:** Lovable AI Gateway — `google/gemini-2.5-pro` for planning and
-  critique, `google/gemini-2.5-flash` for novelty classification and the
-  hypothesis gate. No user-supplied API keys required.
-- **Literature:** Semantic Scholar Graph API, OpenAlex
-  (`title_and_abstract.search`), and PubMed E-utilities — all best-effort,
+- **Frontend** — React 18, Vite 5, TypeScript 5, Tailwind 3, shadcn/ui,
+  TanStack Query, React Router, sonner, jsPDF.
+- **Backend** — Supabase Edge Functions (Deno), Postgres with RLS,
+  Supabase Realtime for live run updates, pgvector for feedback retrieval.
+- **AI** — Lovable AI Gateway: `google/gemini-2.5-pro` for planning &
+  critique, `google/gemini-2.5-flash` for novelty + hypothesis gate. **No
+  user-supplied API keys required.**
+- **Literature** — Semantic Scholar Graph API, OpenAlex
+  (`title_and_abstract.search`), PubMed E-utilities — best-effort,
   deduplicated by DOI then by normalised title prefix.
-- **Tests:** Vitest (frontend) + Deno test runner (edge functions).
+- **Tests** — Vitest (frontend) + Deno test runner (edge functions).
 
-## Project structure
-
-```
-src/
-├── pages/
-│   ├── Index.tsx              # Landing page — hypothesis input
-│   ├── RunPage.tsx            # Live run view + version history
-│   ├── MyRuns.tsx             # Authenticated user's runs
-│   ├── Auth.tsx               # Email + Google sign-in
-│   └── ResetPassword.tsx
-├── components/
-│   ├── HypothesisInput.tsx    # Input + samples
-│   ├── GenerationProgress.tsx # Streaming progress UI
-│   ├── LiteratureQCCard.tsx   # exact_match / similar / not_found
-│   ├── ExperimentPlanView.tsx # The full plan, with PDF export
-│   ├── PlanCritiqueCard.tsx   # Reviewer concerns + scores
-│   ├── RefineDialog.tsx       # Natural-language refinement
-│   ├── VersionSwitcher.tsx    # Compare across plan versions
-│   └── RateLimitBadge.tsx
-├── lib/
-│   ├── runStream.ts           # SSE client for run-experiment
-│   ├── citations.ts           # Renders [N] → tooltipped chips
-│   ├── exportPdf.ts           # jsPDF plan export
-│   ├── owner.ts               # Anon owner_token persistence
-│   └── samples.ts             # Example hypotheses + types
-└── integrations/supabase/     # Auto-generated client + types
-
-supabase/
-├── functions/
-│   ├── run-experiment/        # Main SSE endpoint
-│   │   ├── index.ts
-│   │   └── cost-catalog.ts
-│   └── _shared/
-│       ├── hypothesisGate.ts
-│       ├── feasibilityCheck.ts
-│       ├── safety.ts
-│       ├── literature.ts
-│       ├── relevanceRank.ts
-│       ├── queryDegradation.ts
-│       ├── catalogCheck.ts
-│       ├── canonicalTechniques.ts
-│       ├── citations.ts
-│       ├── ai-fallback.ts
-│       ├── fetch-with-retry.ts
-│       └── cors.ts
-├── migrations/                # Schema, RLS, helper SQL functions
-└── config.toml
-```
-
-## Data model
-
-### `runs`
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid | PK |
-| `hypothesis` | text | The user's input |
-| `hypothesis_hash` | text | SHA-256 of the normalised hypothesis (cache key) |
-| `status` | enum | `pending` → `qc` → `plan` → `done` \| `failed` |
-| `qc` | jsonb | Literature QC result (signal, references, rationale) |
-| `plan` | jsonb | Full experiment plan |
-| `critique` | jsonb | AI reviewer output |
-| `error` | text | `KIND: message` (see `lib/runErrors.ts`) |
-| `version` | int | 1 for originals, ≥2 for refinements |
-| `parent_run_id` | uuid | Set when refining a previous plan |
-| `refinement_instruction` | text | The user's natural-language tweak |
-| `owner_user_id` | uuid | Set when run created while signed in |
-| `owner_token` | text | Browser-local token for anon users |
-| `share_token` | text | Generated lazily on first share |
-
-### `rate_limits`
-Sliding-window counter, 100 req/hour per `(identifier, kind)`. Anon users
-are identified by hashed IP, signed-in users by `user.id`. Garbage-collected
-hourly via `cleanup_old_rate_limits()`.
-
-### Row-level security
-- Anon viewers can read a run via `owner_token` (browser-local) or the
-  public `share_token`.
-- Signed-in users can read/write only their own runs (`owner_user_id`).
-- Anon runs created before sign-in are claimed via `claim_anonymous_runs(token)`.
-- The edge function uses the service role to write QC/plan/critique.
-
-## Local development
+## 🚀 Quick start
 
 You'll need [Bun](https://bun.sh) (or npm) and a Lovable Cloud project.
 
 ```bash
+git clone https://github.com/lovable-dev/ai-scientist.git
+cd ai-scientist
 bun install
-bun run dev          # Vite dev server
-bun run build        # production build
+bun run dev          # Vite dev server on :8080
 bun test             # Vitest (frontend + lib)
+bun run build        # production build
 ```
 
 `.env` is auto-managed by Lovable Cloud and contains:
@@ -203,12 +135,57 @@ VITE_SUPABASE_PROJECT_ID=...
 ### Edge function tests (Deno)
 
 ```bash
+deno test --allow-net --allow-env supabase/functions/_shared/
 deno test --allow-net --allow-env supabase/functions/run-experiment/
 ```
 
-Or via the Supabase tooling: `supabase functions serve run-experiment`.
+## 📁 Project structure
 
-## Edge cases — verified behaviour
+```
+src/
+├── pages/                       # Index, RunPage, MyRuns, Auth, Admin, …
+├── components/                  # HypothesisInput, GenerationProgress,
+│                                # LiteratureQCCard, ExperimentPlanView,
+│                                # PlanCritiqueCard, RefineDialog, …
+├── lib/                         # runStream (SSE), citations, exportPdf, …
+└── integrations/supabase/       # Auto-generated client + types
+
+supabase/
+├── functions/
+│   ├── run-experiment/          # Main SSE endpoint
+│   ├── distill-house-rules/     # Background lesson distillation
+│   ├── embed-feedback/          # pgvector embedding pipeline
+│   ├── eval-harness/            # Offline regression scoring
+│   └── _shared/                 # Pure logic — the deterministic guards
+└── migrations/                  # Schema, RLS, helper SQL functions
+```
+
+## 🗄️ Data model (highlights)
+
+**`runs`** — one row per generation. Stores hypothesis, SHA-256 hash (cache
+key), status (`pending` → `qc` → `plan` → `done` / `failed`), QC, plan,
+critique, version, parent (for refinements), owner (anon token or user id),
+and a lazily-generated share token.
+
+**`plan_feedback`** — section-level corrections from users, embedded with
+pgvector, deduplicated, and retrieved on future runs in the same domain to
+nudge the planner.
+
+**`domain_rules`** — distilled house rules per scientific domain, refined
+nightly from accumulated feedback.
+
+**`rate_limits`** — sliding-window counter, 100 req/hour per `(identifier,
+kind)`.
+
+### Row-level security
+
+- Anon viewers can read a run via `owner_token` (browser-local) or the
+  public `share_token`.
+- Signed-in users can read/write only their own runs.
+- Anon runs created before sign-in are claimed via `claim_anonymous_runs(token)`.
+- The edge function uses the service role to write QC/plan/critique.
+
+## ✅ Edge cases — verified behaviour
 
 | Input | Result |
 |---|---|
@@ -220,36 +197,43 @@ Or via the Supabase tooling: `supabase functions serve run-experiment`.
 | Highly novel composite material hypothesis | `not_found` — **0 references**, plan still generated with honesty about novelty |
 | Same hypothesis submitted twice | Cache hit — `cached:true`, identical plan |
 
-## Security notes
+## 🔒 Security
 
 - All SQL operations use the Supabase typed client — no raw SQL from the client.
 - RLS is enabled on every table; service-role access is restricted to the
   edge function.
-- The edge function validates JWTs in code (functions run with `verify_jwt = false`
-  in `config.toml` because the signing-keys system requires explicit validation).
-- Anon `owner_token` is a high-entropy random string, validated server-side
-  for length (8–100 chars).
-- No secrets are exposed to the browser; the Lovable AI Gateway key lives only
-  in the edge function's environment.
+- Anon `owner_token` is a high-entropy random string, validated server-side.
+- No secrets are exposed to the browser; the Lovable AI Gateway key lives
+  only in the edge function's environment.
 
-## Limitations
+Found a security issue? See [`SECURITY.md`](./SECURITY.md) — please report
+privately.
+
+## ⚠️ Limitations
 
 - **Plan quality scales with hypothesis specificity.** Generic prompts get
-  generic plans. The hypothesis gate rejects only the most blatant cases.
+  generic plans.
 - **Catalog numbers should still be verified before ordering.** The
   cross-check covers ~7 major suppliers and known-canonical SKUs; novel
   reagents are marked `"Custom"` rather than fabricated.
 - **Cost estimates are list-price approximations**, not procurement quotes.
 - **Literature recall depends on three external APIs.** When all three are
-  rate-limited or down, QC degrades gracefully but won't surface citations
-  it can't fetch.
+  rate-limited, QC degrades gracefully.
 
-## License
+## 🤝 Contributing
 
-MIT.
+We welcome PRs! Start with [`CONTRIBUTING.md`](./CONTRIBUTING.md) for setup,
+conventions, and the PR checklist. Please also read our
+[`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md).
 
-## Built with
+Good first issues are tagged [`good first issue`](https://github.com/lovable-dev/ai-scientist/labels/good%20first%20issue).
 
-[Lovable](https://lovable.dev) — generated and edited entirely through
-Lovable's agent. The full project lives at
+## 📜 License
+
+[MIT](./LICENSE) — do what you want, but the warranty is in the same file.
+
+## 🛠️ Built with [Lovable](https://lovable.dev)
+
+Generated and edited entirely through Lovable's agent. The full project
+lives at
 [lovable.dev/projects/d384b0c8-7bed-419b-9fdf-9c1260af71fa](https://lovable.dev/projects/d384b0c8-7bed-419b-9fdf-9c1260af71fa).
