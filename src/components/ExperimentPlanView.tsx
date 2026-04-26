@@ -159,6 +159,8 @@ interface PlanViewProps {
   runId?: string;
   /** Auth user id (if logged in) — written alongside owner_token on feedback rows. */
   ownerUserId?: string | null;
+  /** Past corrections that the planner pulled in for this run (cross-run learning loop). */
+  appliedFeedback?: AppliedFeedbackEntry[] | null;
 }
 
 /** Cheap structural diff: stringify each section and compare. */
@@ -178,7 +180,9 @@ function diffSections(a: ExperimentPlan, b: ExperimentPlan) {
   };
 }
 
-export const ExperimentPlanView = ({ plan, previousPlan, hypothesis, version = 1, runId, ownerUserId }: PlanViewProps) => {
+export const ExperimentPlanView = ({
+  plan, previousPlan, hypothesis, version = 1, runId, ownerUserId, appliedFeedback,
+}: PlanViewProps) => {
   const materialsTotal = useMemo(
     () => plan.materials.reduce((s, m) => s + (m.total_cost_usd ?? 0), 0),
     [plan.materials]
@@ -189,17 +193,36 @@ export const ExperimentPlanView = ({ plan, previousPlan, hypothesis, version = 1
     [plan, previousPlan],
   );
 
-  // Helper: render a feedback control for a given section, only when we have a runId.
-  const fb = (section: FeedbackSection) =>
-    runId ? (
-      <SectionFeedback
-        runId={runId}
-        section={section}
-        domain={plan.domain}
-        hypothesis={hypothesis ?? plan.hypothesis_restated}
-        ownerUserId={ownerUserId ?? null}
-      />
-    ) : undefined;
+  // Group applied lessons by section so each header shows only the relevant ones.
+  const lessonsBySection = useMemo(() => {
+    const map = new Map<string, AppliedFeedbackEntry[]>();
+    for (const e of appliedFeedback ?? []) {
+      const arr = map.get(e.section) ?? [];
+      arr.push(e);
+      map.set(e.section, arr);
+    }
+    return map;
+  }, [appliedFeedback]);
+
+  // Helper: render the badge + feedback button for a given section.
+  const fb = (section: FeedbackSection) => {
+    const lessons = lessonsBySection.get(section) ?? [];
+    if (!runId && lessons.length === 0) return undefined;
+    return (
+      <span className="inline-flex items-center gap-1.5">
+        {lessons.length > 0 && <AppliedLessonsBadge entries={lessons} />}
+        {runId && (
+          <SectionFeedback
+            runId={runId}
+            section={section}
+            domain={plan.domain}
+            hypothesis={hypothesis ?? plan.hypothesis_restated}
+            ownerUserId={ownerUserId ?? null}
+          />
+        )}
+      </span>
+    );
+  };
 
   const onShare = async () => {
     try {
