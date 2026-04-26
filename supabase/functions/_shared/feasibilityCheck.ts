@@ -70,7 +70,7 @@ const RULES: Rule[] = [
     principle: "Thermodynamic violation (uphill reaction without energy input)",
     patterns: [
       /\b(?:no\s+(?:external\s+)?energy(?:\s+input)?|without\s+(?:external\s+)?energy|zero\s+energy\s+input|no\s+power|without\s+power|spontaneous(?:ly)?)\b/i,
-      /\b(?:ammonia|NH3|NH₃|hydrogen\s+(?:fuel|gas)|H2(?!O)|H₂(?!O)|methanol|fuel)\b[^.]{0,120}\b(?:from|out\s+of|using)\b[^.]{0,80}\b(?:water|H2O|H₂O|N2|N₂|nitrogen|CO2|CO₂|air|atmospheric)\b|\b(?:water[-\s]?splitting|split\s+water)\b[^.]{0,80}\b(?:no|without|zero)\b/i,
+      /\b(?:ammonia|NH3|NH₃|hydrogen\s+(?:fuel|gas)|methanol|fuel)\b|\b(?:water[-\s]?splitting|split\s+water)\b|\b(?:convert|reduce|fix|synthesi[sz]e|produce|generate|make)\b[^.]{0,40}\b(?:N2|N₂|nitrogen|CO2|CO₂|H2O|H₂O|water|air|atmospheric)\b/i,
     ],
     explanation:
       "The reaction described is thermodynamically uphill (ΔG > 0) — e.g. N₂ + H₂O → NH₃ + O₂ requires more free energy than water-splitting. No catalyst can drive an endergonic reaction without coupled energy input (light, electricity, or a sacrificial reductant).",
