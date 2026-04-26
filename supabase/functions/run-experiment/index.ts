@@ -112,6 +112,8 @@ async function classifyNovelty(hypothesis: string, papers: LitPaper[], apiKey: s
     apiKey,
     models: FAST_MODELS,
     label: "novelty-classify",
+    retries: 0,
+    timeoutMs: 20_000,
     buildBody: (model) => ({
       model,
       messages: [
