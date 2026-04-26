@@ -34,12 +34,12 @@ export type CanonicalDomain = (typeof DOMAINS)[number];
 
 // Keyword → canonical. Order matters: more specific patterns first.
 const RULES: Array<[RegExp, CanonicalDomain]> = [
-  [/\b(crispr|pcr|qpcr|rna[\s-]?seq|sequencing|gene\s+expression|plasmid|transfection|knockout)\b/i, "molecular-biology"],
-  [/\b(cell\s+culture|hela|ips[c]?|stem\s+cell|fluorescence\s+microscop|flow\s+cytometry|mitochond)/i, "cell-biology"],
+  [/\b(crispr|pcr|qpcr|rna[\s-]?seq|sequencing|gene\s+expression|mrna\s+expression|plasmid|transfection|knockout)\b/i, "molecular-biology"],
+  [/\b(cell\s+culture|hela|hek\s?293|hct\s?116|a549|ips[c]?|stem\s+cell|fluorescence\s+microscop|flow\s+cytometry|mitochond)/i, "cell-biology"],
   [/\b(enzyme|kinase|protein\s+(folding|purif)|western\s+blot|elisa|chromatograph)\b/i, "biochemistry"],
   [/\b(bacter|e\.?\s?coli|yeast|fungal|biofilm|antibiotic|microbiom)/i, "microbiology"],
   [/\b(neur(on|al)|brain|synap|fmri|eeg|optogenet|axon|dendrit)/i, "neuroscience"],
-  [/\b(t\s?cell|b\s?cell|cytokine|antibod|immune|vaccine|inflamm)/i, "immunology"],
+  [/\b(t\s?cell|b\s?cell|cytokine|il-?\d+|tnf|antibod|immune|vaccine|inflamm)/i, "immunology"],
   [/\b(gwas|snp|allele|hereditar|mendel|haplotyp)/i, "genetics"],
   [/\b(genom(e|ic)|exome|metagenom|whole[\s-]?genome)/i, "genomics"],
   [/\b(proteom|mass\s+spec|peptide\s+identif)/i, "proteomics"],
