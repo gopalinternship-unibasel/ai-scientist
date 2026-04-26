@@ -57,21 +57,103 @@ const RULES: Array<[RegExp, CanonicalDomain]> = [
   [/\b(algorithm|compiler|database|distributed\s+system|operating\s+system)/i, "computer-science"],
 ];
 
-// Normalise a free-text domain string OR fall back to scanning text content
-// (hypothesis, plan summary). Returns 'other' if nothing matches.
-export function normalizeDomain(...inputs: Array<string | null | undefined>): CanonicalDomain {
+/**
+ * Pure regex-based normaliser.
+ *
+ * Returns `null` (not 'other') when nothing matches, so callers can decide
+ * whether to fall through to a more expensive LLM classifier.
+ */
+export function normalizeDomainStrict(...inputs: Array<string | null | undefined>): CanonicalDomain | null {
   const blob = inputs.filter(Boolean).join(" ").toLowerCase();
-  if (!blob.trim()) return "other";
-
-  // 1) If the input is already an exact canonical, accept it.
+  if (!blob.trim()) return null;
   for (const d of DOMAINS) {
     if (blob === d || blob.replace(/[\s_]+/g, "-") === d) return d;
   }
-  // 2) Pattern match.
   for (const [re, dom] of RULES) {
     if (re.test(blob)) return dom;
   }
-  return "other";
+  return null;
+}
+
+/**
+ * Backwards-compatible wrapper — returns 'other' when nothing matches so
+ * existing call sites that don't care about LLM fallback keep working.
+ */
+export function normalizeDomain(...inputs: Array<string | null | undefined>): CanonicalDomain {
+  return normalizeDomainStrict(...inputs) ?? "other";
+}
+
+/**
+ * LLM-backed fallback classifier. Only call this when `normalizeDomainStrict`
+ * returns null — it's cheap (gpt-5-nano, ~$0.0001/call) but not free.
+ *
+ * Returns 'other' on any failure so callers don't need to special-case errors.
+ */
+export async function classifyDomainWithLLM(
+  text: string,
+  apiKey: string,
+): Promise<CanonicalDomain> {
+  if (!text.trim() || !apiKey) return "other";
+  const snippet = text.slice(0, 1500);
+  try {
+    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash-lite",
+        messages: [
+          {
+            role: "system",
+            content: `You are a precise classifier. Pick the SINGLE best domain label for the given research text from the controlled vocabulary. If nothing fits well, return "other". Do not invent labels.`,
+          },
+          { role: "user", content: `TEXT:\n${snippet}\n\nReturn the domain via the tool.` },
+        ],
+        tools: [{
+          type: "function",
+          function: {
+            name: "classify_domain",
+            parameters: {
+              type: "object",
+              properties: {
+                domain: { type: "string", enum: DOMAINS as unknown as string[] },
+              },
+              required: ["domain"],
+              additionalProperties: false,
+            },
+          },
+        }],
+        tool_choice: { type: "function", function: { name: "classify_domain" } },
+      }),
+    });
+    if (!res.ok) return "other";
+    const j = await res.json();
+    const args = j?.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments;
+    if (!args) return "other";
+    const parsed = JSON.parse(args);
+    const dom = parsed?.domain;
+    return (DOMAINS as readonly string[]).includes(dom) ? (dom as CanonicalDomain) : "other";
+  } catch (e) {
+    console.warn("classifyDomainWithLLM failed:", e);
+    return "other";
+  }
+}
+
+/**
+ * Resolve a domain: try regex first, fall back to LLM only when that returns
+ * null. Always returns a canonical label.
+ */
+export async function resolveDomain(
+  apiKey: string,
+  ...inputs: Array<string | null | undefined>
+): Promise<CanonicalDomain> {
+  const strict = normalizeDomainStrict(...inputs);
+  if (strict) return strict;
+  const blob = inputs.filter(Boolean).join("\n").trim();
+  if (!blob) return "other";
+  return await classifyDomainWithLLM(blob, apiKey);
 }
 
 // Cheap spam / quality filter for free-text feedback corrections.
