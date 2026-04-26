@@ -11,7 +11,13 @@
 
 import { callAIWithFallback } from "./ai-fallback.ts";
 
-const GATE_MODELS = ["google/gemini-2.5-flash-lite", "google/gemini-3-flash-preview"];
+// Primary: cheapest classifier. Fallbacks add a different family (OpenAI) so
+// jailbreaks that exploit Gemini-specific patterns get a second-opinion catch.
+const GATE_MODELS = [
+  "google/gemini-2.5-flash-lite",
+  "google/gemini-3-flash-preview",
+  "openai/gpt-5-nano",
+];
 
 export interface GateVerdict {
   ok: boolean;
