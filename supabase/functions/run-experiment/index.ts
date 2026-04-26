@@ -8,7 +8,7 @@ import { checkHypothesis } from "../_shared/hypothesisValidation.ts";
 import { searchLiterature, type LitPaper } from "../_shared/literature.ts";
 import { screenSafety } from "../_shared/safety.ts";
 import {
-  callAIWithFallback, PLAN_MODELS, FAST_MODELS,
+  callAIWithFallback, PLAN_MODELS, FAST_MODELS, REASONING_MODELS,
   classifyHttpError, encodeError, type ErrorKind,
 } from "../_shared/ai-fallback.ts";
 import { gateHypothesis } from "../_shared/hypothesisGate.ts";
@@ -172,9 +172,10 @@ async function critiquePlan(
 
   const { res: aiRes } = await callAIWithFallback({
     apiKey,
-    // Critic uses PLAN_MODELS (gpt-5-mini fallback) — sharper reasoning catches
-    // subtle methodological flaws that flash-tier models routinely miss.
-    models: PLAN_MODELS,
+    // Critic uses REASONING_MODELS (gpt-5-mini primary). Reviewer-style
+    // critique benefits from sharper reasoning; latency is fine because the
+    // critic runs after the streamed plan is already on screen.
+    models: REASONING_MODELS,
     label: "critique",
     buildBody: (model) => ({
       model,

@@ -9,14 +9,26 @@ const ENDPOINT = "https://ai.gateway.lovable.dev/v1/chat/completions";
 
 export type ModelChain = string[];
 
+// Hot-path generation: long context + strict JSON + streaming.
+// Gemini Flash leads on latency/context; GPT-5-mini fallback covers outages.
 export const PLAN_MODELS: ModelChain = [
   "google/gemini-3-flash-preview",
   "openai/gpt-5-mini",
 ];
 
+// Cheap classification / short structured output (gate, novelty, etc.).
+// Cross-family fallback adds robustness without meaningful cost.
 export const FAST_MODELS: ModelChain = [
   "google/gemini-3-flash-preview",
   "openai/gpt-5-nano",
+];
+
+// Reasoning-first single calls (critic, distillation): GPT-5-mini catches
+// subtle methodological flaws that flash-tier models routinely miss.
+// Gemini fallback keeps the pipeline alive if OpenAI is degraded.
+export const REASONING_MODELS: ModelChain = [
+  "openai/gpt-5-mini",
+  "google/gemini-3-flash-preview",
 ];
 
 interface CallOpts {

@@ -105,7 +105,10 @@ serve(async (req) => {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            model: "google/gemini-3-flash-preview",
+            // gpt-5-mini for distillation: rule quality compounds across every
+            // future plan in this domain, so reasoning matters more than cost.
+            // Low volume (cron job) — extra cost is negligible.
+            model: "openai/gpt-5-mini",
             messages: [
               {
                 role: "system",
