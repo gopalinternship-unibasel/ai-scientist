@@ -79,6 +79,7 @@ export interface CanonicalMatch {
 export function detectCanonicalTechnique(hypothesis: string): CanonicalMatch {
   for (const t of TECHNIQUES) {
     if (t.pattern.test(hypothesis)) {
+      if (t.disqualifyIf && t.disqualifyIf.test(hypothesis)) continue;
       return { matched: true, technique: t.name, rationale: t.rationale };
     }
   }
