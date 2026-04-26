@@ -702,34 +702,32 @@ serve(async (req) => {
 
             // Canonical-technique override.
             //
-            // The technique itself (PCR, Western blot, …) is textbook, so the
-            // baseline floor is "this method is extensively published". But if
-            // the top-ranked candidate has LOW overlap with the full hypothesis
-            // (e.g. "Western blot in tardigrades" — Western blot papers exist,
-            // tardigrade-specific ones likely do not), promoting straight to
-            // `exact_match` would mask the unusual-context novelty.
+            // Textbook techniques (PCR, Western blot, ELISA, …) have thousands
+            // of published protocols, so the baseline signal is `exact_match`.
+            // But the hypothesis may apply that technique to an unusual context
+            // (organism, sample type) that itself is poorly represented. We
+            // can't reliably tell those apart from relevance scores alone —
+            // methods papers always score low against any specific hypothesis.
             //
-            // Decision table when canon.matched && candidates.length > 0:
-            //   top_relevance >= 0.08 → `exact_match` (technique + context covered)
-            //   top_relevance <  0.08 → `similar`     (technique published, context not)
+            // So: always force `exact_match` (the technique IS canonical) and
+            // append a contextual caveat when the top-ranked candidate has very
+            // low overlap with the hypothesis — flagging that the *application*
+            // may be less well-published than the method itself.
             const topRelevance = ranked[0]?.relevance ?? 0;
-            const CONTEXT_COVERAGE_THRESHOLD = 0.08;
-            if (canon.matched && candidates.length > 0) {
-              const targetSignal = topRelevance >= CONTEXT_COVERAGE_THRESHOLD ? "exact_match" : "similar";
-              const prevSignal = verdict.signal;
-              if (prevSignal !== targetSignal) {
-                console.log(JSON.stringify({
-                  run_id: runId, step: "canonical_calibration",
-                  technique: canon.technique, prev_signal: prevSignal,
-                  new_signal: targetSignal, top_relevance: topRelevance,
-                }));
-                verdict.signal = targetSignal;
-                verdict.semantic_overlap = targetSignal === "exact_match" ? "high" : "medium";
-                const contextNote = targetSignal === "similar"
-                  ? " However, the retrieved literature covers the technique generically; the specific context in this hypothesis does not appear well-represented."
-                  : "";
-                verdict.rationale = `${canon.rationale}${contextNote} ${verdict.rationale}`.trim();
-              }
+            const LOW_CONTEXT_OVERLAP = 0.05;
+            if (canon.matched && candidates.length > 0 && verdict.signal !== "exact_match") {
+              console.log(JSON.stringify({
+                run_id: runId, step: "canonical_override",
+                technique: canon.technique, prev_signal: verdict.signal,
+                top_relevance: topRelevance,
+                low_context: topRelevance < LOW_CONTEXT_OVERLAP,
+              }));
+              verdict.signal = "exact_match";
+              verdict.semantic_overlap = "high";
+              const contextNote = topRelevance < LOW_CONTEXT_OVERLAP
+                ? " Note: while the technique itself is canonical, the retrieved literature does not closely cover the specific context of this hypothesis — the *application* may be less well-published than the method."
+                : "";
+              verdict.rationale = `${canon.rationale}${contextNote} ${verdict.rationale}`.trim();
               if (!verdict.chosen || verdict.chosen.length === 0) {
                 verdict.chosen = candidates.slice(0, 3).map((_, i) => i);
               }
