@@ -33,6 +33,18 @@ Deno.test("RT superconductor: blocks ambient-pressure claim", () => {
   assertEquals(r.ok, false);
 });
 
+Deno.test("Abbe limit: blocks 8 nm protofilament resolution by confocal", () => {
+  const r = checkFeasibility("Standard confocal microscopy of GFP-tagged microtubules will resolve individual 8 nm protofilaments in live cells.");
+  assertEquals(r.ok, false);
+  assertEquals(r.principle, "Abbe diffraction limit");
+});
+
+Deno.test("Thermo: blocks N2 + H2O → NH3 with no energy input", () => {
+  const r = checkFeasibility("A room-temperature catalyst will convert atmospheric N₂ and H₂O into NH₃ at 95% yield with no external energy input.");
+  assertEquals(r.ok, false);
+  assertEquals(r.principle, "Thermodynamic violation (uphill reaction without energy input)");
+});
+
 Deno.test("Valid hypothesis: passes", () => {
   const r = checkFeasibility("Test whether resveratrol at 50 µM reduces proliferation of MCF-7 breast cancer cells.");
   assertEquals(r.ok, true);
