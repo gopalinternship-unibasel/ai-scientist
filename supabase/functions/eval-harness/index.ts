@@ -262,7 +262,9 @@ async function judge(hypothesis: string, plan: string, apiKey: string): Promise<
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "google/gemini-3.1-pro-preview",
+          // Judge runs on a different model family from the planner so judge
+          // errors are uncorrelated with planner errors — tighter eval CIs.
+          model: "openai/gpt-5",
           temperature: 0.0,
           messages: [
             { role: "system", content: "You are a strict, calibrated peer reviewer scoring an experiment plan on a 0-10 rubric across four axes. Be honest — most first-draft plans should score 5-7, not 9. Reserve 9-10 for plans you would publish as a worked example." },
