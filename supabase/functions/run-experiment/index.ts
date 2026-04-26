@@ -883,21 +883,31 @@ ${COST_CATALOG_PROMPT}`;
             }
             const critique = await critiquePlan(hypothesis, plan, LOVABLE_API_KEY, extraContext);
             if (critique) {
+              // Persist FIRST so the result is durable even if the client
+              // already disconnected (which would close the SSE controller
+              // and make `send` throw).
               await supabase.from("runs").update({ critique }).eq("id", runId);
-              send("critique", critique);
+              try { send("critique", critique); } catch { /* client gone */ }
             }
           } catch (e) {
             console.error("critique failed", e);
           }
 
-          controller.close();
+          try { controller.close(); } catch { /* already closed */ }
         } catch (e) {
           console.error("stream error", e);
+          // Only mark as failed if the run isn't already done. A late stream
+          // error (client disconnect after `done` was sent) must NOT demote
+          // a successful run to `failed`.
           if (runId) {
-            await supabase.from("runs").update({ status: "failed", error: encodeError("INTERNAL", "Internal error") }).eq("id", runId);
+            await supabase
+              .from("runs")
+              .update({ status: "failed", error: encodeError("INTERNAL", "Internal error") })
+              .eq("id", runId)
+              .neq("status", "done");
           }
           try { send("error", { message: "Internal error", kind: "INTERNAL" }); } catch { /* noop */ }
-          controller.close();
+          try { controller.close(); } catch { /* already closed */ }
         }
       },
     });
