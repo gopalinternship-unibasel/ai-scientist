@@ -527,7 +527,7 @@ serve(async (req) => {
         const closeStream = () => {
           if (!streamOpen) return;
           streamOpen = false;
-          try { closeStream(); } catch { /* already closed */ }
+          try { controller.close(); } catch { /* already closed */ }
         };
 
         // Heartbeat: literature QC can take >90s when external APIs are slow,
