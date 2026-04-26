@@ -538,7 +538,8 @@ serve(async (req) => {
         try {
           send("run", { id: runId, cached: !!cached });
 
-          // Cache hit — replay events instantly.
+          // Cache hit — replay events instantly. Skip the gate (any cached
+          // hypothesis was already gated on first run).
           if (cached) {
             send("qc", cached.qc);
             send("plan", cached.plan);
@@ -547,6 +548,24 @@ serve(async (req) => {
             stopHeartbeat();
             controller.close();
             return;
+          }
+
+          // LLM-backed gate runs HERE (not before the row insert) so the
+          // user has already navigated to /runs/:id and is watching a
+          // proper progress UI rather than an idle home screen.
+          if (!isRefinement) {
+            const verdict = await gateHypothesis(hypothesis, LOVABLE_API_KEY);
+            if (!verdict.ok) {
+              const msg = verdict.reason ?? "This input doesn't look like a testable hypothesis.";
+              await supabase.from("runs").update({
+                status: "failed",
+                error: encodeError("INTERNAL", msg),
+              }).eq("id", runId);
+              send("error", { message: msg, kind: "VALIDATION", suggestion: verdict.suggestion });
+              stopHeartbeat();
+              controller.close();
+              return;
+            }
           }
 
           // 1) Literature QC — multi-source (S2 + OpenAlex + PubMed) + semantic novelty.
