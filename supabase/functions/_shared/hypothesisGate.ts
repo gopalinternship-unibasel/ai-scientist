@@ -13,10 +13,14 @@ import { callAIWithFallback } from "./ai-fallback.ts";
 
 // Primary: cheapest classifier. Fallbacks add a different family (OpenAI) so
 // jailbreaks that exploit Gemini-specific patterns get a second-opinion catch.
+// Production logs show gemini-2.5-flash-lite frequently times out under load
+// on the gateway. gemini-3-flash-preview has been the most reliable starter,
+// so promote it. Keep two cross-family fallbacks but with a tight per-model
+// budget so a stalled provider can't burn 45s before we fall back open.
 const GATE_MODELS = [
-  "google/gemini-2.5-flash-lite",
   "google/gemini-3-flash-preview",
   "openai/gpt-5-nano",
+  "google/gemini-2.5-flash-lite",
 ];
 
 export interface GateVerdict {
