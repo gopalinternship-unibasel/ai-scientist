@@ -714,19 +714,22 @@ serve(async (req) => {
             //   top_relevance <  0.08 → `similar`     (technique published, context not)
             const topRelevance = ranked[0]?.relevance ?? 0;
             const CONTEXT_COVERAGE_THRESHOLD = 0.08;
-            if (canon.matched && candidates.length > 0 && verdict.signal !== "exact_match") {
-              const promoteTo = topRelevance >= CONTEXT_COVERAGE_THRESHOLD ? "exact_match" : "similar";
-              console.log(JSON.stringify({
-                run_id: runId, step: "canonical_override",
-                technique: canon.technique, prev_signal: verdict.signal,
-                promoted_to: promoteTo, top_relevance: topRelevance,
-              }));
-              verdict.signal = promoteTo;
-              verdict.semantic_overlap = promoteTo === "exact_match" ? "high" : "medium";
-              const contextNote = promoteTo === "similar"
-                ? " However, the available literature covers the technique generically; the specific context in this hypothesis does not appear well-represented in the retrieved papers."
-                : "";
-              verdict.rationale = `${canon.rationale}${contextNote} ${verdict.rationale}`.trim();
+            if (canon.matched && candidates.length > 0) {
+              const targetSignal = topRelevance >= CONTEXT_COVERAGE_THRESHOLD ? "exact_match" : "similar";
+              const prevSignal = verdict.signal;
+              if (prevSignal !== targetSignal) {
+                console.log(JSON.stringify({
+                  run_id: runId, step: "canonical_calibration",
+                  technique: canon.technique, prev_signal: prevSignal,
+                  new_signal: targetSignal, top_relevance: topRelevance,
+                }));
+                verdict.signal = targetSignal;
+                verdict.semantic_overlap = targetSignal === "exact_match" ? "high" : "medium";
+                const contextNote = targetSignal === "similar"
+                  ? " However, the retrieved literature covers the technique generically; the specific context in this hypothesis does not appear well-represented."
+                  : "";
+                verdict.rationale = `${canon.rationale}${contextNote} ${verdict.rationale}`.trim();
+              }
               if (!verdict.chosen || verdict.chosen.length === 0) {
                 verdict.chosen = candidates.slice(0, 3).map((_, i) => i);
               }
