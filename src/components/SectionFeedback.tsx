@@ -281,6 +281,21 @@ export const SectionFeedback = ({
                     )}
                   </div>
                   <div className="flex shrink-0 gap-1">
+                    {existing.correction && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 text-accent hover:text-accent"
+                        onClick={() => startReplay(existing.correction ?? "")}
+                        disabled={replaying}
+                        title="Re-run with this lesson"
+                        aria-label="Re-run with this lesson"
+                      >
+                        {replaying
+                          ? <Loader2 className="h-3 w-3 animate-spin" />
+                          : <Sparkles className="h-3 w-3" />}
+                      </Button>
+                    )}
                     <Button
                       variant="ghost"
                       size="icon"
