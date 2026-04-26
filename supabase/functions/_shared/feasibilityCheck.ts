@@ -116,7 +116,23 @@ const RULES: Rule[] = [
     explanation:
       "Standard mammalian media (DMEM/RPMI/MEM) are bicarbonate-buffered and require 5 % CO₂; cells will not survive ambient-air culture for the duration of a typical experiment.",
     suggestion:
-      "Use Leibovitz's L-15 medium (CO₂-independent, phosphate-buffered) or HEPES-supplemented media with s
+      "Use Leibovitz's L-15 medium (CO₂-independent, phosphate-buffered) or HEPES-supplemented media if you cannot use a CO₂ incubator.",
+  },
+  {
+    // Room-temperature superconductors at ambient pressure remain unverified
+    // (LK-99 etc. failed replication). Block claims to "demonstrate" or
+    // "measure" RT superconductivity in ordinary metals at 1 atm.
+    principle: "Room-temperature superconductivity at ambient pressure",
+    patterns: [
+      /\broom[-\s]?temperature\s+superconduct/i,
+      /\b(?:ambient\s+pressure|1\s*atm|atmospheric\s+pressure|standard\s+conditions)\b/i,
+    ],
+    explanation:
+      "No room-temperature superconductor at ambient pressure has been independently verified; designing an experiment that assumes the effect would yield a null result.",
+    suggestion:
+      "Reframe as a search/screening study (vary composition, temperature, pressure) with explicit controls and pre-registered null-result handling.",
+  },
+];
 
 export function checkFeasibility(hypothesis: string): FeasibilityResult {
   for (const rule of RULES) {
