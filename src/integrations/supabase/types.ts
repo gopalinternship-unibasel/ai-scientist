@@ -20,7 +20,9 @@ export type Database = {
           created_at: string
           domain: string | null
           dup_count: number
+          embedded_at: string | null
           embedding: string | null
+          embedding_attempts: number
           hidden: boolean
           hypothesis_excerpt: string | null
           id: string
@@ -36,7 +38,9 @@ export type Database = {
           created_at?: string
           domain?: string | null
           dup_count?: number
+          embedded_at?: string | null
           embedding?: string | null
+          embedding_attempts?: number
           hidden?: boolean
           hypothesis_excerpt?: string | null
           id?: string
@@ -52,7 +56,9 @@ export type Database = {
           created_at?: string
           domain?: string | null
           dup_count?: number
+          embedded_at?: string | null
           embedding?: string | null
+          embedding_attempts?: number
           hidden?: boolean
           hypothesis_excerpt?: string | null
           id?: string
@@ -112,6 +118,8 @@ export type Database = {
           qc: Json | null
           refinement_instruction: string | null
           share_token: string | null
+          solicit_reason: string | null
+          solicit_section: string | null
           status: Database["public"]["Enums"]["run_status"]
           updated_at: string
           version: number
@@ -133,6 +141,8 @@ export type Database = {
           qc?: Json | null
           refinement_instruction?: string | null
           share_token?: string | null
+          solicit_reason?: string | null
+          solicit_section?: string | null
           status?: Database["public"]["Enums"]["run_status"]
           updated_at?: string
           version?: number
@@ -154,6 +164,8 @@ export type Database = {
           qc?: Json | null
           refinement_instruction?: string | null
           share_token?: string | null
+          solicit_reason?: string | null
+          solicit_section?: string | null
           status?: Database["public"]["Enums"]["run_status"]
           updated_at?: string
           version?: number
@@ -168,6 +180,27 @@ export type Database = {
           },
         ]
       }
+      user_roles: {
+        Row: {
+          created_at: string
+          id: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -177,6 +210,7 @@ export type Database = {
       claim_anonymous_runs: { Args: { _owner_token: string }; Returns: number }
       cleanup_old_rate_limits: { Args: never; Returns: number }
       cleanup_stale_runs: { Args: never; Returns: number }
+      feedback_loop_stats: { Args: never; Returns: Json }
       find_duplicate_feedback: {
         Args: {
           _domain: string
@@ -186,6 +220,13 @@ export type Database = {
           _threshold?: number
         }
         Returns: string
+      }
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
       }
       match_plan_feedback: {
         Args: {
@@ -204,8 +245,23 @@ export type Database = {
           similarity: number
         }[]
       }
+      recent_feedback_for_moderation: {
+        Args: { _limit?: number }
+        Returns: {
+          correction: string
+          created_at: string
+          domain: string
+          dup_count: number
+          hidden: boolean
+          id: string
+          rating: number
+          run_id: string
+          section: string
+        }[]
+      }
     }
     Enums: {
+      app_role: "admin" | "moderator" | "user"
       run_status: "pending" | "qc" | "plan" | "done" | "failed"
     }
     CompositeTypes: {
@@ -334,6 +390,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
+      app_role: ["admin", "moderator", "user"],
       run_status: ["pending", "qc", "plan", "done", "failed"],
     },
   },
