@@ -33,8 +33,11 @@ export interface LitResult {
 }
 
 const UA = "AI-Scientist/1.0 (Lovable)";
-const DEFAULT_TIMEOUT = 8000;
-const DEGRADED_TIMEOUT = 4000; // shorter timeout for retry queries
+// Keep literature QC snappy for live demos: all sources are best-effort, and
+// each source has degraded fallback queries, so long per-source waits hurt UX
+// more than they improve recall.
+const DEFAULT_TIMEOUT = 4500;
+const DEGRADED_TIMEOUT = 2500;
 
 async function searchS2(q: string, timeoutMs = DEFAULT_TIMEOUT): Promise<LitPaper[]> {
   const url = new URL("https://api.semanticscholar.org/graph/v1/paper/search");

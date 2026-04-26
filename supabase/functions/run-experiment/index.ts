@@ -112,6 +112,8 @@ async function classifyNovelty(hypothesis: string, papers: LitPaper[], apiKey: s
     apiKey,
     models: FAST_MODELS,
     label: "novelty-classify",
+    retries: 0,
+    timeoutMs: 20_000,
     buildBody: (model) => ({
       model,
       messages: [
@@ -860,8 +862,10 @@ serve(async (req) => {
           }).eq("id", runId);
           send("plan", planObj);
           send("done", { id: runId });
+          stopHeartbeat();
+          try { controller.close(); } catch { /* already closed */ }
 
-          // 3) Reviewer critique pass (best-effort, fire-and-forget after main plan is sent).
+          // 3) Reviewer critique pass (best-effort, async after the user-facing stream closes).
           //    Feed catalog-mismatch findings as extra reviewer context so the
           //    critique surfaces wrong-form / wrong-cat# materials concretely.
           try {
@@ -926,18 +930,13 @@ serve(async (req) => {
 
             const critique = await critiquePlan(hypothesis, plan, LOVABLE_API_KEY, extraContext, feedbackHints);
             if (critique) {
-              // Persist FIRST so the result is durable even if the client
-              // already disconnected (which would close the SSE controller
-              // and make `send` throw).
               await supabase.from("runs").update({ critique }).eq("id", runId);
-              try { send("critique", critique); } catch { /* client gone */ }
             }
           } catch (e) {
             console.error("critique failed", e);
           }
 
-          stopHeartbeat();
-          try { controller.close(); } catch { /* already closed */ }
+          return;
         } catch (e) {
           console.error("stream error", e);
           stopHeartbeat();
