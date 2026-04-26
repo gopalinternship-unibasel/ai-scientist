@@ -240,6 +240,13 @@ export const ExperimentPlanView = ({
     return map;
   }, [appliedFeedback]);
 
+  // Flat id → entry lookup for inline per-row attribution (✨ marker).
+  const lessonsById = useMemo(() => {
+    const m = new Map<string, AppliedFeedbackEntry>();
+    for (const e of appliedFeedback ?? []) m.set(e.id, e);
+    return m;
+  }, [appliedFeedback]);
+
   // Helper: render the badge + feedback button for a given section.
   const fb = (section: FeedbackSection) => {
     const lessons = lessonsBySection.get(section) ?? [];
