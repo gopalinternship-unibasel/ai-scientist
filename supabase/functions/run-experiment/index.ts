@@ -1,12 +1,12 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
-import { COST_CATALOG_PROMPT } from "./cost-catalog.ts";
+
 import { corsHeaders } from "../_shared/cors.ts";
 import { fetchWithRetry } from "../_shared/fetch-with-retry.ts";
 import { sanitizeCitationsWithReport } from "../_shared/citations.ts";
 import { checkHypothesis } from "../_shared/hypothesisValidation.ts";
 import { searchLiterature, type LitPaper } from "../_shared/literature.ts";
-import { screenSafety, safetyPromptFragment } from "../_shared/safety.ts";
+import { screenSafety } from "../_shared/safety.ts";
 import {
   callAIWithFallback, PLAN_MODELS, FAST_MODELS,
   classifyHttpError, encodeError, type ErrorKind,
@@ -20,163 +20,9 @@ import { checkTimelineConsistency } from "../_shared/timelineCheck.ts";
 import { verifyMaterialsLive } from "../_shared/skuVerify.ts";
 import { retrieveRelevantFeedback, feedbackPromptFragment, type FeedbackHint } from "../_shared/feedbackRetrieval.ts";
 import { normalizeDomain, resolveDomain } from "../_shared/domainNormalize.ts";
-import { fetchHouseRules, houseRulesPromptFragment } from "../_shared/houseRules.ts";
+import { fetchHouseRules } from "../_shared/houseRules.ts";
+import { planSchema, buildPlannerSystemPrompt, buildPlannerUserMessage } from "../_shared/plannerCore.ts";
 
-const planSchema = {
-  type: "object",
-  properties: {
-    title: { type: "string" },
-    domain: { type: "string" },
-    summary: { type: "string" },
-    hypothesis_restated: { type: "string" },
-    success_criteria: { type: "array", items: { type: "string" } },
-    protocol: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          step: { type: "integer" },
-          title: { type: "string" },
-          description: { type: "string" },
-          duration: { type: "string" },
-          source: { type: "string" },
-          // Inline lesson attribution: ids from LEARNED CORRECTIONS / HOUSE RULES
-          // that directly shaped this step. Lets the UI show a ✨ on the row.
-          applied_lessons: { type: "array", items: { type: "string" } },
-        },
-        required: ["step", "title", "description", "duration"],
-        additionalProperties: false,
-      },
-    },
-    materials: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          name: { type: "string" },
-          supplier: { type: "string" },
-          catalog_number: { type: "string" },
-          quantity: { type: "string" },
-          unit_cost_usd: { type: "number" },
-          total_cost_usd: { type: "number" },
-          notes: { type: "string" },
-          applied_lessons: { type: "array", items: { type: "string" } },
-        },
-        required: ["name", "supplier", "quantity", "unit_cost_usd", "total_cost_usd"],
-        additionalProperties: false,
-      },
-    },
-    budget: {
-      type: "object",
-      properties: {
-        currency: { type: "string", enum: ["USD"] },
-        line_items: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              category: { type: "string" },
-              amount_usd: { type: "number" },
-              note: { type: "string" },
-            },
-            required: ["category", "amount_usd"],
-            additionalProperties: false,
-          },
-        },
-        total_usd: { type: "number" },
-      },
-      required: ["currency", "line_items", "total_usd"],
-      additionalProperties: false,
-    },
-    timeline: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          phase: { type: "string" },
-          duration: { type: "string" },
-          deliverables: { type: "array", items: { type: "string" } },
-          dependencies: { type: "array", items: { type: "string" } },
-        },
-        required: ["phase", "duration", "deliverables"],
-        additionalProperties: false,
-      },
-    },
-    validation: {
-      type: "object",
-      properties: {
-        approach: { type: "string" },
-        primary_metric: { type: "string" },
-        controls: { type: "array", items: { type: "string" } },
-        statistical_plan: { type: "string" },
-      },
-      required: ["approach", "primary_metric", "controls"],
-      additionalProperties: false,
-    },
-    statistical_design: {
-      type: "object",
-      description: "Structured statistical design — required for reviewer scrutiny.",
-      properties: {
-        n_per_group: { type: "integer", minimum: 1 },
-        groups: { type: "array", items: { type: "string" } },
-        primary_test: { type: "string" },
-        effect_size: { type: "string" },
-        alpha: { type: "number" },
-        power: { type: "number" },
-        randomization: { type: "string" },
-        blinding: { type: "string" },
-        notes: { type: "string" },
-      },
-      required: ["n_per_group", "groups", "primary_test", "effect_size", "alpha", "power", "randomization", "blinding"],
-      additionalProperties: false,
-    },
-    safety: {
-      type: "object",
-      description: "Safety / regulatory section. Address each flagged category from the SAFETY PRE-SCREEN.",
-      properties: {
-        biosafety_level: { type: "string", enum: ["BSL-1", "BSL-2", "BSL-3", "BSL-4", "Not applicable"] },
-        irb_required: { type: "boolean" },
-        iacuc_required: { type: "boolean" },
-        ibc_required: { type: "boolean" },
-        controlled_substances: { type: "boolean" },
-        hazards: { type: "array", items: { type: "string" } },
-        ppe: { type: "array", items: { type: "string" } },
-        waste_handling: { type: "string" },
-        emergency_procedure: { type: "string" },
-      },
-      required: ["biosafety_level", "irb_required", "iacuc_required", "ibc_required", "controlled_substances", "hazards", "ppe", "waste_handling", "emergency_procedure"],
-      additionalProperties: false,
-    },
-    risks: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          risk: { type: "string" },
-          mitigation: { type: "string" },
-          applied_lessons: { type: "array", items: { type: "string" } },
-        },
-        required: ["risk", "mitigation"],
-        additionalProperties: false,
-      },
-    },
-    team: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: { role: { type: "string" }, fte: { type: "number" } },
-        required: ["role", "fte"],
-        additionalProperties: false,
-      },
-    },
-  },
-  required: [
-    "title", "domain", "summary", "hypothesis_restated", "success_criteria",
-    "protocol", "materials", "budget", "timeline", "validation",
-    "statistical_design", "safety", "risks", "team",
-  ],
-  additionalProperties: false,
-} as const;
 
 const critiqueSchema = {
   type: "object",
@@ -832,7 +678,6 @@ serve(async (req) => {
           // House rules: stable, distilled per-domain conventions. Cheap to
           // fetch (single indexed query). Best-effort — empty fragment if none.
           const houseRules = await fetchHouseRules(supabase, domainGuess);
-          const houseRulesContext = houseRulesPromptFragment(houseRules, domainGuess);
           if (houseRules.length > 0) {
             console.log(JSON.stringify({
               run_id: runId, step: "house_rules_injected",
@@ -841,30 +686,20 @@ serve(async (req) => {
           }
 
           // 2) Plan generation (streamed)
-          const refContext = references.length
-            ? `\n\nKNOWN RELATED WORK — use ONLY the strict canonical citation format:\n  • Bare reference:   [N]\n  • Multiple refs:    (see [N, M])\n  • DO NOT use any other form ((ref. 1), [ref. 1], (1), etc.)\n${references.map((r: Reference, i: number) => `[${i + 1}] ${r.title} (${r.year ?? "n.d."}) — ${r.url ?? ""}`).join("\n")}`
-            : "";
-
+          // Refinement context is the only piece NOT shared with the eval
+          // harness — refinements are user-driven and have no eval analogue.
           const refinementContext = isRefinement
             ? `\n\nREFINEMENT REQUEST — the user has an existing plan and wants you to revise it according to this instruction. Honour it strictly while keeping everything else operationally sound:\n"""${refinementInstruction}"""\n\nPREVIOUS PLAN (for context — do not repeat verbatim, produce a NEW complete plan reflecting the refinement):\n${JSON.stringify(parentRun?.plan).slice(0, 8000)}`
             : "";
 
-          const system = `You are a senior scientist at a Contract Research Organisation. You convert a hypothesis into a complete, operationally realistic experiment plan that a real lab could pick up Monday and start running by Friday.
-
-REQUIREMENTS:
-- Ground the protocol in real, published methods (protocols.io, Bio-protocol, Nature Protocols, JOVE, OpenWetWare).
-- Materials must include real suppliers (Sigma-Aldrich, Thermo Fisher, Promega, Qiagen, IDT, ATCC, Addgene). Catalog numbers MUST be ones you are confident exist on the supplier's site — if you are uncertain, set catalog_number to "Custom" or omit it. Do NOT fabricate plausible-looking SKUs. Sigma SKUs follow patterns like T9531, PHR1084-1G; Thermo Fisher uses 7–9 digit numbers (11965092) or letter+digits (A3160401); IDT Alt-R reagents are 1081xxx; ATCC uses CCL-2, CRL-3216, HTB-22.
-- Budget MUST be anchored to the REFERENCE COST CATALOG below — do not invent prices that are wildly off (>20%).
-- Budget total MUST equal the sum of line items, and line items must roughly equal materials subtotal + labour + equipment + overhead.
-- CITATIONS: Use ONLY the canonical format \`[N]\` (or \`(see [N, M])\` for multiples). N must be a 1-based index into the KNOWN RELATED WORK list. Never invent reference numbers; never use prose forms like "(ref. 1)" or "(see reference 1)".
-- Timeline must be phased with explicit dependencies.
-- The 'validation' section gives the qualitative approach.
-- The 'statistical_design' section MUST be filled with a real power calculation: n_per_group justified by effect_size, alpha (typically 0.05), power (typically 0.8), randomization scheme, blinding strategy.
-- The 'safety' section MUST be filled — biosafety_level, IRB/IACUC/IBC requirements, controlled substances, hazards, PPE, waste handling, emergency procedure. Address every category flagged in the SAFETY PRE-SCREEN below.
-- Risks must be specific, not generic.
-- Be precise. Use exact concentrations, volumes, durations.
-${safetyPromptFragment(safetyFlags)}
-${COST_CATALOG_PROMPT}${houseRulesContext}${feedbackContext}`;
+          const system = buildPlannerSystemPrompt({
+            safetyFlags,
+            houseRules,
+            feedbackHints,
+            domain: domainGuess,
+          });
+          const userMessage = buildPlannerUserMessage({ hypothesis, references })
+            .replace(/\n\nProduce the full experiment plan\.$/, `${refinementContext}\n\nProduce the full experiment plan.`);
 
 
           // Streaming plan generation with model fallback. Once tokens are
@@ -881,7 +716,7 @@ ${COST_CATALOG_PROMPT}${houseRulesContext}${feedbackContext}`;
               temperature: 0.2,
               messages: [
                 { role: "system", content: system },
-                { role: "user", content: `HYPOTHESIS:\n${hypothesis}${refContext}${refinementContext}\n\nProduce the full experiment plan.` },
+                { role: "user", content: userMessage },
               ],
               tools: [{
                 type: "function",
