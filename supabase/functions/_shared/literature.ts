@@ -165,39 +165,48 @@ function titleKey(t: string): string {
   return t.toLowerCase().replace(/[^a-z0-9 ]+/g, "").replace(/\s+/g, " ").trim().slice(0, 80);
 }
 
-/** Run S2 + OpenAlex + PubMed in parallel for a single query string. */
-async function runOnce(q: string) {
-  const [s2, oa, pm] = await Promise.allSettled([
-    searchS2(q),
-    searchOpenAlex(q),
-    searchPubMed(q),
-  ]);
-  return {
-    s2: s2.status === "fulfilled" ? s2.value : [],
-    oa: oa.status === "fulfilled" ? oa.value : [],
-    pm: pm.status === "fulfilled" ? pm.value : [],
-    s2Status: s2.status, oaStatus: oa.status, pmStatus: pm.status,
-  };
+/**
+ * For a single source, try each query in order until one returns results.
+ * Uses shorter timeouts for degraded (non-first) queries.
+ */
+async function searchSourceWithFallback(
+  sourceFn: (q: string, t: number) => Promise<LitPaper[]>,
+  queries: string[],
+): Promise<{ papers: LitPaper[]; status: PromiseSettledResult<LitPaper[]>["status"] }> {
+  for (let i = 0; i < queries.length; i++) {
+    const timeout = i === 0 ? DEFAULT_TIMEOUT : DEGRADED_TIMEOUT;
+    try {
+      const papers = await sourceFn(queries[i], timeout);
+      if (papers.length > 0) return { papers, status: "fulfilled" };
+    } catch {
+      if (i === queries.length - 1) return { papers: [], status: "rejected" };
+    }
+  }
+  return { papers: [], status: "fulfilled" };
 }
 
 export async function searchLiterature(query: string): Promise<LitResult> {
-  // Try the full hypothesis first; if it returns nothing across all sources,
-  // back off to progressively-broader keyword queries (e.g. "PCR GAPDH human"
-  // → "PCR GAPDH"). This rescues the common failure mode where a precisely
-  // worded sentence finds zero keyword matches in any database.
+  // Fire all three sources in parallel. Each source independently tries
+  // degraded queries, so worst-case wall-time = max(single-source cascade)
+  // instead of sum(all-sources × all-queries).
   const queries = degradedQueries(query);
-  let attempt: Awaited<ReturnType<typeof runOnce>> | null = null;
-  let usedQueryIdx = 0;
-  for (let i = 0; i < queries.length; i++) {
-    attempt = await runOnce(queries[i]);
-    const total = attempt.s2.length + attempt.oa.length + attempt.pm.length;
-    if (total > 0) { usedQueryIdx = i; break; }
-    usedQueryIdx = i;
-  }
-  // attempt is non-null because queries always has ≥1 entry
-  const { s2: s2Papers, oa: oaPapers, pm: pmPapers, s2Status, oaStatus, pmStatus } = attempt!;
-  if (usedQueryIdx > 0) {
-    console.log(`[literature] degraded query #${usedQueryIdx}: "${queries[usedQueryIdx]}" recovered ${s2Papers.length + oaPapers.length + pmPapers.length} hits`);
+
+  const [s2Result, oaResult, pmResult] = await Promise.all([
+    searchSourceWithFallback(searchS2, queries),
+    searchSourceWithFallback(searchOpenAlex, queries),
+    searchSourceWithFallback(searchPubMed, queries),
+  ]);
+
+  const s2Papers = s2Result.papers;
+  const oaPapers = oaResult.papers;
+  const pmPapers = pmResult.papers;
+  const s2Status = s2Result.status;
+  const oaStatus = oaResult.status;
+  const pmStatus = pmResult.status;
+
+  const total = s2Papers.length + oaPapers.length + pmPapers.length;
+  if (total > 0 && queries.length > 1) {
+    console.log(`[literature] parallel degraded search recovered ${total} hits`);
   }
 
   // Dedup priority: prefer the source with abstract (S2 / OpenAlex over PubMed).
