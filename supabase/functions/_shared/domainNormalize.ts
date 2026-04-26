@@ -96,14 +96,17 @@ export async function classifyDomainWithLLM(
   if (!text.trim() || !apiKey) return "other";
   const snippet = text.slice(0, 1500);
   try {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(new Error("domain-classify timed out after 5000ms")), 5_000);
     const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
+      signal: ac.signal,
       headers: {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-2.5-flash-lite",
+        model: "google/gemini-3-flash-preview",
         messages: [
           {
             role: "system",
@@ -127,7 +130,7 @@ export async function classifyDomainWithLLM(
         }],
         tool_choice: { type: "function", function: { name: "classify_domain" } },
       }),
-    });
+    }).finally(() => clearTimeout(timer));
     if (!res.ok) return "other";
     const j = await res.json();
     const args = j?.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments;
