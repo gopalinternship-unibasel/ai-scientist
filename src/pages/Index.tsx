@@ -44,8 +44,16 @@ const Index = () => {
                   action: { label: "Sign in", onClick: () => navigate("/auth") },
                   duration: 8000,
                 });
+              } else if (e.kind === "VALIDATION") {
+                // Show the actionable suggestion alongside the error so the
+                // user knows how to fix a vague / non-scientific / infeasible
+                // hypothesis instead of staring at a bare rejection.
+                toast.error(e.message, {
+                  description: e.suggestion,
+                  duration: 12000,
+                });
               } else {
-                toast.error(e.message);
+                toast.error(e.message, { description: e.suggestion });
               }
               setSubmitting(false);
               break;
