@@ -1,11 +1,6 @@
-import { Beaker } from "lucide-react";
-
 export const Logo = ({ className = "" }: { className?: string }) => (
-  <div className={`flex items-center gap-2.5 ${className}`}>
-    <div className="relative flex h-9 w-9 items-center justify-center rounded-md bg-primary text-primary-foreground shadow-soft">
-      <Beaker className="h-4 w-4" strokeWidth={2.25} />
-      <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-accent" />
-    </div>
+  <div className={`flex items-center gap-3 ${className}`}>
+    <LogoMark />
     <div className="leading-tight">
       <div className="font-serif text-[17px] font-semibold tracking-tight text-foreground">
         The AI Scientist
@@ -15,4 +10,46 @@ export const Logo = ({ className = "" }: { className?: string }) => (
       </div>
     </div>
   </div>
+);
+
+export const LogoMark = ({ size = 36 }: { size?: number }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 40 40"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    aria-label="The AI Scientist"
+    className="shrink-0"
+  >
+    {/* Outer ring — the "scientific instrument" frame */}
+    <circle
+      cx="20"
+      cy="20"
+      r="18.5"
+      stroke="hsl(var(--primary))"
+      strokeWidth="1.25"
+    />
+    {/* Inner tick marks — like a dial / petri dish gradations */}
+    <g stroke="hsl(var(--primary))" strokeWidth="1" strokeLinecap="round" opacity="0.45">
+      <line x1="20" y1="2.5" x2="20" y2="5" />
+      <line x1="20" y1="35" x2="20" y2="37.5" />
+      <line x1="2.5" y1="20" x2="5" y2="20" />
+      <line x1="35" y1="20" x2="37.5" y2="20" />
+    </g>
+    {/* Atom / orbit — single elegant ellipse rotated */}
+    <ellipse
+      cx="20"
+      cy="20"
+      rx="11"
+      ry="4.5"
+      stroke="hsl(var(--primary))"
+      strokeWidth="1.25"
+      transform="rotate(-30 20 20)"
+    />
+    {/* Nucleus */}
+    <circle cx="20" cy="20" r="2.25" fill="hsl(var(--primary))" />
+    {/* Accent electron — a spark of discovery */}
+    <circle cx="29.5" cy="14.5" r="1.6" fill="hsl(var(--accent))" />
+  </svg>
 );
