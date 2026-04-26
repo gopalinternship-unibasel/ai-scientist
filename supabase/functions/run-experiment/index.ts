@@ -992,6 +992,30 @@ ${COST_CATALOG_PROMPT}${feedbackContext}`;
                 timeline: timelineIssue?.reason ?? null,
               }));
             }
+            // Active solicitation: when the deterministic checks flagged
+            // something, persist the section we're least sure about so the
+            // UI can auto-pop the feedback popover and ask the user about
+            // it specifically. We pick the *first* signal we get; the UI
+            // dismisses on first interaction so it never nags.
+            let solicitSection: string | null = null;
+            let solicitReason: string | null = null;
+            if (skuIssues.length || catIssues.length) {
+              solicitSection = "materials";
+              const first = skuIssues[0] ?? catIssues[0];
+              const name = (first as { declared_name?: string })?.declared_name ?? "a material";
+              solicitReason = `We weren't able to fully verify "${name}" against the supplier's live catalog. If you know the right SKU, leaving a quick correction will improve future plans for similar experiments.`;
+            } else if (timelineIssue) {
+              solicitSection = "timeline";
+              solicitReason = `Our pre-checks flagged a timeline inconsistency (${timelineIssue.reason}). If you have firsthand experience with this protocol, your correction will help future plans.`;
+            }
+            if (solicitSection) {
+              await supabase
+                .from("runs")
+                // deno-lint-ignore no-explicit-any
+                .update({ solicit_section: solicitSection, solicit_reason: solicitReason } as any)
+                .eq("id", runId);
+            }
+
             const critique = await critiquePlan(hypothesis, plan, LOVABLE_API_KEY, extraContext);
             if (critique) {
               // Persist FIRST so the result is durable even if the client
