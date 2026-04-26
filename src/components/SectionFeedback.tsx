@@ -216,9 +216,27 @@ export const SectionFeedback = ({
       </PopoverTrigger>
       <PopoverContent align="end" className="w-80 p-4">
         {submitted ? (
-          <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
-            <Check className="h-4 w-4 text-primary" />
-            Thanks — your correction is in the loop.
+          <div className="flex flex-col items-center gap-3 py-4 text-center">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Check className="h-4 w-4 text-primary" />
+              Thanks — your correction is in the loop.
+            </div>
+            {correction.trim().length >= 8 && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                onClick={() => startReplay(correction)}
+                disabled={replaying}
+              >
+                {replaying ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Sparkles className="h-3 w-3 text-accent" />
+                )}
+                Re-run with this lesson
+              </Button>
+            )}
           </div>
         ) : (
           <>
