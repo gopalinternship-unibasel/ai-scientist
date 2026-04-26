@@ -18,6 +18,7 @@ import { detectCanonicalTechnique } from "../_shared/canonicalTechniques.ts";
 import { rankByRelevance } from "../_shared/relevanceRank.ts";
 import { checkTimelineConsistency } from "../_shared/timelineCheck.ts";
 import { verifyMaterialsLive } from "../_shared/skuVerify.ts";
+import { retrieveRelevantFeedback, feedbackPromptFragment } from "../_shared/feedbackRetrieval.ts";
 
 const planSchema = {
   type: "object",
