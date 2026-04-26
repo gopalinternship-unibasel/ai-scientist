@@ -47,6 +47,7 @@ const RULES: Rule[] = [
       "Use STED, PALM/STORM, SIM, expansion microscopy, or relax the target to ~200 nm+ for standard confocal imaging.",
   },
   {
+    principle: "Faster-than-light signalling",
     patterns: [
       /\b(?:faster[-\s]than[-\s]light|greater\s+than\s+(?:the\s+speed\s+of\s+)?light|superluminal|FTL)\b/i,
     ],
