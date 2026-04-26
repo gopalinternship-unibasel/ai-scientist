@@ -451,7 +451,7 @@ serve(async (req) => {
             start(controller) {
               controller.enqueue(enc.encode(`event: run\ndata: ${JSON.stringify({ id: pending.id, cached: false, in_flight: true })}\n\n`));
               controller.enqueue(enc.encode(`event: done\ndata: ${JSON.stringify({ id: pending.id })}\n\n`));
-              controller.close();
+              closeStream();
             },
           });
           return new Response(stream, {
@@ -527,7 +527,7 @@ serve(async (req) => {
         const closeStream = () => {
           if (!streamOpen) return;
           streamOpen = false;
-          try { controller.close(); } catch { /* already closed */ }
+          try { closeStream(); } catch { /* already closed */ }
         };
 
         // Heartbeat: literature QC can take >90s when external APIs are slow,
@@ -557,10 +557,12 @@ serve(async (req) => {
             if (cached.critique) send("critique", cached.critique);
             send("done", { id: runId });
             stopHeartbeat();
-            controller.close();
+            closeStream();
             return;
           }
 
+          const processRun = async () => {
+            try {
           // LLM-backed gate runs HERE (not before the row insert) so the
           // user has already navigated to /runs/:id and is watching a
           // proper progress UI rather than an idle home screen.
@@ -574,7 +576,7 @@ serve(async (req) => {
               }).eq("id", runId);
               send("error", { message: msg, kind: "VALIDATION", suggestion: verdict.suggestion });
               stopHeartbeat();
-              controller.close();
+              closeStream();
               return;
             }
           }
@@ -800,7 +802,7 @@ serve(async (req) => {
             await supabase.from("runs").update({ status: "failed", error: encodeError(kind, msg) }).eq("id", runId);
             send("error", { message: msg, kind });
             stopHeartbeat();
-            controller.close();
+            closeStream();
             return;
           }
 
@@ -854,7 +856,7 @@ serve(async (req) => {
             await supabase.from("runs").update({ status: "failed", error: encodeError("PARSE", "Model returned malformed plan.") }).eq("id", runId);
             send("error", { message: "Model returned malformed plan.", kind: "PARSE" });
             stopHeartbeat();
-            controller.close();
+            closeStream();
             return;
           }
 
@@ -885,7 +887,7 @@ serve(async (req) => {
           send("plan", planObj);
           send("done", { id: runId });
           stopHeartbeat();
-          try { controller.close(); } catch { /* already closed */ }
+          try { closeStream(); } catch { /* already closed */ }
 
           // 3) Reviewer critique pass (best-effort, async after the user-facing stream closes).
           //    Feed catalog-mismatch findings as extra reviewer context so the
@@ -958,6 +960,26 @@ serve(async (req) => {
             console.error("critique failed", e);
           }
 
+            return;
+            } catch (e) {
+              console.error("background run error", e);
+              stopHeartbeat();
+              if (runId) {
+                await supabase
+                  .from("runs")
+                  .update({ status: "failed", error: encodeError("INTERNAL", "Internal error") })
+                  .eq("id", runId)
+                  .neq("status", "done");
+              }
+              send("error", { message: "Internal error", kind: "INTERNAL" });
+            }
+          };
+
+          const background = processRun();
+          const waitUntil = (globalThis as { EdgeRuntime?: { waitUntil?: (promise: Promise<unknown>) => void } })
+            .EdgeRuntime?.waitUntil;
+          if (waitUntil) waitUntil(background);
+          closeStream();
           return;
         } catch (e) {
           console.error("stream error", e);
@@ -973,7 +995,7 @@ serve(async (req) => {
               .neq("status", "done");
           }
           try { send("error", { message: "Internal error", kind: "INTERNAL" }); } catch { /* noop */ }
-          try { controller.close(); } catch { /* already closed */ }
+          try { closeStream(); } catch { /* already closed */ }
         }
       },
     });
