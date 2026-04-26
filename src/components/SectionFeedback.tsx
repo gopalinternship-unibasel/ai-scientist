@@ -2,8 +2,11 @@
 // (1–5 stars) and submit a structured correction. Submissions feed the
 // cross-run learning loop: future plans for similar experiments retrieve
 // these corrections as few-shot guidance for the planner.
-import { useState } from "react";
-import { MessageSquarePlus, Star, Check, Loader2 } from "lucide-react";
+//
+// Owners can also edit or delete their previous feedback on this section
+// (RLS-enforced server-side via owner_token / owner_user_id).
+import { useEffect, useState } from "react";
+import { MessageSquarePlus, Star, Check, Loader2, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -28,6 +31,12 @@ interface Props {
   compact?: boolean;
 }
 
+interface ExistingFeedback {
+  id: string;
+  rating: number | null;
+  correction: string | null;
+}
+
 export const SectionFeedback = ({
   runId, section, domain, hypothesis, ownerUserId, compact = true,
 }: Props) => {
@@ -36,11 +45,64 @@ export const SectionFeedback = ({
   const [correction, setCorrection] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  // Editing mode for an existing feedback row owned by this user.
+  const [existing, setExisting] = useState<ExistingFeedback | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const reset = () => {
     setRating(null);
     setCorrection("");
     setSubmitted(false);
+    setEditingId(null);
+  };
+
+  // When opened, look up the owner's most recent feedback on this section so
+  // they can edit or delete it instead of being forced to add yet another row.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    (async () => {
+      const ownerToken = getOwnerToken();
+      const q = supabase
+        .from("plan_feedback")
+        .select("id, rating, correction")
+        .eq("run_id", runId)
+        .eq("section", section)
+        .order("created_at", { ascending: false })
+        .limit(1);
+      // RLS already restricts to owner; the explicit filter is a small belt-
+      // and-braces optimisation.
+      const filtered = ownerUserId
+        ? q.eq("owner_user_id", ownerUserId)
+        : q.eq("owner_token", ownerToken);
+      const { data, error } = await filtered;
+      if (cancelled || error) return;
+      setExisting(data?.[0] ?? null);
+    })();
+    return () => { cancelled = true; };
+  }, [open, runId, section, ownerUserId]);
+
+  const startEdit = () => {
+    if (!existing) return;
+    setEditingId(existing.id);
+    setRating(existing.rating);
+    setCorrection(existing.correction ?? "");
+  };
+
+  const remove = async () => {
+    if (!existing) return;
+    if (!confirm("Delete this feedback? It will no longer be used to guide future plans.")) return;
+    const { error } = await supabase
+      .from("plan_feedback")
+      .delete()
+      .eq("id", existing.id);
+    if (error) {
+      toast.error("Could not delete feedback");
+      return;
+    }
+    toast.success("Feedback removed");
+    setExisting(null);
+    reset();
   };
 
   const submit = async () => {
@@ -49,8 +111,6 @@ export const SectionFeedback = ({
       toast.error("Add a rating or a correction");
       return;
     }
-    // Length / spam validation only when there's a correction body — a
-    // bare rating with no text is a valid signal too.
     if (trimmed) {
       const reason = validateCorrection(trimmed);
       if (reason) { toast.error(reason); return; }
@@ -58,38 +118,59 @@ export const SectionFeedback = ({
     setSubmitting(true);
     try {
       const ownerToken = getOwnerToken();
-      // Normalise domain into the controlled vocabulary so cross-run
-      // retrieval can do an exact match instead of a fuzzy compare.
       const canonicalDomain = normalizeDomain(domain, hypothesis);
-      const payload: Record<string, unknown> = {
-        run_id: runId,
-        section,
-        rating,
-        correction: trimmed || null,
-        domain: canonicalDomain,
-        hypothesis_excerpt: (hypothesis ?? "").slice(0, 500) || null,
-        owner_token: ownerToken,
-        owner_user_id: ownerUserId ?? null,
-      };
-      const { data: inserted, error } = await supabase
-        .from("plan_feedback")
-        // deno-lint-ignore no-explicit-any
-        .insert(payload as any)
-        .select("id")
-        .single();
-      if (error) throw error;
-      // Fire-and-forget: embed the new row so future plans can match it
-      // semantically. Failure here doesn't block the user — the row is saved.
-      if (inserted?.id) {
-        supabase.functions.invoke("embed-feedback", {
-          body: { feedback_id: inserted.id },
-        }).catch((e) => console.warn("embed-feedback invoke failed", e));
+
+      if (editingId) {
+        // EDIT path — re-embed since the correction text may have changed.
+        const { error } = await supabase
+          .from("plan_feedback")
+          .update({
+            rating,
+            correction: trimmed || null,
+            // Clearing embedding triggers a fresh embed pass below; otherwise
+            // the row would still match against the old text.
+            embedding: null,
+          })
+          .eq("id", editingId);
+        if (error) throw error;
+        if (trimmed) {
+          supabase.functions.invoke("embed-feedback", {
+            body: { feedback_id: editingId },
+          }).catch((e) => console.warn("embed-feedback invoke failed", e));
+        }
+      } else {
+        // CREATE path
+        const payload: Record<string, unknown> = {
+          run_id: runId,
+          section,
+          rating,
+          correction: trimmed || null,
+          domain: canonicalDomain,
+          hypothesis_excerpt: (hypothesis ?? "").slice(0, 500) || null,
+          owner_token: ownerToken,
+          owner_user_id: ownerUserId ?? null,
+        };
+        const { data: inserted, error } = await supabase
+          .from("plan_feedback")
+          // deno-lint-ignore no-explicit-any
+          .insert(payload as any)
+          .select("id")
+          .single();
+        if (error) throw error;
+        if (inserted?.id) {
+          supabase.functions.invoke("embed-feedback", {
+            body: { feedback_id: inserted.id },
+          }).catch((e) => console.warn("embed-feedback invoke failed", e));
+        }
       }
+
       setSubmitted(true);
-      toast.success("Feedback recorded — future plans will learn from this.");
+      toast.success(editingId
+        ? "Feedback updated."
+        : "Feedback recorded — future plans will learn from this.");
       setTimeout(() => { setOpen(false); reset(); }, 1200);
     } catch (e) {
-      console.error("feedback insert failed", e);
+      console.error("feedback save failed", e);
       toast.error("Could not save feedback");
     } finally {
       setSubmitting(false);
@@ -121,11 +202,70 @@ export const SectionFeedback = ({
         ) : (
           <>
             <div className="mb-3">
-              <div className="text-sm font-medium capitalize">{section} feedback</div>
+              <div className="text-sm font-medium capitalize">
+                {editingId ? `Edit ${section} feedback` : `${section} feedback`}
+              </div>
               <p className="mt-0.5 text-xs text-muted-foreground">
                 Rate this section and/or describe what should change. Future plans for similar experiments will use this.
               </p>
             </div>
+
+            {/* Existing-feedback banner: shown only when not already editing
+                AND the owner has a previous row on this section. Gives them
+                an explicit edit/delete affordance instead of silently
+                creating duplicates. */}
+            {existing && !editingId && (
+              <div className="mb-3 rounded-md border border-border bg-muted/50 p-2.5">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[11px] font-medium text-muted-foreground">
+                      Your previous feedback
+                    </div>
+                    {existing.rating != null && (
+                      <div className="mt-0.5 flex items-center gap-0.5">
+                        {[1, 2, 3, 4, 5].map((n) => (
+                          <Star
+                            key={n}
+                            className={`h-3 w-3 ${
+                              n <= (existing.rating ?? 0)
+                                ? "fill-primary text-primary"
+                                : "text-muted-foreground/40"
+                            }`}
+                          />
+                        ))}
+                      </div>
+                    )}
+                    {existing.correction && (
+                      <p className="mt-1 line-clamp-3 text-xs text-foreground/80">
+                        {existing.correction}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex shrink-0 gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6"
+                      onClick={startEdit}
+                      title="Edit"
+                      aria-label="Edit feedback"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 text-destructive hover:text-destructive"
+                      onClick={remove}
+                      title="Delete"
+                      aria-label="Delete feedback"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div className="mb-3 flex items-center gap-1">
               {[1, 2, 3, 4, 5].map((n) => (
@@ -179,7 +319,7 @@ export const SectionFeedback = ({
               </Button>
               <Button size="sm" onClick={submit} disabled={submitting}>
                 {submitting && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
-                Submit
+                {editingId ? "Save changes" : "Submit"}
               </Button>
             </div>
           </>
