@@ -12,6 +12,7 @@ import {
   Popover, PopoverContent, PopoverTrigger,
 } from "@/components/ui/popover";
 import { getOwnerToken } from "@/lib/owner";
+import { normalizeDomain, validateCorrection } from "@/lib/domainNormalize";
 
 export type FeedbackSection =
   | "protocol" | "materials" | "budget" | "timeline"
@@ -43,19 +44,29 @@ export const SectionFeedback = ({
   };
 
   const submit = async () => {
-    if (rating == null && !correction.trim()) {
+    const trimmed = correction.trim();
+    if (rating == null && !trimmed) {
       toast.error("Add a rating or a correction");
       return;
+    }
+    // Length / spam validation only when there's a correction body — a
+    // bare rating with no text is a valid signal too.
+    if (trimmed) {
+      const reason = validateCorrection(trimmed);
+      if (reason) { toast.error(reason); return; }
     }
     setSubmitting(true);
     try {
       const ownerToken = getOwnerToken();
+      // Normalise domain into the controlled vocabulary so cross-run
+      // retrieval can do an exact match instead of a fuzzy compare.
+      const canonicalDomain = normalizeDomain(domain, hypothesis);
       const payload: Record<string, unknown> = {
         run_id: runId,
         section,
         rating,
-        correction: correction.trim() || null,
-        domain: domain ?? null,
+        correction: trimmed || null,
+        domain: canonicalDomain,
         hypothesis_excerpt: (hypothesis ?? "").slice(0, 500) || null,
         owner_token: ownerToken,
         owner_user_id: ownerUserId ?? null,
