@@ -930,18 +930,13 @@ serve(async (req) => {
 
             const critique = await critiquePlan(hypothesis, plan, LOVABLE_API_KEY, extraContext, feedbackHints);
             if (critique) {
-              // Persist FIRST so the result is durable even if the client
-              // already disconnected (which would close the SSE controller
-              // and make `send` throw).
               await supabase.from("runs").update({ critique }).eq("id", runId);
-              try { send("critique", critique); } catch { /* client gone */ }
             }
           } catch (e) {
             console.error("critique failed", e);
           }
 
-          stopHeartbeat();
-          try { controller.close(); } catch { /* already closed */ }
+          return;
         } catch (e) {
           console.error("stream error", e);
           stopHeartbeat();
