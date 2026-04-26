@@ -294,4 +294,51 @@ const Stat = ({ label, value, sub }: StatProps) => (
   </Card>
 );
 
+// Shown to signed-in users without the moderator/admin role. Offers a one-
+// time "claim first admin" path: the bootstrap_first_admin RPC will only
+// succeed if zero admins exist yet, so this is safe to expose broadly.
+const BootstrapAdminPanel = ({ onPromoted }: { onPromoted: () => void }) => {
+  const [busy, setBusy] = useState(false);
+  const claim = async () => {
+    setBusy(true);
+    try {
+      const { data, error } = await supabase.rpc("bootstrap_first_admin");
+      if (error) throw error;
+      if (data === true) {
+        toast.success("You are now the first admin.");
+        onPromoted();
+      } else {
+        toast.error("An admin already exists. Ask them to grant you a role.");
+      }
+    } catch (e) {
+      console.error("bootstrap_first_admin failed", e);
+      toast.error("Could not claim admin role.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="mx-auto max-w-2xl space-y-4 p-8 text-center">
+      <h1 className="text-2xl font-semibold">Access required</h1>
+      <p className="text-sm text-muted-foreground">
+        The moderation dashboard is only available to moderators and admins. If
+        no admin exists yet, you can claim the role for this workspace below.
+      </p>
+      <div className="flex flex-col items-center gap-2 pt-2">
+        <Button onClick={claim} disabled={busy} className="gap-1.5">
+          {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+          Claim first admin
+        </Button>
+        <p className="text-[11px] text-muted-foreground">
+          Only works once, while no admin exists. After that, ask an existing
+          admin to grant you a role.
+        </p>
+      </div>
+      <Button asChild variant="outline" className="mt-2">
+        <Link to="/"><ArrowLeft className="mr-1.5 h-3.5 w-3.5" /> Back home</Link>
+      </Button>
+    </div>
+  );
+};
+
 export default Admin;
