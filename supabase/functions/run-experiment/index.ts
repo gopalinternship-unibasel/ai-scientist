@@ -793,7 +793,7 @@ REQUIREMENTS:
 - Risks must be specific, not generic.
 - Be precise. Use exact concentrations, volumes, durations.
 ${safetyPromptFragment(safetyFlags)}
-${COST_CATALOG_PROMPT}`;
+${COST_CATALOG_PROMPT}${feedbackContext}`;
 
 
           // Streaming plan generation with model fallback. Once tokens are
