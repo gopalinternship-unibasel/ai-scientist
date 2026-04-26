@@ -30,11 +30,16 @@ serve(async (req) => {
     }
     const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
+    // Dead-letter policy: skip rows we've already tried 5+ times. Those are
+    // either bad input (e.g. correction got truncated to nothing useful) or
+    // a persistent gateway problem — keeping them in the queue would waste
+    // budget on every cron tick.
     const { data: rows, error } = await supabase
       .from("plan_feedback")
-      .select("id, correction, hypothesis_excerpt")
+      .select("id, correction, hypothesis_excerpt, embedding_attempts")
       .is("embedding", null)
       .not("correction", "is", null)
+      .lt("embedding_attempts", 5)
       .order("created_at", { ascending: true })
       .limit(limit);
     if (error) {
@@ -50,13 +55,21 @@ serve(async (req) => {
 
     let ok = 0, failed = 0;
     for (const row of rows) {
+      // Always bump attempts so dead rows stop coming back even if the
+      // embed call throws unexpectedly mid-loop.
+      await supabase
+        .from("plan_feedback")
+        // deno-lint-ignore no-explicit-any
+        .update({ embedding_attempts: ((row as any).embedding_attempts ?? 0) + 1 } as any)
+        .eq("id", row.id);
+
       const text = [row.correction, row.hypothesis_excerpt].filter(Boolean).join("\n\n");
       const vec = await embedText(text, LOVABLE_API_KEY);
       if (!vec) { failed++; continue; }
       const { error: updErr } = await supabase
         .from("plan_feedback")
         // deno-lint-ignore no-explicit-any
-        .update({ embedding: vec as any })
+        .update({ embedding: vec as any, embedded_at: new Date().toISOString() } as any)
         .eq("id", row.id);
       if (updErr) { failed++; continue; }
       ok++;
