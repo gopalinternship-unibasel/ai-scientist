@@ -6,7 +6,8 @@
 // Owners can also edit or delete their previous feedback on this section
 // (RLS-enforced server-side via owner_token / owner_user_id).
 import { useEffect, useState } from "react";
-import { MessageSquarePlus, Star, Check, Loader2, Pencil, Trash2 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { MessageSquarePlus, Star, Check, Loader2, Pencil, Trash2, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
