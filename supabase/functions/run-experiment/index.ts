@@ -178,14 +178,14 @@ async function critiquePlan(
     // critique benefits from sharper reasoning; latency is fine because the
     // critic runs after the streamed plan is already on screen.
     //
-    // Tight per-attempt budget (35s) + 0 retries on the primary so a slow
-    // gpt-5-mini falls through to gemini-flash within ~35s instead of
-    // burning 120s (60s timeout × 2 attempts) before the fallback ever runs.
-    // The fallback gets the default retry budget.
+    // Tight per-attempt budget (20s) + 0 retries on the primary so a slow
+    // gpt-5-mini falls through to gemini-flash within ~20s instead of
+    // burning 70s before the fallback ever runs. Production logs showed
+    // gpt-5-mini routinely timing out at 35s on the published site.
     models: REASONING_MODELS,
     label: "critique",
     retries: 0,
-    timeoutMs: 35_000,
+    timeoutMs: 20_000,
     buildBody: (model) => ({
       model,
       messages: [

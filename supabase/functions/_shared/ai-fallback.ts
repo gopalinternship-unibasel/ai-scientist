@@ -26,12 +26,13 @@ export const FAST_MODELS: ModelChain = [
   "openai/gpt-5-nano",
 ];
 
-// Reasoning-first single calls (critic, distillation): GPT-5-mini catches
-// subtle methodological flaws that flash-tier models routinely miss.
-// Gemini fallback keeps the pipeline alive if OpenAI is degraded.
+// Reasoning-first single calls (critic, distillation). Production logs on the
+// published site show gpt-5-mini routinely timing out at 20–35s while
+// gemini-3-flash-preview returns critiques in <10s. Lead with Gemini for
+// latency; keep gpt-5-mini as a quality fallback.
 export const REASONING_MODELS: ModelChain = [
-  "openai/gpt-5-mini",
   "google/gemini-3-flash-preview",
+  "openai/gpt-5-mini",
 ];
 
 interface CallOpts {
