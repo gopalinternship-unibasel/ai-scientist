@@ -39,6 +39,13 @@ const SALIENT = new RegExp(
     "nanoparticle","microparticle","hydrogel","scaffold","polymer",
     "graphene","silicon","gold","silver","copper","platinum",
     "phycocyanin","Spirulina","oncolytic","virus","virotherapy",
+    // Batteries / electrochemistry / materials
+    "LiFePO4","LiFePO₄","LiCoO2","LiMn2O4","NMC","NCA","LFP","NCM",
+    "cathode","anode","electrolyte","electrode","battery","batteries",
+    "lithium[- ]?ion","sodium[- ]?ion","solid[- ]?state","capacity\\s+retention",
+    "cycle\\s+life","coulombic\\s+efficiency","SEI","dendrite","graphite",
+    "silicon\\s+anode","perovskite","photovoltaic","supercapacitor",
+    "fuel\\s+cell","catalyst","electrocatalyst","OER","ORR","HER",
   ].join("|") +
   String.raw`)\b`,
   "gi",
@@ -133,7 +140,26 @@ const ABBREVIATIONS: Array<[RegExp, string]> = [
   [/\bFACS\b/, "fluorescence activated cell sorting"],
   [/\bAAV\b/, "adeno-associated virus"],
   [/\bCAR-?T\b/i, "chimeric antigen receptor T cell"],
+  // Materials science / batteries
+  [/\bLiFePO4\b/i, "lithium iron phosphate"],
+  [/\bLFP\b/, "lithium iron phosphate"],
+  [/\bLiCoO2\b/i, "lithium cobalt oxide"],
+  [/\bLiMn2O4\b/i, "lithium manganese oxide"],
+  [/\bNMC\b|\bNCM\b/, "nickel manganese cobalt"],
+  [/\bNCA\b/, "nickel cobalt aluminum"],
+  [/\bSEI\b/, "solid electrolyte interphase"],
 ];
+
+// Normalize Unicode subscripts/superscripts to ASCII so "LiFePO₄" matches
+// papers indexed as "LiFePO4". Applied before keyword extraction and
+// abbreviation expansion.
+const SUBSCRIPT_MAP: Record<string, string> = {
+  "₀":"0","₁":"1","₂":"2","₃":"3","₄":"4","₅":"5","₆":"6","₇":"7","₈":"8","₉":"9",
+  "⁰":"0","¹":"1","²":"2","³":"3","⁴":"4","⁵":"5","⁶":"6","⁷":"7","⁸":"8","⁹":"9",
+};
+function normalizeUnicodeNumerics(s: string): string {
+  return s.replace(/[₀-₉⁰-⁹]/g, (c) => SUBSCRIPT_MAP[c] ?? c);
+}
 
 /** Replace abbreviations in `s` with their expansions. Returns null if nothing changed. */
 function expandAbbreviations(s: string): string | null {
@@ -159,12 +185,19 @@ function expandAbbreviations(s: string): string | null {
  * The caller fires them in order until one returns hits.
  */
 export function degradedQueries(hypothesis: string): string[] {
-  const full = hypothesis.replace(/\s+/g, " ").trim().slice(0, 280);
+  // Normalize Unicode subscripts/superscripts up-front (LiFePO₄ → LiFePO4)
+  // so both keyword extraction and abbreviation expansion can match.
+  const normalized = normalizeUnicodeNumerics(hypothesis);
+  const full = normalized.replace(/\s+/g, " ").trim().slice(0, 280);
   const expandedFull = expandAbbreviations(full);
-  const kw = extractKeywords(hypothesis, 6);
+  const kw = extractKeywords(normalized, 6);
   const expandedKw = expandedFull ? extractKeywords(expandedFull, 6) : [];
 
   const out: string[] = [full];
+  // Also include the raw original if it differed (covers papers indexed with the unicode form).
+  if (full !== hypothesis.replace(/\s+/g, " ").trim().slice(0, 280)) {
+    out.push(hypothesis.replace(/\s+/g, " ").trim().slice(0, 280));
+  }
   // Interleave expanded variants so they fire early enough to matter.
   if (expandedFull) out.push(expandedFull);
   if (kw.length >= 4) out.push(kw.slice(0, Math.min(5, kw.length)).join(" "));
