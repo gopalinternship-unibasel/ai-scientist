@@ -51,7 +51,7 @@ export function useBackgroundRunNotifier() {
 
   useEffect(() => {
     const channel = supabase
-      .channel("background-runs")
+      .channel("runs:background")
       .on(
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "runs" },
