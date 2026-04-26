@@ -21,6 +21,50 @@ import { toast } from "sonner";
 import type { ExperimentPlan } from "@/lib/samples";
 import { exportPlanToPdf } from "@/lib/exportPdf";
 import { SectionFeedback, type FeedbackSection } from "@/components/SectionFeedback";
+import { Sparkles } from "lucide-react";
+import {
+  Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
+} from "@/components/ui/tooltip";
+
+export interface AppliedFeedbackEntry {
+  id: string;
+  section: string;
+  rating: number | null;
+  correction: string;
+  similarity: number;
+}
+
+/** Render a small "Applied N lessons" pill that, on hover, lists the
+ *  specific corrections the planner used for this section. */
+const AppliedLessonsBadge = ({ entries }: { entries: AppliedFeedbackEntry[] }) => {
+  if (entries.length === 0) return null;
+  return (
+    <TooltipProvider delayDuration={150}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className="no-print inline-flex cursor-help items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-primary"
+            aria-label={`${entries.length} learned lessons applied`}
+          >
+            <Sparkles className="h-2.5 w-2.5" />
+            Applied {entries.length} {entries.length === 1 ? "lesson" : "lessons"}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" align="end" className="max-w-sm space-y-2 p-3 text-xs">
+          <div className="font-semibold">Lessons from past feedback</div>
+          {entries.map((e) => (
+            <div key={e.id} className="border-l-2 border-primary/40 pl-2">
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                {e.section}{e.rating != null ? ` · ${e.rating}★` : ""} · {(e.similarity * 100 | 0)}% match
+              </div>
+              <div className="mt-0.5 text-foreground">{e.correction}</div>
+            </div>
+          ))}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+};
 
 /**
  * Plan section. On mobile (< md) the body is collapsible via a native <details>
