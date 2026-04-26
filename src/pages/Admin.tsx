@@ -10,7 +10,7 @@
 // boundary.
 import { useEffect, useMemo, useState } from "react";
 import { Link, Navigate } from "react-router-dom";
-import { Loader2, EyeOff, Eye, ArrowLeft, Sparkles, Gauge } from "lucide-react";
+import { Loader2, EyeOff, Eye, ArrowLeft, Sparkles, Gauge, Power, AlertTriangle, Save, X } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
 
 interface SectionStat { count: number; avg_rating: number | null }
 interface Stats {
@@ -140,6 +141,7 @@ const Admin = () => {
           <TabsList>
             <TabsTrigger value="stats">Stats</TabsTrigger>
             <TabsTrigger value="moderate">Moderate ({rows.length})</TabsTrigger>
+            <TabsTrigger value="rules">House rules</TabsTrigger>
             <TabsTrigger value="loop">Loop ops</TabsTrigger>
           </TabsList>
 
@@ -277,6 +279,10 @@ const Admin = () => {
                 </CardContent>
               </Card>
             ))}
+          </TabsContent>
+
+          <TabsContent value="rules" className="space-y-4 pt-4">
+            <HouseRulesPanel />
           </TabsContent>
 
           <TabsContent value="loop" className="space-y-4 pt-4">
