@@ -40,6 +40,9 @@ const planSchema = {
           description: { type: "string" },
           duration: { type: "string" },
           source: { type: "string" },
+          // Inline lesson attribution: ids from LEARNED CORRECTIONS / HOUSE RULES
+          // that directly shaped this step. Lets the UI show a ✨ on the row.
+          applied_lessons: { type: "array", items: { type: "string" } },
         },
         required: ["step", "title", "description", "duration"],
         additionalProperties: false,
@@ -57,6 +60,7 @@ const planSchema = {
           unit_cost_usd: { type: "number" },
           total_cost_usd: { type: "number" },
           notes: { type: "string" },
+          applied_lessons: { type: "array", items: { type: "string" } },
         },
         required: ["name", "supplier", "quantity", "unit_cost_usd", "total_cost_usd"],
         additionalProperties: false,
@@ -147,7 +151,11 @@ const planSchema = {
       type: "array",
       items: {
         type: "object",
-        properties: { risk: { type: "string" }, mitigation: { type: "string" } },
+        properties: {
+          risk: { type: "string" },
+          mitigation: { type: "string" },
+          applied_lessons: { type: "array", items: { type: "string" } },
+        },
         required: ["risk", "mitigation"],
         additionalProperties: false,
       },
