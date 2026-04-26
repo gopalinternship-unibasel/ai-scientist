@@ -716,7 +716,7 @@ serve(async (req) => {
               temperature: 0.2,
               messages: [
                 { role: "system", content: system },
-                { role: "user", content: `HYPOTHESIS:\n${hypothesis}${refContext}${refinementContext}\n\nProduce the full experiment plan.` },
+                { role: "user", content: userMessage },
               ],
               tools: [{
                 type: "function",
