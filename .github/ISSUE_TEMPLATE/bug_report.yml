@@ -1,0 +1,59 @@
+name: Bug report
+description: Something is broken or behaves unexpectedly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug! Please fill out the fields
+        below so we can reproduce and fix it quickly.
+  - type: input
+    id: run_id
+    attributes:
+      label: Run ID (if applicable)
+      description: The UUID from the URL on `/runs/:id`. Helps us inspect logs.
+      placeholder: "a4dd1382-a063-4cb8-87db-c839dfa93a61"
+  - type: textarea
+    id: hypothesis
+    attributes:
+      label: Hypothesis (if applicable)
+      description: The exact text you submitted.
+      render: text
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened?
+      description: A clear description of the actual behaviour.
+    validations:
+      required: true
+  - type: textarea
+    id: what_expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Go to '...'
+        2. Click on '...'
+        3. See error
+  - type: dropdown
+    id: browser
+    attributes:
+      label: Browser
+      options:
+        - Chrome / Edge
+        - Firefox
+        - Safari
+        - Mobile Safari
+        - Mobile Chrome
+        - Other / N/A
+  - type: textarea
+    id: console
+    attributes:
+      label: Console / network errors
+      description: Paste any relevant browser console or network errors.
+      render: shell

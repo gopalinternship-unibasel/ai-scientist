@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/security/advisories
+    about: Please report security issues privately. See SECURITY.md.
+  - name: Live app
+    url: https://ai-scientist.lovable.app
+    about: Try the published app.
