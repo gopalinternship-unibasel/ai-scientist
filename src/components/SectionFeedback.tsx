@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/popover";
 import { getOwnerToken } from "@/lib/owner";
 import { normalizeDomain, validateCorrection } from "@/lib/domainNormalize";
+import { replayWithLesson } from "@/lib/replayWithLesson";
 
 export type FeedbackSection =
   | "protocol" | "materials" | "budget" | "timeline"
