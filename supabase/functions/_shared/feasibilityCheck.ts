@@ -47,6 +47,37 @@ const RULES: Rule[] = [
       "Use STED, PALM/STORM, SIM, expansion microscopy, or relax the target to ~200 nm+ for standard confocal imaging.",
   },
   {
+    // Catches "resolve 8 nm protofilaments in confocal", "see 20 nm vesicles
+    // by widefield", etc. — sub-200 nm features named directly without the
+    // word "resolution". Diffraction limit is ~200 nm regardless of phrasing.
+    principle: "Abbe diffraction limit",
+    patterns: [
+      /\b(?:standard\s+)?(?:confocal|widefield|wide[-\s]?field|brightfield|bright[-\s]?field|optical|fluorescence|fluorescent|phase[-\s]?contrast|DIC|darkfield|dark[-\s]?field)\s+microscop/i,
+      /\b(?:resolve|visualize|see|distinguish|image|detect)\b[^.]{0,80}\b(?:[1-9]\d?|1[0-7]\d)\s*nm\b/i,
+    ],
+    explanation:
+      "Diffraction-limited optical microscopy cannot resolve features below ~200 nm; sub-200 nm structures (e.g. 8 nm microtubule protofilaments, 20 nm vesicles) are not resolvable by standard confocal/widefield/brightfield imaging.",
+    suggestion:
+      "Use STED, PALM/STORM, SIM, expansion microscopy, cryo-ET, or AFM to access sub-200 nm structural detail.",
+  },
+  {
+    // Catches "ambient N2 + H2O → NH3 with no energy input", or any claim of
+    // a catalyst that runs an uphill reaction (ΔG > 0) without an energy
+    // source. The Haber–Bosch alternative (N2 + 3 H2 → 2 NH3) is mildly
+    // exergonic but still kinetically blocked at RT; using H2O instead of H2
+    // makes the reaction strongly endergonic and violates the 2nd law
+    // without coupled energy input.
+    principle: "Thermodynamic violation (uphill reaction without energy input)",
+    patterns: [
+      /\b(?:no\s+(?:external\s+)?energy(?:\s+input)?|without\s+(?:external\s+)?energy|zero\s+energy\s+input|no\s+power|without\s+power|spontaneous(?:ly)?)\b/i,
+      /\b(?:ammonia|NH3|NH₃|hydrogen\s+(?:fuel|gas)|H2(?!O)|H₂(?!O)|methanol|fuel)\b[^.]{0,120}\b(?:from|out\s+of|using)\b[^.]{0,80}\b(?:water|H2O|H₂O|N2|N₂|nitrogen|CO2|CO₂|air|atmospheric)\b|\b(?:water[-\s]?splitting|split\s+water)\b[^.]{0,80}\b(?:no|without|zero)\b/i,
+    ],
+    explanation:
+      "The reaction described is thermodynamically uphill (ΔG > 0) — e.g. N₂ + H₂O → NH₃ + O₂ requires more free energy than water-splitting. No catalyst can drive an endergonic reaction without coupled energy input (light, electricity, or a sacrificial reductant).",
+    suggestion:
+      "Reframe with an explicit energy source: photocatalysis (solar input), electrocatalysis (applied potential), or pair the reaction with a downhill co-process. State the energy budget.",
+  },
+  {
     principle: "Faster-than-light signalling",
     patterns: [
       /\b(?:faster[-\s]than[-\s]light|greater\s+than\s+(?:the\s+speed\s+of\s+)?light|superluminal|FTL)\b/i,
