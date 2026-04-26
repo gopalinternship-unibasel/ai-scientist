@@ -6,7 +6,8 @@
 // Owners can also edit or delete their previous feedback on this section
 // (RLS-enforced server-side via owner_token / owner_user_id).
 import { useEffect, useState } from "react";
-import { MessageSquarePlus, Star, Check, Loader2, Pencil, Trash2 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { MessageSquarePlus, Star, Check, Loader2, Pencil, Trash2, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -16,6 +17,7 @@ import {
 } from "@/components/ui/popover";
 import { getOwnerToken } from "@/lib/owner";
 import { normalizeDomain, validateCorrection } from "@/lib/domainNormalize";
+import { replayWithLesson } from "@/lib/replayWithLesson";
 
 export type FeedbackSection =
   | "protocol" | "materials" | "budget" | "timeline"
@@ -40,14 +42,33 @@ interface ExistingFeedback {
 export const SectionFeedback = ({
   runId, section, domain, hypothesis, ownerUserId, compact = true,
 }: Props) => {
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [rating, setRating] = useState<number | null>(null);
   const [correction, setCorrection] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [replaying, setReplaying] = useState(false);
   // Editing mode for an existing feedback row owned by this user.
   const [existing, setExisting] = useState<ExistingFeedback | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+
+  const startReplay = (text: string) => {
+    if (replaying) return;
+    setReplaying(true);
+    replayWithLesson({
+      parentRunId: runId,
+      hypothesis: hypothesis ?? "",
+      section,
+      correction: text,
+      onCreated: (newId) => {
+        setOpen(false);
+        toast.success("Re-running with this lesson…");
+        navigate(`/runs/${newId}`);
+      },
+      onSettled: () => setReplaying(false),
+    });
+  };
 
   const reset = () => {
     setRating(null);
@@ -195,9 +216,27 @@ export const SectionFeedback = ({
       </PopoverTrigger>
       <PopoverContent align="end" className="w-80 p-4">
         {submitted ? (
-          <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
-            <Check className="h-4 w-4 text-primary" />
-            Thanks — your correction is in the loop.
+          <div className="flex flex-col items-center gap-3 py-4 text-center">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Check className="h-4 w-4 text-primary" />
+              Thanks — your correction is in the loop.
+            </div>
+            {correction.trim().length >= 8 && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                onClick={() => startReplay(correction)}
+                disabled={replaying}
+              >
+                {replaying ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Sparkles className="h-3 w-3 text-accent" />
+                )}
+                Re-run with this lesson
+              </Button>
+            )}
           </div>
         ) : (
           <>
@@ -242,6 +281,21 @@ export const SectionFeedback = ({
                     )}
                   </div>
                   <div className="flex shrink-0 gap-1">
+                    {existing.correction && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 text-accent hover:text-accent"
+                        onClick={() => startReplay(existing.correction ?? "")}
+                        disabled={replaying}
+                        title="Re-run with this lesson"
+                        aria-label="Re-run with this lesson"
+                      >
+                        {replaying
+                          ? <Loader2 className="h-3 w-3 animate-spin" />
+                          : <Sparkles className="h-3 w-3" />}
+                      </Button>
+                    )}
                     <Button
                       variant="ghost"
                       size="icon"
