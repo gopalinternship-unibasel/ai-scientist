@@ -762,9 +762,13 @@ serve(async (req) => {
           const safetyFlags = screenSafety(hypothesis);
 
           // Retrieve cross-run feedback hints via semantic similarity. Best-
-          // effort; failure is silent. Domain guess is the QC's classifier
-          // hint when present.
-          const domainGuess = (qc as { domain?: string })?.domain ?? null;
+          // effort; failure is silent. Domain guess prefers parent run's
+          // canonical domain (refinements) and falls back to QC + hypothesis.
+          const domainGuess = normalizeDomain(
+            (parentRun as { domain?: string } | null)?.domain,
+            (qc as { domain?: string })?.domain,
+            hypothesis,
+          );
           const feedbackHints = await retrieveRelevantFeedback(
             supabase, hypothesis, domainGuess, LOVABLE_API_KEY,
           );
