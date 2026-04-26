@@ -745,14 +745,15 @@ serve(async (req) => {
             .replace(/\n\nProduce the full experiment plan\.$/, `${refinementContext}\n\nProduce the full experiment plan.`);
 
 
-          // Streaming plan generation with model fallback. Once tokens are
-          // flowing we can't switch mid-stream — but we can switch BEFORE the
-          // first byte if the primary model 5xx's on connect.
+          // Streaming plan generation with model fallback. Keep the connection
+          // budget tight: if a model has not produced headers quickly, move to
+          // the next model instead of leaving the user on "Generating".
           const { res: aiRes, modelUsed } = await callAIWithFallback({
             apiKey: LOVABLE_API_KEY,
             models: PLAN_MODELS,
             label: "plan-stream",
-            timeoutMs: 90_000,
+            timeoutMs: 25_000,
+            retries: 0,
             buildBody: (model) => ({
               model,
               stream: true,
