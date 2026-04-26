@@ -760,12 +760,29 @@ serve(async (req) => {
           // the resulting plan addresses regulatory / containment requirements.
           const safetyFlags = screenSafety(hypothesis);
 
-          // Retrieve cross-run feedback hints. Best-effort; failure is silent.
-          // Domain guess is the QC's classifier-derived hint when present.
+          // Retrieve cross-run feedback hints via semantic similarity. Best-
+          // effort; failure is silent. Domain guess is the QC's classifier
+          // hint when present.
           const domainGuess = (qc as { domain?: string })?.domain ?? null;
-          const feedbackHints = await retrieveRelevantFeedback(supabase, hypothesis, domainGuess);
+          const feedbackHints = await retrieveRelevantFeedback(
+            supabase, hypothesis, domainGuess, LOVABLE_API_KEY,
+          );
           if (feedbackHints.length > 0) {
-            console.log(JSON.stringify({ run_id: runId, step: "feedback_injected", hint_count: feedbackHints.length }));
+            console.log(JSON.stringify({
+              run_id: runId, step: "feedback_injected",
+              hint_count: feedbackHints.length,
+              ids: feedbackHints.map((h) => h.id),
+            }));
+            // Persist which hints were applied so the UI can surface them.
+            await supabase.from("runs").update({
+              applied_feedback: feedbackHints.map((h) => ({
+                id: h.id,
+                section: h.section,
+                rating: h.rating,
+                correction: h.correction,
+                similarity: Number(h.similarity.toFixed(3)),
+              })),
+            }).eq("id", runId);
           }
           const feedbackContext = feedbackPromptFragment(feedbackHints);
 
