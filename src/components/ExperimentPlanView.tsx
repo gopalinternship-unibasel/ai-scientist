@@ -66,6 +66,42 @@ const AppliedLessonsBadge = ({ entries }: { entries: AppliedFeedbackEntry[] }) =
   );
 };
 
+/** Inline ✨ marker rendered next to a specific row (protocol step, material,
+ *  risk) when the planner attributed one or more lessons to that exact row.
+ *  Shows the matched corrections in a tooltip. Silently renders nothing when
+ *  no ids match the appliedFeedback corpus (e.g. dedup deleted the source). */
+const LessonMark = ({
+  ids, lookup,
+}: { ids: string[] | undefined; lookup: Map<string, AppliedFeedbackEntry> }) => {
+  if (!ids || ids.length === 0) return null;
+  const matches = ids.map((id) => lookup.get(id)).filter((x): x is AppliedFeedbackEntry => !!x);
+  if (matches.length === 0) return null;
+  return (
+    <TooltipProvider delayDuration={150}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className="no-print inline-flex cursor-help items-center align-middle text-primary"
+            aria-label={`${matches.length} lesson${matches.length === 1 ? "" : "s"} applied to this row`}
+          >
+            <Sparkles className="h-3 w-3" />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="top" align="start" className="max-w-xs space-y-1.5 p-2.5 text-xs">
+          <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+            Shaped by past feedback
+          </div>
+          {matches.map((e) => (
+            <div key={e.id} className="border-l-2 border-primary/40 pl-2 text-foreground">
+              {e.correction}
+            </div>
+          ))}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+};
+
 /**
  * Plan section. On mobile (< md) the body is collapsible via a native <details>
  * element so users can scan the plan without endless scrolling. On md+ screens
