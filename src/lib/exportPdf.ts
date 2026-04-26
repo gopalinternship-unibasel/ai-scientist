@@ -120,6 +120,24 @@ function kv(ctx: Ctx, label: string, value: string, footer: () => void) {
 
 export function exportPlanToPdf(plan: ExperimentPlan, hypothesis: string, version = 1) {
   const doc = new jsPDF({ unit: "mm", format: "a4" });
+
+  // Wrap text-emitting APIs so every caller is sanitized to WinAnsi-safe ASCII.
+  // jsPDF's built-in fonts can't render arbitrary Unicode and silently break
+  // line-wrapping when they encounter unsupported codepoints.
+  const origText = doc.text.bind(doc);
+  // deno-lint-ignore no-explicit-any
+  doc.text = ((t: any, x: number, y: number, opts?: any) => {
+    if (typeof t === "string") return origText(ascii(t), x, y, opts);
+    if (Array.isArray(t)) return origText(t.map((s) => typeof s === "string" ? ascii(s) : s), x, y, opts);
+    return origText(t, x, y, opts);
+  }) as typeof doc.text;
+  const origSplit = doc.splitTextToSize.bind(doc);
+  // deno-lint-ignore no-explicit-any
+  doc.splitTextToSize = ((t: any, w: number, opts?: any) => {
+    if (typeof t === "string") return origSplit(ascii(t), w, opts);
+    return origSplit(t, w, opts);
+  }) as typeof doc.splitTextToSize;
+
   const ctx: Ctx = { doc, y: M, page: 1 };
   const footer = () => drawFooter(doc, plan, ctx.page, null);
 
