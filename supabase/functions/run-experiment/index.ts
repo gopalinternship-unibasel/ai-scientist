@@ -678,7 +678,6 @@ serve(async (req) => {
           // House rules: stable, distilled per-domain conventions. Cheap to
           // fetch (single indexed query). Best-effort — empty fragment if none.
           const houseRules = await fetchHouseRules(supabase, domainGuess);
-          const houseRulesContext = houseRulesPromptFragment(houseRules, domainGuess);
           if (houseRules.length > 0) {
             console.log(JSON.stringify({
               run_id: runId, step: "house_rules_injected",
@@ -687,30 +686,20 @@ serve(async (req) => {
           }
 
           // 2) Plan generation (streamed)
-          const refContext = references.length
-            ? `\n\nKNOWN RELATED WORK — use ONLY the strict canonical citation format:\n  • Bare reference:   [N]\n  • Multiple refs:    (see [N, M])\n  • DO NOT use any other form ((ref. 1), [ref. 1], (1), etc.)\n${references.map((r: Reference, i: number) => `[${i + 1}] ${r.title} (${r.year ?? "n.d."}) — ${r.url ?? ""}`).join("\n")}`
-            : "";
-
+          // Refinement context is the only piece NOT shared with the eval
+          // harness — refinements are user-driven and have no eval analogue.
           const refinementContext = isRefinement
             ? `\n\nREFINEMENT REQUEST — the user has an existing plan and wants you to revise it according to this instruction. Honour it strictly while keeping everything else operationally sound:\n"""${refinementInstruction}"""\n\nPREVIOUS PLAN (for context — do not repeat verbatim, produce a NEW complete plan reflecting the refinement):\n${JSON.stringify(parentRun?.plan).slice(0, 8000)}`
             : "";
 
-          const system = `You are a senior scientist at a Contract Research Organisation. You convert a hypothesis into a complete, operationally realistic experiment plan that a real lab could pick up Monday and start running by Friday.
-
-REQUIREMENTS:
-- Ground the protocol in real, published methods (protocols.io, Bio-protocol, Nature Protocols, JOVE, OpenWetWare).
-- Materials must include real suppliers (Sigma-Aldrich, Thermo Fisher, Promega, Qiagen, IDT, ATCC, Addgene). Catalog numbers MUST be ones you are confident exist on the supplier's site — if you are uncertain, set catalog_number to "Custom" or omit it. Do NOT fabricate plausible-looking SKUs. Sigma SKUs follow patterns like T9531, PHR1084-1G; Thermo Fisher uses 7–9 digit numbers (11965092) or letter+digits (A3160401); IDT Alt-R reagents are 1081xxx; ATCC uses CCL-2, CRL-3216, HTB-22.
-- Budget MUST be anchored to the REFERENCE COST CATALOG below — do not invent prices that are wildly off (>20%).
-- Budget total MUST equal the sum of line items, and line items must roughly equal materials subtotal + labour + equipment + overhead.
-- CITATIONS: Use ONLY the canonical format \`[N]\` (or \`(see [N, M])\` for multiples). N must be a 1-based index into the KNOWN RELATED WORK list. Never invent reference numbers; never use prose forms like "(ref. 1)" or "(see reference 1)".
-- Timeline must be phased with explicit dependencies.
-- The 'validation' section gives the qualitative approach.
-- The 'statistical_design' section MUST be filled with a real power calculation: n_per_group justified by effect_size, alpha (typically 0.05), power (typically 0.8), randomization scheme, blinding strategy.
-- The 'safety' section MUST be filled — biosafety_level, IRB/IACUC/IBC requirements, controlled substances, hazards, PPE, waste handling, emergency procedure. Address every category flagged in the SAFETY PRE-SCREEN below.
-- Risks must be specific, not generic.
-- Be precise. Use exact concentrations, volumes, durations.
-${safetyPromptFragment(safetyFlags)}
-${COST_CATALOG_PROMPT}${houseRulesContext}${feedbackContext}`;
+          const system = buildPlannerSystemPrompt({
+            safetyFlags,
+            houseRules,
+            feedbackHints,
+            domain: domainGuess,
+          });
+          const userMessage = buildPlannerUserMessage({ hypothesis, references })
+            .replace(/\n\nProduce the full experiment plan\.$/, `${refinementContext}\n\nProduce the full experiment plan.`);
 
 
           // Streaming plan generation with model fallback. Once tokens are
