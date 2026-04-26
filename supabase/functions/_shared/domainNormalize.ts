@@ -73,3 +73,20 @@ export function normalizeDomain(...inputs: Array<string | null | undefined>): Ca
   }
   return "other";
 }
+
+// Cheap spam / quality filter for free-text feedback corrections.
+// Returns null when text passes; otherwise a user-facing reason string.
+const URL_RE = /(https?:\/\/|www\.)\S+/gi;
+const REPEATED_CHAR_RE = /(.)\1{6,}/;
+
+export function validateCorrection(raw: string): string | null {
+  const text = (raw ?? "").trim();
+  if (text.length < 8) return "Please write at least 8 characters.";
+  if (text.length > 2000) return "Please keep corrections under 2000 characters.";
+  if (REPEATED_CHAR_RE.test(text)) return "Looks like spam — too many repeated characters.";
+  const urlChars = (text.match(URL_RE) ?? []).join("").length;
+  if (urlChars / text.length > 0.5) return "Please describe the issue in your own words, not just links.";
+  const letters = (text.match(/[a-zA-Z]/g) ?? []).length;
+  if (letters / text.length < 0.3) return "Please write in plain language.";
+  return null;
+}
