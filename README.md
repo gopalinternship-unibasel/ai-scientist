@@ -79,12 +79,12 @@ catalog issues into the reviewer as extra context).
 │  3. rate-limit         ── 100 / hour (anon by IP, signed-in by uid)  │
 │  4. cache lookup       ── reuse plan if same hypothesis hash exists  │
 │  5. literature search  ── S2 + OpenAlex + PubMed in parallel         │
-│  6. novelty classify   ── Lovable AI Gateway (gemini-2.5-flash)      │
+│  6. novelty classify   ── Lovable AI Gateway (gemini-3-flash-preview)│
 │  7. safety screen      ── prompt fragment for planner                │
-│  8. plan generation    ── Lovable AI Gateway (gemini-2.5-pro, SSE)   │
+│  8. plan generation    ── Lovable AI Gateway (gemini-3-flash, SSE)   │
 │  9. citation sanitise  ── strip out-of-range refs                    │
 │ 10. catalog cross-check── flag wrong SKUs / name mismatches          │
-│ 11. critique pass      ── second AI call grades the plan             │
+│ 11. critique pass      ── Lovable AI Gateway (gpt-5-mini, reasoning) │
 └──────────────────────────────────────────────────────────────────────┘
                                 │
                                 ▼
@@ -103,9 +103,19 @@ catalog issues into the reviewer as extra context).
   TanStack Query, React Router, sonner, jsPDF.
 - **Backend** — Supabase Edge Functions (Deno), Postgres with RLS,
   Supabase Realtime for live run updates, pgvector for feedback retrieval.
-- **AI** — Lovable AI Gateway: `google/gemini-2.5-pro` for planning &
-  critique, `google/gemini-2.5-flash` for novelty + hypothesis gate. **No
-  user-supplied API keys required.**
+- **AI** — Lovable AI Gateway, routed per stage:
+  - Hot path (planner, novelty): `google/gemini-3-flash-preview` —
+    long context + fast streamed structured output, fallback to
+    `openai/gpt-5-mini`.
+  - Reasoning-critical (critic, house-rules distillation):
+    `openai/gpt-5-mini` — sharper at methodological flaws, fallback to
+    `gemini-3-flash-preview`.
+  - Eval judge: `openai/gpt-5` — different family from planner so
+    judge errors are uncorrelated with planner errors (tighter eval CIs).
+  - Cheap classifiers (gate, domain normalize): `google/gemini-2.5-flash-lite`
+    with cross-family `gpt-5-nano` fallback for jailbreak resistance.
+  - Embeddings: Gemini `text-embedding-004` (768d, cosine).
+  **No user-supplied API keys required.**
 - **Literature** — Semantic Scholar Graph API, OpenAlex
   (`title_and_abstract.search`), PubMed E-utilities — best-effort,
   deduplicated by DOI then by normalised title prefix.
