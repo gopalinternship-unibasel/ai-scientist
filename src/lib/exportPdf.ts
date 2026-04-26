@@ -17,6 +17,37 @@ interface Ctx {
 const fmtUsd = (n: number) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n);
 
+// jsPDF's built-in Helvetica is WinAnsi-only. Unicode chars outside that range
+// (Greek letters, arrows, em-dashes, curly quotes, μ, •, →, ↳, etc.) either
+// render as the wrong glyph (α → ±, → → !') or break splitTextToSize so the
+// text comes out letter-spaced and clipped at the right margin. We don't ship
+// a custom TTF, so transliterate to ASCII before drawing.
+function ascii(s: string): string {
+  if (!s) return "";
+  return s
+    .replace(/\u00a0/g, " ")
+    .replace(/[\u2018\u2019\u201A\u2032]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u2033]/g, '"')
+    .replace(/[\u2013\u2014\u2212]/g, "-")
+    .replace(/\u2026/g, "...")
+    .replace(/[\u2022\u25cf\u00b7]/g, "-")
+    .replace(/\u2192/g, "->")
+    .replace(/\u21b3/g, "->")
+    .replace(/\u2190/g, "<-")
+    .replace(/\u2194/g, "<->")
+    .replace(/[\u2264]/g, "<=")
+    .replace(/[\u2265]/g, ">=")
+    .replace(/\u00d7/g, "x")
+    .replace(/\u03b1/g, "alpha")
+    .replace(/\u03b2/g, "beta")
+    .replace(/\u03b3/g, "gamma")
+    .replace(/\u03bc|\u00b5/g, "u")
+    .replace(/\u03c3/g, "sigma")
+    .replace(/\u00b0/g, "deg")
+    .replace(/\u00b1/g, "+/-")
+    .replace(/[^\x00-\xff]/g, "?");
+}
+
 function ensureSpace(ctx: Ctx, needed: number, footer: () => void) {
   if (ctx.y + needed > PAGE.h - M - 10) {
     footer();
