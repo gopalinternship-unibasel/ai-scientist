@@ -11,6 +11,9 @@ interface CanonicalTechnique {
   name: string;
   // Pattern must match the hypothesis (case-insensitive).
   pattern: RegExp;
+  // Optional: if this pattern ALSO matches, the technique is NOT considered
+  // canonical (e.g. growth curve + CRISPRi → the perturbation is the real subject).
+  disqualifyIf?: RegExp;
   // Human-readable rationale shown to the user when this rule fires.
   rationale: string;
 }
@@ -58,8 +61,13 @@ const TECHNIQUES: CanonicalTechnique[] = [
   },
   {
     name: "Bacterial growth curve (OD600)",
+    // Match only when the hypothesis is *about* a textbook growth assay —
+    // not when it merely mentions growth in passing while testing a novel
+    // perturbation (CRISPRi, knockout, novel substrate, engineered strain, …).
     pattern: /\bOD\s*600\b|\b(?:bacterial\s+)?growth\s+curve\b|\b(?:E\.?\s*coli|bacteria|bacterial)\b[^.]{0,80}\b(?:LB|lysogeny\s+broth|TB|terrific\s+broth|M9|minimal\s+media)\b[^.]{0,80}\b(?:37\s*°?\s*C|grow|culture|OD)/i,
     rationale: "Bacterial growth curves in standard media (LB, TB, M9) are textbook microbiology — countless published protocols exist.",
+    // Disqualify if the hypothesis introduces a non-canonical perturbation.
+    disqualifyIf: /\b(?:CRISPR|CRISPRi|CRISPRa|Cas9|Cas12|Cas13|knockout|knock-?out|knockdown|knock-?down|knock-?in|RNAi|shRNA|siRNA|engineered|synthetic|riboswitch|optogenetic|novel|mutant|deletion\s+strain|overexpress)|Δ[a-zA-Z]/i,
   },
 ];
 export interface CanonicalMatch {
@@ -71,6 +79,7 @@ export interface CanonicalMatch {
 export function detectCanonicalTechnique(hypothesis: string): CanonicalMatch {
   for (const t of TECHNIQUES) {
     if (t.pattern.test(hypothesis)) {
+      if (t.disqualifyIf && t.disqualifyIf.test(hypothesis)) continue;
       return { matched: true, technique: t.name, rationale: t.rationale };
     }
   }
