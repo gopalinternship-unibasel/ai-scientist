@@ -19,7 +19,9 @@ export type Database = {
           correction: string | null
           created_at: string
           domain: string | null
+          dup_count: number
           embedding: string | null
+          hidden: boolean
           hypothesis_excerpt: string | null
           id: string
           owner_token: string | null
@@ -27,12 +29,15 @@ export type Database = {
           rating: number | null
           run_id: string
           section: string
+          updated_at: string
         }
         Insert: {
           correction?: string | null
           created_at?: string
           domain?: string | null
+          dup_count?: number
           embedding?: string | null
+          hidden?: boolean
           hypothesis_excerpt?: string | null
           id?: string
           owner_token?: string | null
@@ -40,12 +45,15 @@ export type Database = {
           rating?: number | null
           run_id: string
           section: string
+          updated_at?: string
         }
         Update: {
           correction?: string | null
           created_at?: string
           domain?: string | null
+          dup_count?: number
           embedding?: string | null
+          hidden?: boolean
           hypothesis_excerpt?: string | null
           id?: string
           owner_token?: string | null
@@ -53,6 +61,7 @@ export type Database = {
           rating?: number | null
           run_id?: string
           section?: string
+          updated_at?: string
         }
         Relationships: [
           {
@@ -92,6 +101,7 @@ export type Database = {
           critique: Json | null
           domain: string | null
           error: string | null
+          had_applied_feedback: boolean
           hypothesis: string
           hypothesis_hash: string | null
           id: string
@@ -112,6 +122,7 @@ export type Database = {
           critique?: Json | null
           domain?: string | null
           error?: string | null
+          had_applied_feedback?: boolean
           hypothesis: string
           hypothesis_hash?: string | null
           id?: string
@@ -132,6 +143,7 @@ export type Database = {
           critique?: Json | null
           domain?: string | null
           error?: string | null
+          had_applied_feedback?: boolean
           hypothesis?: string
           hypothesis_hash?: string | null
           id?: string
@@ -161,9 +173,20 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      bump_feedback_dup: { Args: { _id: string }; Returns: undefined }
       claim_anonymous_runs: { Args: { _owner_token: string }; Returns: number }
       cleanup_old_rate_limits: { Args: never; Returns: number }
       cleanup_stale_runs: { Args: never; Returns: number }
+      find_duplicate_feedback: {
+        Args: {
+          _domain: string
+          _embedding: string
+          _id: string
+          _section: string
+          _threshold?: number
+        }
+        Returns: string
+      }
       match_plan_feedback: {
         Args: {
           match_count: number
