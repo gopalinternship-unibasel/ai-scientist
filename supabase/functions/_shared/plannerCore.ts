@@ -6,7 +6,7 @@
 // Anything that affects plan *quality* lives here. Anything that affects
 // persistence, streaming, rate-limits or idempotency stays in run-experiment.
 
-import { COST_CATALOG_PROMPT } from "../run-experiment/cost-catalog.ts";
+import { COST_CATALOG_PROMPT } from "./costCatalog.ts";
 import { safetyPromptFragment, type SafetyFlags } from "./safety.ts";
 import { houseRulesPromptFragment, type HouseRule } from "./houseRules.ts";
 import { feedbackPromptFragment, type FeedbackHint } from "./feedbackRetrieval.ts";
