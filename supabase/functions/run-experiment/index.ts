@@ -172,7 +172,9 @@ async function critiquePlan(
 
   const { res: aiRes } = await callAIWithFallback({
     apiKey,
-    models: FAST_MODELS,
+    // Critic uses PLAN_MODELS (gpt-5-mini fallback) — sharper reasoning catches
+    // subtle methodological flaws that flash-tier models routinely miss.
+    models: PLAN_MODELS,
     label: "critique",
     buildBody: (model) => ({
       model,
