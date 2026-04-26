@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import type { ExperimentPlan } from "@/lib/samples";
 import { exportPlanToPdf } from "@/lib/exportPdf";
+import { SectionFeedback, type FeedbackSection } from "@/components/SectionFeedback";
 
 /**
  * Plan section. On mobile (< md) the body is collapsible via a native <details>
