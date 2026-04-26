@@ -97,6 +97,7 @@ export type Database = {
       }
       plan_feedback: {
         Row: {
+          applications: number
           correction: string | null
           created_at: string
           domain: string | null
@@ -113,8 +114,11 @@ export type Database = {
           run_id: string
           section: string
           updated_at: string
+          uplift_n: number
+          uplift_sum: number
         }
         Insert: {
+          applications?: number
           correction?: string | null
           created_at?: string
           domain?: string | null
@@ -131,8 +135,11 @@ export type Database = {
           run_id: string
           section: string
           updated_at?: string
+          uplift_n?: number
+          uplift_sum?: number
         }
         Update: {
+          applications?: number
           correction?: string | null
           created_at?: string
           domain?: string | null
@@ -149,6 +156,8 @@ export type Database = {
           run_id?: string
           section?: string
           updated_at?: string
+          uplift_n?: number
+          uplift_sum?: number
         }
         Relationships: [
           {
@@ -287,6 +296,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      auto_demote_low_uplift_lessons: {
+        Args: { _max_avg_uplift?: number; _min_applications?: number }
+        Returns: number
+      }
       bootstrap_first_admin: { Args: never; Returns: boolean }
       bump_feedback_dup: { Args: { _id: string }; Returns: undefined }
       claim_anonymous_runs: { Args: { _owner_token: string }; Returns: number }
@@ -320,6 +333,21 @@ export type Database = {
           _user_id: string
         }
         Returns: boolean
+      }
+      lesson_uplift_stats: {
+        Args: { _limit?: number }
+        Returns: {
+          applications: number
+          avg_uplift: number
+          correction: string
+          created_at: string
+          domain: string
+          hidden: boolean
+          id: string
+          rating: number
+          section: string
+          uplift_n: number
+        }[]
       }
       match_plan_feedback: {
         Args: {
