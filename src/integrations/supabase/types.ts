@@ -206,6 +206,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      bootstrap_first_admin: { Args: never; Returns: boolean }
       bump_feedback_dup: { Args: { _id: string }; Returns: undefined }
       claim_anonymous_runs: { Args: { _owner_token: string }; Returns: number }
       cleanup_old_rate_limits: { Args: never; Returns: number }
