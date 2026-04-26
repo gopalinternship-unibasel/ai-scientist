@@ -700,15 +700,33 @@ serve(async (req) => {
               verdict.rationale = "All literature sources rate-limited or unreachable. Treating as unknown novelty.";
             }
 
-            // Canonical-technique override: when the technique is textbook
-            // and we have ANY literature hits at all, force `exact_match`.
-            // The references list will hold the best-ranked candidates.
+            // Canonical-technique override.
+            //
+            // The technique itself (PCR, Western blot, …) is textbook, so the
+            // baseline floor is "this method is extensively published". But if
+            // the top-ranked candidate has LOW overlap with the full hypothesis
+            // (e.g. "Western blot in tardigrades" — Western blot papers exist,
+            // tardigrade-specific ones likely do not), promoting straight to
+            // `exact_match` would mask the unusual-context novelty.
+            //
+            // Decision table when canon.matched && candidates.length > 0:
+            //   top_relevance >= 0.08 → `exact_match` (technique + context covered)
+            //   top_relevance <  0.08 → `similar`     (technique published, context not)
             const topRelevance = ranked[0]?.relevance ?? 0;
+            const CONTEXT_COVERAGE_THRESHOLD = 0.08;
             if (canon.matched && candidates.length > 0 && verdict.signal !== "exact_match") {
-              console.log(JSON.stringify({ run_id: runId, step: "canonical_override", technique: canon.technique, prev_signal: verdict.signal, top_relevance: topRelevance }));
-              verdict.signal = "exact_match";
-              verdict.semantic_overlap = "high";
-              verdict.rationale = `${canon.rationale} ${verdict.rationale}`.trim();
+              const promoteTo = topRelevance >= CONTEXT_COVERAGE_THRESHOLD ? "exact_match" : "similar";
+              console.log(JSON.stringify({
+                run_id: runId, step: "canonical_override",
+                technique: canon.technique, prev_signal: verdict.signal,
+                promoted_to: promoteTo, top_relevance: topRelevance,
+              }));
+              verdict.signal = promoteTo;
+              verdict.semantic_overlap = promoteTo === "exact_match" ? "high" : "medium";
+              const contextNote = promoteTo === "similar"
+                ? " However, the available literature covers the technique generically; the specific context in this hypothesis does not appear well-represented in the retrieved papers."
+                : "";
+              verdict.rationale = `${canon.rationale}${contextNote} ${verdict.rationale}`.trim();
               if (!verdict.chosen || verdict.chosen.length === 0) {
                 verdict.chosen = candidates.slice(0, 3).map((_, i) => i);
               }
