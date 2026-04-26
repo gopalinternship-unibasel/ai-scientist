@@ -20,6 +20,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
+import { UpliftPanel } from "@/components/admin/UpliftPanel";
 
 interface SectionStat { count: number; avg_rating: number | null }
 interface Stats {
@@ -141,6 +142,7 @@ const Admin = () => {
           <TabsList>
             <TabsTrigger value="stats">Stats</TabsTrigger>
             <TabsTrigger value="moderate">Moderate ({rows.length})</TabsTrigger>
+            <TabsTrigger value="uplift">Uplift</TabsTrigger>
             <TabsTrigger value="rules">House rules</TabsTrigger>
             <TabsTrigger value="loop">Loop ops</TabsTrigger>
           </TabsList>
@@ -279,6 +281,10 @@ const Admin = () => {
                 </CardContent>
               </Card>
             ))}
+          </TabsContent>
+
+          <TabsContent value="uplift" className="space-y-4 pt-4">
+            <UpliftPanel />
           </TabsContent>
 
           <TabsContent value="rules" className="space-y-4 pt-4">
