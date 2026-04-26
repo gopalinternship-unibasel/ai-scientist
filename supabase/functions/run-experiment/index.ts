@@ -451,7 +451,7 @@ serve(async (req) => {
             start(controller) {
               controller.enqueue(enc.encode(`event: run\ndata: ${JSON.stringify({ id: pending.id, cached: false, in_flight: true })}\n\n`));
               controller.enqueue(enc.encode(`event: done\ndata: ${JSON.stringify({ id: pending.id })}\n\n`));
-              closeStream();
+              controller.close();
             },
           });
           return new Response(stream, {
