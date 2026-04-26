@@ -11,3 +11,6 @@ verify_jwt = false
 
 [functions.embed-feedback]
 verify_jwt = false
+
+[functions.backfill-feedback-embeddings]
+verify_jwt = false

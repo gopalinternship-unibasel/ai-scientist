@@ -19,6 +19,7 @@ import { rankByRelevance } from "../_shared/relevanceRank.ts";
 import { checkTimelineConsistency } from "../_shared/timelineCheck.ts";
 import { verifyMaterialsLive } from "../_shared/skuVerify.ts";
 import { retrieveRelevantFeedback, feedbackPromptFragment } from "../_shared/feedbackRetrieval.ts";
+import { normalizeDomain } from "../_shared/domainNormalize.ts";
 
 const planSchema = {
   type: "object",
@@ -489,12 +490,12 @@ serve(async (req) => {
     }
 
     // Look up parent run (for refinement) and compute next version.
-    let parentRun: { plan: unknown; qc: unknown; version: number } | null = null;
+    let parentRun: { plan: unknown; qc: unknown; version: number; domain: string | null } | null = null;
     let nextVersion = 1;
     if (isRefinement) {
       const { data: parent } = await supabase
         .from("runs")
-        .select("plan, qc, version, hypothesis_hash, owner_user_id, owner_token")
+        .select("plan, qc, version, hypothesis_hash, owner_user_id, owner_token, domain")
         .eq("id", parentRunId)
         .maybeSingle();
       if (!parent || !parent.plan) {
@@ -511,7 +512,11 @@ serve(async (req) => {
           status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      parentRun = { plan: parent.plan, qc: parent.qc, version: parent.version ?? 1 };
+      parentRun = {
+        plan: parent.plan, qc: parent.qc,
+        version: parent.version ?? 1,
+        domain: (parent.domain as string | null) ?? null,
+      };
       // Find max version in the chain (root + descendants).
       const { data: siblings } = await supabase
         .from("runs")
@@ -761,9 +766,13 @@ serve(async (req) => {
           const safetyFlags = screenSafety(hypothesis);
 
           // Retrieve cross-run feedback hints via semantic similarity. Best-
-          // effort; failure is silent. Domain guess is the QC's classifier
-          // hint when present.
-          const domainGuess = (qc as { domain?: string })?.domain ?? null;
+          // effort; failure is silent. Domain guess prefers parent run's
+          // canonical domain (refinements) and falls back to QC + hypothesis.
+          const domainGuess = normalizeDomain(
+            (parentRun as { domain?: string } | null)?.domain,
+            (qc as { domain?: string })?.domain,
+            hypothesis,
+          );
           const feedbackHints = await retrieveRelevantFeedback(
             supabase, hypothesis, domainGuess, LOVABLE_API_KEY,
           );
@@ -926,7 +935,16 @@ ${COST_CATALOG_PROMPT}${feedbackContext}`;
             }
           }
 
-          await supabase.from("runs").update({ plan: planObj, status: "done" }).eq("id", runId);
+          // Persist a normalized domain on the run so future feedback rows
+          // and cross-run retrieval all share the same controlled vocabulary.
+          const normalizedDomain = normalizeDomain(
+            (planObj as { domain?: string })?.domain,
+            hypothesis,
+            (planObj as { summary?: string })?.summary,
+          );
+          await supabase.from("runs").update({
+            plan: planObj, status: "done", domain: normalizedDomain,
+          }).eq("id", runId);
           send("plan", planObj);
           send("done", { id: runId });
 

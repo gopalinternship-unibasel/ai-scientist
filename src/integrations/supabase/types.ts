@@ -90,6 +90,7 @@ export type Database = {
           applied_feedback: Json | null
           created_at: string
           critique: Json | null
+          domain: string | null
           error: string | null
           hypothesis: string
           hypothesis_hash: string | null
@@ -109,6 +110,7 @@ export type Database = {
           applied_feedback?: Json | null
           created_at?: string
           critique?: Json | null
+          domain?: string | null
           error?: string | null
           hypothesis: string
           hypothesis_hash?: string | null
@@ -128,6 +130,7 @@ export type Database = {
           applied_feedback?: Json | null
           created_at?: string
           critique?: Json | null
+          domain?: string | null
           error?: string | null
           hypothesis?: string
           hypothesis_hash?: string | null
