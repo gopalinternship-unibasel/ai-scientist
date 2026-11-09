@@ -205,6 +205,7 @@ export type Database = {
           owner_user_id: string | null
           parent_run_id: string | null
           plan: Json | null
+          progress: Json | null
           qc: Json | null
           refinement_instruction: string | null
           share_token: string | null
@@ -228,6 +229,7 @@ export type Database = {
           owner_user_id?: string | null
           parent_run_id?: string | null
           plan?: Json | null
+          progress?: Json | null
           qc?: Json | null
           refinement_instruction?: string | null
           share_token?: string | null
@@ -251,6 +253,7 @@ export type Database = {
           owner_user_id?: string | null
           parent_run_id?: string | null
           plan?: Json | null
+          progress?: Json | null
           qc?: Json | null
           refinement_instruction?: string | null
           share_token?: string | null

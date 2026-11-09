@@ -571,12 +571,25 @@ serve(async (req) => {
             return;
           }
 
+          // Live progress for the run page (runs.progress). The SSE stream
+          // closes right after the `run` event, so this row is how the
+          // browser learns which stage the pipeline is in and how much of the
+          // plan has streamed so far. Fire-and-forget; never blocks the run.
+          const setProgress = (p: Record<string, unknown>) => {
+            supabase.from("runs")
+              // deno-lint-ignore no-explicit-any
+              .update({ progress: { ...p, at: new Date().toISOString() } } as any)
+              .eq("id", runId)
+              .then(() => {}, () => {});
+          };
+
           const processRun = async () => {
             try {
           // LLM-backed gate runs HERE (not before the row insert) so the
           // user has already navigated to /runs/:id and is watching a
           // proper progress UI rather than an idle home screen.
           if (!isRefinement) {
+            setProgress({ stage: "gate" });
             const verdict = await gateHypothesis(hypothesis, AI_API_KEY);
             if (!verdict.ok) {
               const msg = verdict.reason ?? "This input doesn't look like a testable hypothesis.";
@@ -615,6 +628,7 @@ serve(async (req) => {
             const litQuery = canon.matched
               ? `${canon.technique} method protocol`
               : hypothesis;
+            setProgress({ stage: "literature" });
             const lit = await searchLiterature(litQuery);
 
             // Re-rank candidates by token overlap with the hypothesis BEFORE
@@ -638,6 +652,7 @@ serve(async (req) => {
               canonical: canon.matched ? canon.technique : null,
             }));
 
+            setProgress({ stage: "novelty", candidates: candidates.length });
             const verdict = await classifyNovelty(hypothesis, candidates, AI_API_KEY);
             if (lit.rateLimited && lit.papers.length === 0) {
               verdict.rationale = "All literature sources rate-limited or unreachable. Treating as unknown novelty.";
@@ -768,6 +783,8 @@ serve(async (req) => {
             .replace(/\n\nProduce the full experiment plan\.$/, `${refinementContext}\n\nProduce the full experiment plan.`);
 
 
+          setProgress({ stage: "planning", chars: 0, model: PLAN_MODELS[0] });
+
           // Streaming plan generation with model fallback. Keep the connection
           // budget tight: if a model has not produced headers quickly, move to
           // the next model instead of leaving the user on "Generating".
@@ -826,6 +843,7 @@ serve(async (req) => {
           // tool_choice). Used only when no tool-call arguments arrive.
           let contentAccum = "";
           let lastEmit = 0;
+          let lastProgressWrite = 0;
           let lastHeartbeat = Date.now();
           while (true) {
             const { done, value } = await reader.read();
@@ -856,6 +874,14 @@ serve(async (req) => {
                     lastEmit = now;
                     const partial = tryParsePartial(sofar);
                     send("progress", { chars: sofar.length, partial });
+                    // Persist a compact version every 3 s for the run page.
+                    if (now - lastProgressWrite > 3000) {
+                      lastProgressWrite = now;
+                      setProgress({
+                        stage: "planning", chars: sofar.length, model: modelUsed,
+                        sections: partial ? Object.keys(partial) : [],
+                      });
+                    }
                   }
                   // Heartbeat: bump updated_at every ~60s so the stale-run
                   // cleanup cron doesn't kill an actively-streaming generation.
@@ -973,12 +999,15 @@ serve(async (req) => {
                 .eq("id", runId);
             }
 
+            setProgress({ stage: "critique" });
             const critique = await critiquePlan(hypothesis, plan, AI_API_KEY, extraContext, feedbackHints);
             if (critique) {
               await supabase.from("runs").update({ critique }).eq("id", runId);
             }
+            setProgress({ stage: "complete", critique: !!critique });
           } catch (e) {
             console.error("critique failed", e);
+            setProgress({ stage: "complete", critique: false });
           }
 
             return;

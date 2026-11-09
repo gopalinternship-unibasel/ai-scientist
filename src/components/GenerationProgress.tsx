@@ -10,16 +10,54 @@ const lines = [
   "Compiling validation plan…",
 ];
 
+/** Live progress the edge function writes to `runs.progress` while it works. */
+export interface RunProgress {
+  stage?: "gate" | "literature" | "novelty" | "planning" | "critique" | "complete" | string;
+  at?: string;
+  chars?: number;
+  sections?: string[];
+  model?: string;
+  candidates?: number;
+}
+
+const STAGE_LABEL: Record<string, string> = {
+  gate: "Checking that this is a testable hypothesis",
+  literature: "Searching Semantic Scholar, OpenAlex and PubMed",
+  novelty: "Classifying novelty against the retrieved papers",
+  planning: "Streaming the experiment plan from the model",
+  critique: "Independent reviewer critique in progress",
+};
+
+const SECTION_LABEL: Record<string, string> = {
+  hypothesis_restated: "hypothesis", success_criteria: "success criteria",
+  statistical_design: "statistics",
+};
+
+/** One-line description of the live progress, or null when there is none. */
+export function describeProgress(p: RunProgress | null | undefined): string | null {
+  if (!p?.stage || p.stage === "complete") return null;
+  const label = STAGE_LABEL[p.stage] ?? p.stage;
+  if (p.stage === "planning" && (p.chars ?? 0) > 0) {
+    const done = (p.sections ?? []).map((k) => SECTION_LABEL[k] ?? k.replace(/_/g, " "));
+    return `${label}: ${p.chars!.toLocaleString("en-US")} characters so far${done.length ? ` · sections started: ${done.join(", ")}` : ""}`;
+  }
+  if (p.stage === "novelty" && p.candidates != null) return `${label} (${p.candidates} candidates)`;
+  return label;
+}
+
 interface Props {
   stage: "qc" | "plan";
+  /** Optional: live progress from runs.progress. */
+  progress?: RunProgress | null;
   /** Optional: render a Stop button that aborts the in-flight stream. */
   onStop?: () => void;
   /** Optional: refinement context to display while regenerating. */
   refinement?: { fromVersion: number; toVersion: number; instruction: string } | null;
 }
 
-export const GenerationProgress = ({ stage, onStop, refinement }: Props) => {
+export const GenerationProgress = ({ stage, onStop, refinement, progress }: Props) => {
   const visible = stage === "qc" ? lines.slice(0, 2) : lines;
+  const live = describeProgress(progress);
   return (
     <section className="paper-surface rounded-lg p-6 md:p-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -46,6 +84,17 @@ export const GenerationProgress = ({ stage, onStop, refinement }: Props) => {
             "{refinement.instruction}"
           </p>
         </div>
+      )}
+
+      {live && (
+        <p
+          data-testid="live-progress"
+          aria-live="polite"
+          className="mt-4 rounded-md border border-rule bg-paper px-3 py-2 font-mono text-[11px] text-foreground/80"
+        >
+          {live}
+          {progress?.model ? ` · model ${progress.model}` : ""}
+        </p>
       )}
 
       <ul className="mt-5 space-y-2">

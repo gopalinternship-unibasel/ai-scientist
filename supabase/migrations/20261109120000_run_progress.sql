@@ -1,0 +1,12 @@
+-- Live generation progress for the run page.
+--
+-- run-experiment streams the plan from the model, but the browser's SSE
+-- stream closes as soon as the run row exists (the pipeline continues in the
+-- background via EdgeRuntime.waitUntil), so the partial-plan `progress`
+-- events never reached the UI: the run page only knew "qc" or "plan".
+-- The function now writes a small progress object here as it moves through
+-- gate -> literature -> novelty -> planning (characters streamed, sections
+-- completed) -> critique, and the run page shows it via realtime / polling.
+-- Shape: { "stage": text, "at": timestamptz, "chars"?: int, "sections"?: text[],
+--          "model"?: text, "candidates"?: int }
+ALTER TABLE public.runs ADD COLUMN IF NOT EXISTS progress jsonb;

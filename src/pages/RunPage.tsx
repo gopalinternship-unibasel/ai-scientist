@@ -9,7 +9,7 @@ import { UserMenu } from "@/components/UserMenu";
 import { LiteratureQCCard } from "@/components/LiteratureQCCard";
 import { ExperimentPlanView } from "@/components/ExperimentPlanView";
 import { SolicitationBanner } from "@/components/SolicitationBanner";
-import { GenerationProgress } from "@/components/GenerationProgress";
+import { GenerationProgress, describeProgress, type RunProgress } from "@/components/GenerationProgress";
 import { PlanCritiqueCard } from "@/components/PlanCritiqueCard";
 import { RefineDialog } from "@/components/RefineDialog";
 import { VersionSwitcher, type VersionEntry } from "@/components/VersionSwitcher";
@@ -50,10 +50,11 @@ interface Run {
   applied_feedback: AppliedFeedback[] | null;
   solicit_section: string | null;
   solicit_reason: string | null;
+  progress: RunProgress | null;
 }
 
 const RUN_COLUMNS =
-  "id,hypothesis,status,qc,plan,critique,error,created_at,parent_run_id,version,refinement_instruction,share_token,owner_user_id,updated_at,applied_feedback,solicit_section,solicit_reason";
+  "id,hypothesis,status,qc,plan,critique,error,created_at,parent_run_id,version,refinement_instruction,share_token,owner_user_id,updated_at,applied_feedback,solicit_section,solicit_reason,progress";
 
 // Stall threshold: warn the user if no progress for 90s on an in-flight run.
 const STALL_THRESHOLD_MS = 150_000;
@@ -404,8 +405,8 @@ const RunPage = () => {
                   <LiteratureQCCard qc={run.qc} />
                 </ErrorBoundary>
               )}
-              {inFlight && !run.qc && <GenerationProgress stage="qc" refinement={refinementCtx} />}
-              {inFlight && run.qc && !run.plan && <GenerationProgress stage="plan" refinement={refinementCtx} />}
+              {inFlight && !run.qc && <GenerationProgress stage="qc" refinement={refinementCtx} progress={run.progress} />}
+              {inFlight && run.qc && !run.plan && <GenerationProgress stage="plan" refinement={refinementCtx} progress={run.progress} />}
               {run.plan && run.solicit_section && run.solicit_reason && isOwner && (
                 <SolicitationBanner
                   runId={run.id}
@@ -428,6 +429,11 @@ const RunPage = () => {
                     appliedFeedback={run.applied_feedback ?? null}
                   />
                 </ErrorBoundary>
+              )}
+              {run.status === "done" && !run.critique && run.progress?.stage === "critique" && (
+                <p data-testid="critique-pending" className="no-print font-mono text-[11px] text-muted-foreground">
+                  {describeProgress(run.progress)}…
+                </p>
               )}
               {run.critique && (
                 <ErrorBoundary label="the peer review">
