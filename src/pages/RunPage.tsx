@@ -21,6 +21,7 @@ import { startRunStream } from "@/lib/runStream";
 import { getOwnerToken } from "@/lib/owner";
 import { parseRunError, hintForKind, isRetryable } from "@/lib/runErrors";
 import { canRefineRun } from "@/lib/runAccess";
+import { refinementBase } from "@/lib/versionBase";
 import type { ExperimentPlan, LiteratureQC, PlanCritique } from "@/lib/samples";
 
 type Status = "pending" | "qc" | "plan" | "done" | "failed";
@@ -401,12 +402,10 @@ const RunPage = () => {
         )}
 
         {(() => {
-          const prevVersion = versions
-            .filter((v) => v.version < run.version && v.id !== run.id)
-            .sort((a, b) => b.version - a.version)[0];
-          const previousPlan = (prevVersion as unknown as { plan?: ExperimentPlan } | undefined)?.plan ?? null;
+          const prevVersion = refinementBase(run, versions as unknown as (VersionEntry & { plan?: ExperimentPlan | null })[]);
+          const previousPlan = prevVersion?.plan ?? null;
           const refinementCtx = run.refinement_instruction && run.version > 1
-            ? { fromVersion: run.version - 1, toVersion: run.version, instruction: run.refinement_instruction }
+            ? { fromVersion: prevVersion?.version ?? run.version - 1, toVersion: run.version, instruction: run.refinement_instruction }
             : null;
           return (
             <div className="space-y-6">

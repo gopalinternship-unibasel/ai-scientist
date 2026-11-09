@@ -44,6 +44,7 @@ export const VersionSwitcher = ({ versions, currentId }: Props) => {
               <span className="hidden max-w-[180px] truncate text-foreground/50 sm:inline">
                 {v.refinement_instruction ? `· ${v.refinement_instruction}` : "· initial"}
               </span>
+              {v.status === "failed" && <span className="text-destructive">failed</span>}
             </span>
           );
           return (
