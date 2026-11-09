@@ -14,10 +14,17 @@
     5. writes .env.development.local so the dev server talks to the local stack
     6. creates the test users in .local-test-user.json (first run only)
     7. checks that the configured Ollama models are available
-    8. serves the edge functions with `supabase functions serve --inspect-mode run`
-       (PID in .local-logs/functions-serve.pid). Inspect mode is the only way
-       the local edge runtime lifts its 400-second wall-clock limit per worker;
-       plan generation on a CPU-only local model takes far longer than that.
+    8. serves the edge functions with `supabase functions serve --inspect-mode run`.
+       Inspect mode is the only way the local edge runtime lifts its
+       400-second wall-clock limit per worker; plan generation on a CPU-only
+       local model takes far longer than that. Once the runtime is up the
+       CLI process (and with it the file watcher) is stopped; the runtime
+       container keeps serving. On Windows the watcher also fires on NTFS
+       last-access updates (git status, a directory listing, a virus scan),
+       and every "change" restarts the runtime and kills runs in progress.
+       If the runtime is already serving it is left alone (use
+       -RestartFunctions after editing function code, or -Watch to keep hot
+       reload while developing).
     9. starts the Vite dev server in the background (PID in .local-logs/vite.pid)
 
   Stop everything with scripts/stop-local.ps1.
@@ -27,11 +34,22 @@
 
 .PARAMETER NoFrontend
   Start only the backend.
+
+.PARAMETER RestartFunctions
+  Recreate the edge-function runtime even if it is already serving (picks up
+  edited function code or supabase/functions/.env; aborts runs in progress).
+
+.PARAMETER Watch
+  Keep `supabase functions serve` running with hot reload (PID in
+  .local-logs/functions-serve.pid). Any file event under supabase/functions
+  restarts the runtime and aborts runs in progress.
 #>
 [CmdletBinding()]
 param(
   [int]$Port = 5180,
-  [switch]$NoFrontend
+  [switch]$NoFrontend,
+  [switch]$RestartFunctions,
+  [switch]$Watch
 )
 
 $ErrorActionPreference = 'Stop'
@@ -171,12 +189,23 @@ function Test-PidAlive([string]$file) {
   $id = Get-Content $file -ErrorAction SilentlyContinue
   return [bool]($id -and (Get-Process -Id $id -ErrorAction SilentlyContinue))
 }
+$EdgeContainer = "supabase_edge_runtime_$ProjectId"
 $fsPid = Join-Path $LogDir 'functions-serve.pid'
-if (Test-PidAlive $fsPid) {
-  Write-Step "Edge functions already served (PID $(Get-Content $fsPid))"
+# Is the runtime already up in inspect mode (no wall-clock limit)?
+$prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+$edgeCmd = (docker inspect $EdgeContainer --format '{{.State.Running}} {{json .Config.Cmd}}' 2>$null) -join ' '
+$ErrorActionPreference = $prev
+$edgeServing = $edgeCmd -match '^true ' -and $edgeCmd -match '--inspect'
+if ($edgeServing -and -not $RestartFunctions -and -not ($Watch -and -not (Test-PidAlive $fsPid))) {
+  Write-Step 'Edge functions already served (no wall-clock limit); use -RestartFunctions to reload code'
 } else {
+  if (Test-PidAlive $fsPid) {
+    & taskkill.exe /PID (Get-Content $fsPid) /T /F | Out-Null
+    Remove-Item $fsPid -ErrorAction SilentlyContinue
+  }
   Write-Step 'Serving edge functions (supabase functions serve --inspect-mode run)'
   $fsLog = Join-Path $LogDir 'functions-serve.log'
+  Remove-Item $fsLog -ErrorAction SilentlyContinue
   $p = Start-Process -FilePath $Supabase -ArgumentList @('functions', 'serve', '--inspect-mode', 'run') `
     -WorkingDirectory $Root -WindowStyle Hidden -PassThru `
     -RedirectStandardOutput $fsLog -RedirectStandardError (Join-Path $LogDir 'functions-serve.err.log')
@@ -188,7 +217,14 @@ if (Test-PidAlive $fsPid) {
     if ((Test-Path $fsLog) -and (Select-String -Path $fsLog -Pattern 'Serving functions' -Quiet)) { $served = $true; break }
     if ($p.HasExited) { break }
   }
-  if (-not $served) { Write-Warn 'Edge functions did not report "Serving functions" within 180 s; see .local-logs\functions-serve*.log' }
+  if (-not $served) {
+    Write-Warn 'Edge functions did not report "Serving functions" within 180 s; see .local-logs\functions-serve*.log'
+  } elseif (-not $Watch) {
+    # Detach: stop the CLI (and its file watcher); the runtime container stays up.
+    & taskkill.exe /PID $p.Id /T /F | Out-Null
+    Remove-Item $fsPid -ErrorAction SilentlyContinue
+    Write-Step 'Edge runtime is serving; file watcher stopped (re-run with -RestartFunctions after code changes)'
+  }
 }
 
 # --- 9. frontend --------------------------------------------------------------------
