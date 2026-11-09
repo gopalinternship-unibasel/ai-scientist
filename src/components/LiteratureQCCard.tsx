@@ -1,6 +1,7 @@
 import { CheckCircle2, AlertTriangle, FileSearch, ExternalLink } from "lucide-react";
 import type { LiteratureQC } from "@/lib/samples";
 import { readableRationale } from "@/lib/rationale";
+import { displayQc } from "@/lib/noveltyDisplay";
 
 const signalConfig = {
   not_found: {
@@ -26,7 +27,9 @@ const signalConfig = {
   },
 } as const;
 
-export const LiteratureQCCard = ({ qc }: { qc: LiteratureQC }) => {
+export const LiteratureQCCard = ({ qc: stored, hypothesis }: { qc: LiteratureQC; hypothesis?: string }) => {
+  // Runs saved before the novelty verdict check get it here (noveltyDisplay.ts).
+  const qc = displayQc(stored, hypothesis);
   const cfg = signalConfig[qc.signal];
   const Icon = cfg.icon;
 

@@ -712,6 +712,7 @@ serve(async (req) => {
             semantic_overlap?: "low" | "medium" | "high";
             /** The classifier's own signal when the automated check changed it. */
             classifier_signal?: string;
+            novelty_checked?: boolean;
           };
           if (isRefinement && parentRun?.qc) {
             qc = parentRun.qc as typeof qc;
@@ -822,6 +823,8 @@ serve(async (req) => {
               sources_used: lit.sources,
               semantic_overlap: verdict.semantic_overlap,
               ...(verdict.corrected_from ? { classifier_signal: verdict.corrected_from } : {}),
+              // The page re-checks verdicts of runs saved before this check existed.
+              novelty_checked: true,
             };
             await supabase.from("runs").update({ qc, status: "plan" }).eq("id", runId);
             send("qc", qc);

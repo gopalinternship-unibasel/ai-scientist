@@ -52,10 +52,19 @@ export function planCheckNotes(plan: ExperimentPlan, references: RefLike[]): Pla
     : null;
 
   if (plan.verification?.issues) {
+    const stated = plan.verification.budget?.stated_total;
+    const shownSum = shown.check?.line_item_sum;
     const notes = plan.verification.issues
       // A stored "does not match" note is answered by the correction above.
       .filter((i) => !(materialsNote && i.kind === "materials_subtotal_mismatch"))
-      .map((i) => (i.kind === "unverified_sources_removed" ? { ...i, detail: withoutRemovedExample(i.detail) } : i));
+      .map((i) => {
+        if (i.kind === "unverified_sources_removed") return { ...i, detail: withoutRemovedExample(i.detail) };
+        // The stored total note named the old sum; the shown total now includes the raised materials line.
+        if (materialsNote && i.kind === "budget_total_corrected" && stated != null && shownSum != null) {
+          return { ...i, detail: `The model's budget total (${usd(stated)}) did not equal the sum of its line items with the corrected materials line (${usd(shownSum)}); the total now shows the sum.` };
+        }
+        return i;
+      });
     if (materialsNote && !notes.some((i) => i.kind === "materials_line_corrected")) notes.unshift(materialsNote);
     return notes;
   }

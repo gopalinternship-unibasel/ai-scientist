@@ -27,6 +27,19 @@ describe("plan checks shown for plans saved before the round-2 fixes", () => {
     expect(notes[0].detail).toContain("$1,295");
   });
 
+  it("restates an old total note with the sum that is now shown (run 020ae70a)", () => {
+    const old: ExperimentPlan = {
+      ...base,
+      verification: {
+        budget: { stated_total: 18325, line_item_sum: 5715, corrected: true },
+        issues: [{ kind: "budget_total_corrected", severity: "medium", detail: "The model's budget total ($18,325) did not equal the sum of its line items ($5,715); the total now shows the sum." }],
+      },
+    };
+    const total = planCheckNotes(old, []).find((n) => n.kind === "budget_total_corrected");
+    expect(total?.detail).toContain("$18,325");
+    expect(total?.detail).toContain("$6,395");
+  });
+
   it("does not repeat an invented link in the removed-sources note (run 6745b824)", () => {
     const old: ExperimentPlan = {
       ...base,

@@ -20,11 +20,20 @@
 //    exact_match, at least medium for similar);
 //  - references the classifier chose that are off-topic are dropped, and a
 //    corrected verdict cites the most relevant candidates.
-// Import-free apart from types.
+// Import-free apart from hypothesisTerms.ts (no Deno or browser APIs).
 
 import type { Concept } from "./hypothesisTerms.ts";
 import { anchorConcepts, mentions, textWords } from "./hypothesisTerms.ts";
-import type { RankedPaper } from "./relevanceRank.ts";
+
+/** A retrieved paper with its relevance (relevanceRank.ts RankedPaper fits). */
+export interface ScoredPaper {
+  title: string;
+  abstract?: string | null;
+  /** Weighted share of the hypothesis concepts the paper mentions (0-1). */
+  relevance: number;
+  /** The hypothesis concepts (query spellings) the paper mentions. */
+  matched: string[];
+}
 
 export type NoveltySignal = "not_found" | "similar" | "exact_match";
 export type Overlap = "low" | "medium" | "high";
@@ -67,7 +76,7 @@ export function coreShare(concepts: Concept[], paper: { title?: string; abstract
 
 export function calibrateNovelty(
   verdict: NoveltyVerdict,
-  candidates: RankedPaper[],
+  candidates: ScoredPaper[],
   concepts: Concept[],
 ): NoveltyVerdict {
   const out: NoveltyVerdict = { ...verdict, chosen: [...(verdict.chosen ?? [])] };
