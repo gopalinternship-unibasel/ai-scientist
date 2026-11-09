@@ -199,3 +199,19 @@ Deno.test("timeline: protocol steps longer than the timeline are shown as a find
   assert(kinds(v).includes("protocol_exceeds_timeline"));
   assertFalse(kinds(verifyPlan({ protocol: RUN_A_PROTOCOL, timeline: RUN_A_TIMELINE }, { hypothesis: METFORMIN, references: [] }).verification).includes("protocol_exceeds_timeline"));
 });
+
+// --- suppliers (run 739dddf1: antibodies and an electrode from IDT, whole blood from Addgene) ---
+
+Deno.test("suppliers: specialist suppliers that do not sell the item are flagged", () => {
+  const materials = [
+    { name: "Anti-CRP antibodies", supplier: "IDT", total_cost_usd: 420 },
+    { name: "Whole blood samples", supplier: "Addgene", total_cost_usd: 0 },
+    { name: "Alt-R CRISPR-Cas9 crRNA", supplier: "IDT", total_cost_usd: 95 },
+    { name: "HepG2 cells", supplier: "ATCC", total_cost_usd: 580 },
+    { name: "pLKO.1 plasmid", supplier: "Addgene", total_cost_usd: 85 },
+  ];
+  const issue = verifyPlan({ materials }, { hypothesis: METFORMIN, references: [] }).verification.issues.find((i) => i.kind === "supplier_unlikely");
+  assertEquals(issue?.severity, "medium");
+  assert(issue?.detail.includes("Anti-CRP antibodies") && issue.detail.includes("Whole blood samples"), issue?.detail);
+  assertFalse(issue?.detail.includes("crRNA") || issue?.detail.includes("HepG2") || issue?.detail.includes("pLKO"));
+});

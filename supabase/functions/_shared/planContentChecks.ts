@@ -208,6 +208,40 @@ export function materialListSteps(steps: { title?: string; description?: string 
   return { steps: bad, total: steps.length, example: ex.length > 90 ? `${ex.slice(0, 87)}...` : ex };
 }
 
+// --- suppliers -------------------------------------------------------------------
+
+// Specialist suppliers and what they sell. Run 739dddf1 (CRP biosensor, QA
+// round-2 fix check) bought anti-CRP antibodies and an electrode from IDT
+// and whole blood from Addgene.
+const SPECIALISTS: Array<{ supplier: RegExp; label: string; sells: RegExp }> = [
+  { supplier: /^idt$|integrated\s+dna/i, label: "IDT (oligonucleotides, CRISPR reagents)",
+    sells: /oligo|primer|probe|g-?block|gene\s+fragment|guide|g?rna|crrna|tracr|cas\s?9|cas\s?12|alt-?r|adapter|duplex|dna|sirna|nuclease|custom/i },
+  { supplier: /addgene/i, label: "Addgene (plasmids, viral preps)",
+    sells: /plasmid|vector|construct|virus|viral|aav|lenti|retro|clone|antibod|kit/i },
+  { supplier: /^atcc$/i, label: "ATCC (cell lines, strains)",
+    sells: /cell|line|strain|bacteri|virus|phage|yeast|fung|culture|medium|media|serum|[a-z]+\d|\d[a-z]/i },
+  { supplier: /jackson|jax/i, label: "The Jackson Laboratory (mice)",
+    sells: /mice|mouse|strain|c57|balb|nod|scid/i },
+];
+
+export interface SupplierMismatch {
+  name: string;
+  supplier: string;
+  label: string;
+}
+
+/** Materials bought from a specialist supplier that does not sell that kind of item. */
+export function unlikelySuppliers(materials: { name?: string; supplier?: string }[] | undefined): SupplierMismatch[] {
+  if (!Array.isArray(materials)) return [];
+  const out: SupplierMismatch[] = [];
+  for (const m of materials) {
+    const supplier = (m?.supplier ?? "").trim();
+    const spec = SPECIALISTS.find((s) => s.supplier.test(supplier));
+    if (spec && !spec.sells.test(m?.name ?? "")) out.push({ name: m?.name ?? "", supplier, label: spec.label });
+  }
+  return out;
+}
+
 // --- catalog numbers ------------------------------------------------------------
 
 export interface MaterialWithCatalog {

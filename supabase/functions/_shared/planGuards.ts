@@ -22,6 +22,7 @@ import { checkTimelineConsistency, parseDurationToHours } from "./timelineCheck.
 import { anchorConcepts, hypothesisConcepts, mentions, textWords } from "./hypothesisTerms.ts";
 import {
   doseIssues, type LiveSkuFinding, materialListSteps, type MaterialWithCatalog, removeWrongCatalogNumbers,
+  unlikelySuppliers,
 } from "./planContentChecks.ts";
 
 export interface PlanIssue {
@@ -33,6 +34,7 @@ export interface PlanIssue {
     | "materials_unpriced"
     | "catalog_items_copied"
     | "catalog_numbers_removed"
+    | "supplier_unlikely"
     | "dose_changed"
     | "protocol_steps_not_actions"
     | "protocol_exceeds_timeline"
@@ -479,6 +481,14 @@ export function verifyPlan(
       kind: "materials_unpriced",
       severity: "medium",
       detail: "No material has a cost, so the materials budget is not grounded in the materials list.",
+    });
+  }
+  const odd = unlikelySuppliers(materials);
+  if (odd.length > 0) {
+    issues.push({
+      kind: "supplier_unlikely",
+      severity: "medium",
+      detail: `Supplier unlikely for: ${odd.slice(0, 4).map((o) => `"${o.name}" from ${o.label}`).join("; ")}.`,
     });
   }
   if (materials.length > 0) {
