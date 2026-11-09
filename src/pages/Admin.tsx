@@ -332,8 +332,14 @@ const LoopOpsPanel = () => {
   const distill = async () => {
     setDistilling(true);
     try {
-      const { data, error } = await supabase.functions.invoke("distill-house-rules", { body: {} });
+      // async: the function answers at once and distils in the background
+      // (a slow local model needs longer than the gateway's 150 s timeout).
+      const { data, error } = await supabase.functions.invoke("distill-house-rules", { body: { async: true } });
       if (error) throw error;
+      if (data?.started) {
+        toast.success(`Distillation started for ${data.domains} domains. New rules appear under House rules when the model finishes.`);
+        return;
+      }
       const created = (data?.results ?? []).reduce((s: number, r: { created: number }) => s + r.created, 0);
       toast.success(`Distilled ${created} house rules across ${data?.results?.length ?? 0} domains.`);
     } catch (e) {
@@ -345,8 +351,12 @@ const LoopOpsPanel = () => {
   const runEval = async () => {
     setEvaling(true);
     try {
-      const { data, error } = await supabase.functions.invoke("eval-harness", { body: { pilot_size: 4 } });
+      const { data, error } = await supabase.functions.invoke("eval-harness", { body: { pilot_size: 4, async: true } });
       if (error) throw error;
+      if (data?.started) {
+        toast.success(`Eval batch started (${data.hypotheses} hypotheses). Scores appear under Recent eval batches as each one finishes.`);
+        return;
+      }
       toast.success(`Eval batch complete: ${data?.evaluated ?? 0} hypotheses scored.`);
       await loadSummary();
     } catch (e) {

@@ -123,7 +123,7 @@ serve(async (req) => {
       });
     }
   }
-  let body: { full?: boolean; pilot_size?: number } = {};
+  let body: { full?: boolean; pilot_size?: number; async?: boolean } = {};
   try { body = await req.json(); } catch { /* allow empty */ }
 
   const writer = createClient(SUPABASE_URL, SERVICE_KEY);
@@ -135,26 +135,41 @@ serve(async (req) => {
   // The two arms differ only in whether retrieved feedback hints are fed in —
   // everything else (refs, safety, domain, house rules, prompt, schema) is
   // identical. That isolates the loop's contribution from the planner's.
-  for (const item of suite) {
-    try {
-      const ctx = await prepareContext(item.hypothesis, writer, AI_API_KEY);
+  const evaluateAll = async () => {
+    for (const item of suite) {
+      try {
+        const ctx = await prepareContext(item.hypothesis, writer, AI_API_KEY);
 
-      const planWith = await realPlan(item.hypothesis, ctx, ctx.hintsWith, AI_API_KEY);
-      const planWithout = await realPlan(item.hypothesis, ctx, [], AI_API_KEY);
+        const planWith = await realPlan(item.hypothesis, ctx, ctx.hintsWith, AI_API_KEY);
+        const planWithout = await realPlan(item.hypothesis, ctx, [], AI_API_KEY);
 
-      const judgeWith = await judge(item.hypothesis, planWith ?? "", AI_API_KEY);
-      const judgeWithout = await judge(item.hypothesis, planWithout ?? "", AI_API_KEY);
+        const judgeWith = await judge(item.hypothesis, planWith ?? "", AI_API_KEY);
+        const judgeWithout = await judge(item.hypothesis, planWithout ?? "", AI_API_KEY);
 
-      const rows = [
-        toRow({ batchId, hypothesis: item.hypothesis, arm: "with_feedback", plan: planWith, judge: judgeWith, lessonCount: ctx.hintsWith.length }),
-        toRow({ batchId, hypothesis: item.hypothesis, arm: "without_feedback", plan: planWithout, judge: judgeWithout, lessonCount: 0 }),
-      ];
-      const { error } = await writer.from("eval_runs").insert(rows);
-      if (error) console.error("eval insert failed", error.message);
-    } catch (e) {
-      console.error("eval iteration failed", e);
+        const rows = [
+          toRow({ batchId, hypothesis: item.hypothesis, arm: "with_feedback", plan: planWith, judge: judgeWith, lessonCount: ctx.hintsWith.length }),
+          toRow({ batchId, hypothesis: item.hypothesis, arm: "without_feedback", plan: planWithout, judge: judgeWithout, lessonCount: 0 }),
+        ];
+        const { error } = await writer.from("eval_runs").insert(rows);
+        if (error) console.error("eval insert failed", error.message);
+      } catch (e) {
+        console.error("eval iteration failed", e);
+      }
     }
+  };
+
+  // { async: true }: answer at once and evaluate in the background (rows land
+  // in eval_runs per hypothesis). On a slow local model one hypothesis takes
+  // far longer than the API gateway's 150 s request timeout.
+  const waitUntil = (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } })
+    .EdgeRuntime?.waitUntil;
+  if (body.async && waitUntil) {
+    waitUntil(evaluateAll().catch((e) => console.error("eval background run failed", e)));
+    return new Response(JSON.stringify({ batch_id: batchId, started: true, hypotheses: suite.length }), {
+      status: 202, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
+  await evaluateAll();
 
   return new Response(JSON.stringify({ batch_id: batchId, evaluated: suite.length }), {
     headers: { ...corsHeaders, "Content-Type": "application/json" },

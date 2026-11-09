@@ -63,7 +63,7 @@ serve(async (req) => {
     });
   }
 
-  let body: { domain?: string; domains?: string[] } = {};
+  let body: { domain?: string; domains?: string[]; async?: boolean } = {};
   try { body = await req.json(); } catch { /* allow empty */ }
 
   const targets = body.domains ?? (body.domain ? [body.domain] : DOMAINS as unknown as string[]);
@@ -74,139 +74,158 @@ serve(async (req) => {
 
   const results: { domain: string; created: number; skipped?: string }[] = [];
 
-  for (const domain of targets) {
-    try {
-      const { data: corrections, error: corrErr } = await supabase.rpc(
-        "corrections_for_distillation",
-        { _domain: domain, _limit: 200 },
-      );
-      if (corrErr) {
-        console.warn(`distill ${domain}: rpc failed`, corrErr.message);
-        results.push({ domain, created: 0, skipped: "rpc_failed" });
-        continue;
-      }
-      // Need a meaningful corpus before distilling.
-      const items = (corrections ?? []) as Array<{ section: string; correction: string; rating: number | null; dup_count: number }>;
-      if (items.length < 4) {
-        results.push({ domain, created: 0, skipped: "too_few_corrections" });
-        continue;
-      }
+  const distillAll = async () => {
+    for (const domain of targets) {
+      try {
+        const { data: corrections, error: corrErr } = await supabase.rpc(
+          "corrections_for_distillation",
+          { _domain: domain, _limit: 200 },
+        );
+        if (corrErr) {
+          console.warn(`distill ${domain}: rpc failed`, corrErr.message);
+          results.push({ domain, created: 0, skipped: "rpc_failed" });
+          continue;
+        }
+        // Need a meaningful corpus before distilling.
+        const items = (corrections ?? []) as Array<{ section: string; correction: string; rating: number | null; dup_count: number }>;
+        if (items.length < 4) {
+          results.push({ domain, created: 0, skipped: "too_few_corrections" });
+          continue;
+        }
 
-      const condensed = items
-        .slice(0, 80)
-        .map((c, i) => `[${i + 1}] section=${c.section}${c.rating != null ? ` rating=${c.rating}/5` : ""} (×${c.dup_count}): ${c.correction.slice(0, 220)}`)
-        .join("\n");
+        const condensed = items
+          .slice(0, 80)
+          .map((c, i) => `[${i + 1}] section=${c.section}${c.rating != null ? ` rating=${c.rating}/5` : ""} (×${c.dup_count}): ${c.correction.slice(0, 220)}`)
+          .join("\n");
 
-      const { res: aiRes } = await callAIWithFallback({
-        apiKey: AI_API_KEY,
-        // DISTILL chain (gpt-5-mini on the Lovable gateway): rule quality
-        // compounds across every future plan in this domain, so reasoning
-        // matters more than cost. Low volume (cron job).
-        models: modelChain("DISTILL"),
-        label: "distill-house-rules",
-        retries: 1,
-        timeoutMs: 60_000,
-        maxTokens: 1500,
-        buildBody: (model) => ({
-          model,
-          messages: [
-            {
-              role: "system",
-              content: `You are an expert research methodologist. Given a list of CORRECTIONS that real scientists left on past experiment plans in the ${domain.toUpperCase()} domain, distill them into 5-8 STABLE HOUSE RULES that should guide future plans in this domain.
+        const { res: aiRes } = await callAIWithFallback({
+          apiKey: AI_API_KEY,
+          // DISTILL chain (gpt-5-mini on the Lovable gateway): rule quality
+          // compounds across every future plan in this domain, so reasoning
+          // matters more than cost. Low volume (cron job).
+          models: modelChain("DISTILL"),
+          label: "distill-house-rules",
+          retries: 1,
+          timeoutMs: 60_000,
+          maxTokens: 1500,
+          buildBody: (model) => ({
+            model,
+            messages: [
+              {
+                role: "system",
+                content: `You are an expert research methodologist. Given a list of CORRECTIONS that real scientists left on past experiment plans in the ${domain.toUpperCase()} domain, distill them into 5-8 STABLE HOUSE RULES that should guide future plans in this domain.
 
-Each rule must be:
-- Concrete and actionable (e.g. "Always use sterile-filtered FBS for primary cell culture", not "Be careful with cells")
-- Generalisable across hypotheses (avoid one-off SKU corrections — those are handled separately)
-- Phrased in 1-2 sentences, max 200 chars
-- Backed by multiple corrections when possible
+  Each rule must be:
+  - Concrete and actionable (e.g. "Always use sterile-filtered FBS for primary cell culture", not "Be careful with cells")
+  - Generalisable across hypotheses (avoid one-off SKU corrections — those are handled separately)
+  - Phrased in 1-2 sentences, max 200 chars
+  - Backed by multiple corrections when possible
 
-For each rule, set:
-- confidence (0-1): how strong is the evidence across the corpus
-- source_count: how many of the input corrections support this rule
+  For each rule, set:
+  - confidence (0-1): how strong is the evidence across the corpus
+  - source_count: how many of the input corrections support this rule
 
-If the corpus does not yield clear stable rules, return fewer rules (or none) rather than inventing them.`,
-            },
-            { role: "user", content: `DOMAIN: ${domain}\n\nCORRECTIONS:\n${condensed}\n\nDistill into stable house rules.` },
-          ],
-          tools: [{
-            type: "function",
-            function: {
-              name: "submit_house_rules",
-              description: "Distilled stable rules for this domain.",
-              parameters: {
-                type: "object",
-                properties: {
-                  rules: {
-                    type: "array",
-                    items: {
-                      type: "object",
-                      properties: {
-                        rule: { type: "string", description: "1-2 sentence concrete rule, max 200 chars" },
-                        confidence: { type: "number", minimum: 0, maximum: 1 },
-                        source_count: { type: "integer", minimum: 1 },
+  If the corpus does not yield clear stable rules, return fewer rules (or none) rather than inventing them.`,
+              },
+              { role: "user", content: `DOMAIN: ${domain}\n\nCORRECTIONS:\n${condensed}\n\nDistill into stable house rules.` },
+            ],
+            tools: [{
+              type: "function",
+              function: {
+                name: "submit_house_rules",
+                description: "Distilled stable rules for this domain.",
+                parameters: {
+                  type: "object",
+                  properties: {
+                    rules: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          rule: { type: "string", description: "1-2 sentence concrete rule, max 200 chars" },
+                          confidence: { type: "number", minimum: 0, maximum: 1 },
+                          source_count: { type: "integer", minimum: 1 },
+                        },
+                        required: ["rule", "confidence", "source_count"],
+                        additionalProperties: false,
                       },
-                      required: ["rule", "confidence", "source_count"],
-                      additionalProperties: false,
                     },
                   },
+                  required: ["rules"],
+                  additionalProperties: false,
                 },
-                required: ["rules"],
-                additionalProperties: false,
               },
-            },
-          }],
-          tool_choice: { type: "function", function: { name: "submit_house_rules" } },
-        }),
-      });
+            }],
+            tool_choice: { type: "function", function: { name: "submit_house_rules" } },
+          }),
+        });
 
-      if (!aiRes.ok) {
-        console.warn(`distill ${domain}: ai gateway ${aiRes.status}`);
-        results.push({ domain, created: 0, skipped: `ai_${aiRes.status}` });
-        continue;
-      }
-      const aiJson = await aiRes.json();
-      const args = extractToolArgs(aiJson);
-      if (!args) {
-        results.push({ domain, created: 0, skipped: "no_tool_call" });
-        continue;
-      }
-      const parsed = JSON.parse(args) as { rules: RuleProposal[] };
-      const rules = (parsed.rules ?? [])
-        .filter((r) => r.rule && r.rule.trim().length >= 10)
-        .slice(0, 8);
+        if (!aiRes.ok) {
+          console.warn(`distill ${domain}: ai gateway ${aiRes.status}`);
+          results.push({ domain, created: 0, skipped: `ai_${aiRes.status}` });
+          continue;
+        }
+        const aiJson = await aiRes.json();
+        const args = extractToolArgs(aiJson);
+        if (!args) {
+          results.push({ domain, created: 0, skipped: "no_tool_call" });
+          continue;
+        }
+        const parsed = JSON.parse(args) as { rules: RuleProposal[] };
+        const rules = (parsed.rules ?? [])
+          .filter((r) => r.rule && r.rule.trim().length >= 10)
+          .slice(0, 8);
 
-      if (rules.length === 0) {
-        results.push({ domain, created: 0, skipped: "no_rules_proposed" });
-        continue;
-      }
+        if (rules.length === 0) {
+          results.push({ domain, created: 0, skipped: "no_rules_proposed" });
+          continue;
+        }
 
-      // Deactivate the previous batch (kept for audit), then insert.
-      await writer
-        .from("domain_rules")
-        .update({ active: false })
-        .eq("domain", domain)
-        .eq("active", true);
+        // Deactivate the previous batch (kept for audit), then insert.
+        await writer
+          .from("domain_rules")
+          .update({ active: false })
+          .eq("domain", domain)
+          .eq("active", true);
 
-      const { error: insErr } = await writer
-        .from("domain_rules")
-        .insert(rules.map((r) => ({
-          domain,
-          rule: r.rule.slice(0, 280),
-          confidence: Math.max(0, Math.min(1, Number(r.confidence) || 0.5)),
-          source_count: Math.max(1, Math.floor(Number(r.source_count) || 1)),
-          active: true,
-        })));
-      if (insErr) {
-        console.error(`distill ${domain}: insert failed`, insErr.message);
-        results.push({ domain, created: 0, skipped: "insert_failed" });
-        continue;
+        const { error: insErr } = await writer
+          .from("domain_rules")
+          .insert(rules.map((r) => ({
+            domain,
+            rule: r.rule.slice(0, 280),
+            confidence: Math.max(0, Math.min(1, Number(r.confidence) || 0.5)),
+            source_count: Math.max(1, Math.floor(Number(r.source_count) || 1)),
+            active: true,
+          })));
+        if (insErr) {
+          console.error(`distill ${domain}: insert failed`, insErr.message);
+          results.push({ domain, created: 0, skipped: "insert_failed" });
+          continue;
+        }
+        results.push({ domain, created: rules.length });
+      } catch (e) {
+        console.error(`distill ${domain}: unexpected`, e);
+        results.push({ domain, created: 0, skipped: "exception" });
       }
-      results.push({ domain, created: rules.length });
-    } catch (e) {
-      console.error(`distill ${domain}: unexpected`, e);
-      results.push({ domain, created: 0, skipped: "exception" });
     }
+  };
+
+  // { async: true }: answer at once and distil in the background. A slow
+  // model (CPU-only local Ollama) takes many minutes per domain, far beyond
+  // the API gateway's 150 s request timeout, and the admin page would
+  // report a failure while the rules were still being written.
+  const waitUntil = (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } })
+    .EdgeRuntime?.waitUntil;
+  if (body.async && waitUntil) {
+    waitUntil(distillAll().then(
+      () => console.log(JSON.stringify({ step: "distill_done", results })),
+      (e) => console.error("distill background run failed", e),
+    ));
+    return new Response(JSON.stringify({ started: true, domains: targets.length }), {
+      status: 202, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
+  await distillAll();
 
   return new Response(JSON.stringify({ results }), {
     headers: { ...corsHeaders, "Content-Type": "application/json" },
