@@ -108,11 +108,11 @@ const MyFeedback = () => {
     try {
       const { error } = await db
         .from("plan_feedback")
+        // Only rating and correction are client-writable; a changed
+        // correction clears the embedding in a trigger (migration 20261110090000).
         .update({
           rating: editRating,
           correction: trimmed || null,
-          // Force a re-embed since the text changed.
-          embedding: null,
         })
         .eq("id", row.id);
       if (error) throw error;
@@ -186,12 +186,12 @@ const MyFeedback = () => {
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-10 border-b border-rule bg-background/85 backdrop-blur">
-        <div className="container flex h-16 items-center justify-between">
+        <div className="container flex h-16 items-center justify-between gap-2">
           <Logo />
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             <Link to="/">
-              <Button variant="ghost" size="sm" className="gap-2">
-                <ArrowLeft className="h-3.5 w-3.5" /> Home
+              <Button variant="ghost" size="sm" className="gap-2" aria-label="Home">
+                <ArrowLeft className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Home</span>
               </Button>
             </Link>
             <UserMenu />

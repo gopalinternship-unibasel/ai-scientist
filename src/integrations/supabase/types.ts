@@ -369,6 +369,10 @@ export type Database = {
           similarity: number
         }[]
       }
+      set_feedback_hidden: {
+        Args: { _hidden: boolean; _id: string }
+        Returns: boolean
+      }
       recent_feedback_for_moderation: {
         Args: { _limit?: number }
         Returns: {

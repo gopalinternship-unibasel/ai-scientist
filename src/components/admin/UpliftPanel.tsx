@@ -47,10 +47,9 @@ export const UpliftPanel = () => {
 
   const toggleHidden = async (row: UpliftRow) => {
     const next = !row.hidden;
-    const { error } = await supabase
-      .from("plan_feedback")
-      .update({ hidden: next })
-      .eq("id", row.id);
+    // Moderation goes through a role-checked RPC: clients cannot write
+    // `hidden` directly (migration 20261110090000).
+    const { error } = await supabase.rpc("set_feedback_hidden", { _id: row.id, _hidden: next });
     if (error) { toast.error("Could not update"); return; }
     setRows((prev) => prev.map((r) => r.id === row.id ? { ...r, hidden: next } : r));
     toast.success(next ? "Hidden from retrieval" : "Restored");

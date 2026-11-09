@@ -158,12 +158,12 @@ export const SectionFeedback = ({
         // EDIT path — re-embed since the correction text may have changed.
         const { error } = await db
           .from("plan_feedback")
+          // Clients may write only rating and correction (migration
+          // 20261110090000); a changed correction clears the row's embedding
+          // in a trigger, and the embed pass below re-embeds the new text.
           .update({
             rating,
             correction: trimmed || null,
-            // Clearing embedding triggers a fresh embed pass below; otherwise
-            // the row would still match against the old text.
-            embedding: null,
           })
           .eq("id", editingId);
         if (error) throw error;

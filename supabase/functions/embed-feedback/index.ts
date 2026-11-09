@@ -117,9 +117,21 @@ serve(async (req) => {
         _threshold: 0.92,
       });
       if (dupId && typeof dupId === "string") {
-        await supabase.rpc("bump_feedback_dup", { _id: dupId });
+        // dup_count is a consensus signal (it raises the row's retrieval
+        // score), so the same person repeating a correction does not count:
+        // the repeat is dropped without bumping its earlier row.
+        const { data: dup } = await supabase
+          .from("plan_feedback")
+          .select("owner_user_id, owner_token")
+          .eq("id", dupId)
+          .maybeSingle();
+        const sameOwner = !!dup && (
+          (row.owner_user_id !== null && dup.owner_user_id === row.owner_user_id)
+          || (row.owner_user_id === null && !!row.owner_token && dup.owner_token === row.owner_token)
+        );
+        if (!sameOwner) await supabase.rpc("bump_feedback_dup", { _id: dupId });
         await supabase.from("plan_feedback").delete().eq("id", row.id);
-        return json({ ok: true, deduped_into: dupId });
+        return json({ ok: true, deduped_into: dupId, counted: !sameOwner });
       }
     } catch (e) {
       console.warn("dedup check failed (non-fatal):", e);
