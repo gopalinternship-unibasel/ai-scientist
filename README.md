@@ -91,7 +91,7 @@ catalog issues into the reviewer as extra context).
 │  7. safety screen             deterministic (prompt fragment)        │
 │  8. plan generation (SSE)     gemini-3-flash-preview → gpt-5-mini    │
 │  9. citation sanitise         deterministic (strip out-of-range)     │
-│ 10. catalog + SKU + timeline  deterministic (live Sigma lookup)      │
+│ 10. catalog + SKU + timeline  deterministic (Sigma SKUs via PubChem) │
 │ 11. critique pass             gpt-5-mini → gemini-3-flash-preview    │
 └──────────────────────────────────────────────────────────────────────┘
                                 │
@@ -128,7 +128,10 @@ instead of 500-ing.
   TanStack Query, React Router, sonner, jsPDF.
 - **Backend** — Supabase Edge Functions (Deno), Postgres with RLS,
   Supabase Realtime for live run updates, pgvector for feedback retrieval.
-- **AI** — Lovable AI Gateway, routed per stage:
+- **AI** — any OpenAI-compatible endpoint, configured by env
+  (`supabase/functions/_shared/aiProvider.ts`; local Ollama by default, see
+  RUNNING.md). The original hosted setup used the Lovable AI Gateway, routed
+  per stage:
   - Hot path (planner, novelty): `google/gemini-3-flash-preview` —
     long context + fast streamed structured output, fallback to
     `openai/gpt-5-mini`.
@@ -147,6 +150,11 @@ instead of 500-ing.
 - **Tests** — Vitest (frontend) + Deno test runner (edge functions).
 
 ## 🚀 Quick start
+
+> **Self-hosted (current):** the original Lovable Cloud project is gone. To
+> run the whole system on one PC (local Supabase in Docker, edge functions,
+> frontend on http://localhost:5180, local Ollama or any OpenAI-compatible
+> provider), follow [`RUNNING.md`](./RUNNING.md).
 
 You'll need [Bun](https://bun.sh) (or npm) and a Lovable Cloud project.
 

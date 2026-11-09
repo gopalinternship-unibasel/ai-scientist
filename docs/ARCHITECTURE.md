@@ -160,7 +160,7 @@ The six guards that keep the model honest. All are pure TypeScript; all run
 | **Hypothesis gate** | `_shared/hypothesisGate.ts` | "hi", "write me a poem", off-topic chatter, vague research goals. Fails open on AI errors. |
 | **Feasibility check** | `_shared/feasibilityCheck.ts` | Sub-Abbe optical resolution, FTL signaling, perpetual motion, etc. Pure regex rules. |
 | **Safety screen** | `_shared/safety.ts` | Dual-use bio, controlled substances, human-subjects red flags. |
-| **Catalog cross-check** | `_shared/catalogCheck.ts` + `skuVerify.ts` | Every reagent SKU is verified against a real-supplier catalog (Sigma, Thermo, NEB, IDT, Qiagen, Promega, Bio-Rad, ATCC). |
+| **Catalog cross-check** | `_shared/catalogCheck.ts` + `skuVerify.ts` | Supplier catalog-number formats and a canonical SKU dictionary (Sigma, Thermo, NEB, IDT, Qiagen, Promega, Bio-Rad, ATCC); up to three Sigma-Aldrich SKUs per plan are also looked up live in PubChem's Sigma-Aldrich deposits and flagged when they resolve to a different product. |
 | **Citation sanitiser** | `_shared/citations.ts` | Drops any citation whose DOI/title doesn't appear in the literature pool fetched for *this* run. |
 | **Canonical-technique override** | `_shared/canonicalTechniques.ts` | Promotes "novel"-classified textbook methods (PCR, Western, ELISA, OD600 growth curves) to `exact_match`, with disqualifiers for non-canonical perturbations (CRISPRi, knockouts, Δ-strains). |
 
@@ -328,6 +328,13 @@ erDiagram
 ---
 
 ## 8. Realtime & client sync
+
+The SSE stream from `run-experiment` closes right after the `run` event; the
+pipeline continues in the background (`EdgeRuntime.waitUntil`). Live
+progress therefore travels through the row itself: the function writes
+`runs.progress` (`stage` = gate, literature, novelty, planning with
+characters streamed and sections started, critique, complete) and the run
+page renders it from the realtime / polling updates below.
 
 ```mermaid
 sequenceDiagram
