@@ -5,7 +5,7 @@
  */
 
 const SEE_RE = /\(\s*see\s*\[([^\]]+)\]\s*\)/gi;
-const REF_RE = /[\(\[]\s*refs?\.?\s+([0-9 ,\-]+?)\s*[\)\]]/gi;
+const REF_RE = /[([]\s*refs?\.?\s+([0-9 ,-]+?)\s*[)\]]/gi;
 const BARE_RE = /\[\s*(\d+(?:\s*[,\s]\s*\d+)*)\s*\]/g;
 
 function expandRange(s: string): number[] {

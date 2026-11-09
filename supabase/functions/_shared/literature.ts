@@ -26,6 +26,40 @@ export interface LitPaper {
   url?: string;
 }
 
+// The fields read from each API's JSON (everything is optional there).
+interface S2Paper {
+  paperId?: string;
+  title?: string | null;
+  abstract?: string | null;
+  year?: number | null;
+  authors?: { name: string }[];
+  venue?: string | null;
+  citationCount?: number | null;
+  url?: string | null;
+  externalIds?: { DOI?: string } | null;
+}
+interface OpenAlexWork {
+  id?: string;
+  doi?: string | null;
+  title?: string | null;
+  abstract_inverted_index?: Record<string, number[]> | null;
+  publication_year?: number | null;
+  authorships?: { author?: { display_name?: string } | null }[];
+  host_venue?: { display_name?: string } | null;
+  primary_location?: { source?: { display_name?: string } | null } | null;
+  cited_by_count?: number | null;
+}
+interface PubMedSummary {
+  title?: string;
+  pubdate?: string;
+  articleids?: { idtype?: string; value?: string }[];
+  authors?: { name?: string }[];
+  fulljournalname?: string;
+  source?: string;
+}
+
+const isString = (v: unknown): v is string => typeof v === "string" && v.length > 0;
+
 export interface LitResult {
   papers: LitPaper[];
   sources: { s2: boolean; openalex: boolean; pubmed: boolean };
@@ -81,8 +115,7 @@ export async function searchS2(
   }
   if (!res.ok) return [];
   const json = await res.json();
-  // deno-lint-ignore no-explicit-any
-  return (json.data ?? []).map((p: any): LitPaper => ({
+  return ((json.data ?? []) as S2Paper[]).map((p): LitPaper => ({
     source: "s2",
     externalId: p.externalIds?.DOI?.toLowerCase(),
     title: p.title ?? "",
@@ -91,7 +124,7 @@ export async function searchS2(
     authors: (p.authors ?? []).slice(0, 5).map((a: { name: string }) => a.name),
     venue: p.venue ?? null,
     citationCount: p.citationCount ?? null,
-    url: p.url ?? (p.externalIds?.DOI
+    url: p.url || (p.externalIds?.DOI
       ? `https://doi.org/${p.externalIds.DOI}`
       : `https://www.semanticscholar.org/paper/${p.paperId}`),
   }));
@@ -109,10 +142,9 @@ async function searchOpenAlex(q: string, timeoutMs = DEFAULT_TIMEOUT): Promise<L
   });
   if (!res.ok) return [];
   const json = await res.json();
-  // deno-lint-ignore no-explicit-any
-  return (json.results ?? []).map((w: any): LitPaper => {
+  return ((json.results ?? []) as OpenAlexWork[]).map((w): LitPaper => {
     // OpenAlex serves abstracts as inverted-index — reconstruct the rough text.
-    const inv: Record<string, number[]> | undefined = w.abstract_inverted_index;
+    const inv = w.abstract_inverted_index ?? undefined;
     let abstract: string | null = null;
     if (inv) {
       const positions: Array<[number, string]> = [];
@@ -131,9 +163,8 @@ async function searchOpenAlex(q: string, timeoutMs = DEFAULT_TIMEOUT): Promise<L
       year: w.publication_year ?? null,
       authors: (w.authorships ?? [])
         .slice(0, 5)
-        // deno-lint-ignore no-explicit-any
-        .map((a: any) => a.author?.display_name)
-        .filter(Boolean),
+        .map((a) => a.author?.display_name)
+        .filter(isString),
       venue: w.host_venue?.display_name ?? w.primary_location?.source?.display_name ?? null,
       citationCount: w.cited_by_count ?? null,
       url: w.id || (doi ? `https://doi.org/${doi}` : undefined),
@@ -179,19 +210,17 @@ export async function searchPubMed(
   const result = uJson.result ?? {};
   const out: LitPaper[] = [];
   for (const id of ids) {
-    const r = result[id];
+    const r = result[id] as PubMedSummary | undefined;
     if (!r) continue;
     const doi: string | undefined = (r.articleids ?? [])
-      // deno-lint-ignore no-explicit-any
-      .find((a: any) => a.idtype === "doi")?.value?.toLowerCase();
+      .find((a) => a.idtype === "doi")?.value?.toLowerCase();
     out.push({
       source: "pubmed",
       externalId: doi ?? `pmid:${id}`,
       title: r.title ?? "",
       abstract: null,
       year: r.pubdate ? parseInt(String(r.pubdate).slice(0, 4), 10) || null : null,
-      // deno-lint-ignore no-explicit-any
-      authors: (r.authors ?? []).slice(0, 5).map((a: any) => a.name),
+      authors: (r.authors ?? []).slice(0, 5).map((a) => a.name).filter(isString),
       venue: r.fulljournalname ?? r.source ?? null,
       citationCount: null,
       url: doi ? `https://doi.org/${doi}` : `https://pubmed.ncbi.nlm.nih.gov/${id}/`,

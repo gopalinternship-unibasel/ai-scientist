@@ -15,6 +15,13 @@ import {
   resolveAIConfig,
 } from "./aiProvider.ts";
 
+// The tests poke into the adapted body's nested JSON; ChatBody types only
+// the top level, so read the result as loose JSON here.
+// deno-lint-ignore no-explicit-any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type LooseJson = any;
+const adapt = (...args: Parameters<typeof adaptChatBody>): LooseJson => adaptChatBody(...args);
+
 Deno.test("defaults to local Ollama with a placeholder key and no embeddings", () => {
   const cfg = resolveAIConfig({});
   assertEquals(cfg.baseUrl, DEFAULT_BASE_URL);
@@ -76,7 +83,7 @@ const toolBody = {
 
 Deno.test("tools mode passes the forced tool call through and adds max_tokens", () => {
   const cfg = resolveAIConfig({ AI_STRUCTURED_OUTPUT: "tools" });
-  const out = adaptChatBody(toolBody, 300, cfg);
+  const out = adapt(toolBody, 300, cfg);
   assertEquals(out.tools, toolBody.tools);
   assertEquals(out.tool_choice, toolBody.tool_choice);
   assertEquals(out.max_tokens, 300);
@@ -85,7 +92,7 @@ Deno.test("tools mode passes the forced tool call through and adds max_tokens", 
 
 Deno.test("json_schema mode converts a forced tool call into response_format", () => {
   const cfg = resolveAIConfig({ AI_STRUCTURED_OUTPUT: "json_schema", AI_MAX_TOKENS_PARAM: "max_completion_tokens" });
-  const out = adaptChatBody(toolBody, 300, cfg);
+  const out = adapt(toolBody, 300, cfg);
   assert(!("tools" in out) && !("tool_choice" in out));
   assertEquals(out.response_format.type, "json_schema");
   assertEquals(out.response_format.json_schema.name, "decide");
@@ -98,12 +105,12 @@ Deno.test("json_schema mode converts a forced tool call into response_format", (
 
 Deno.test("AI_MAX_TOKENS_CAP bounds every output budget", () => {
   const cfg = resolveAIConfig({ AI_MAX_TOKENS_CAP: "2048" });
-  assertEquals(adaptChatBody({ model: "m", messages: [] }, 8000, cfg).max_tokens, 2048);
-  assertEquals(adaptChatBody({ model: "m", messages: [] }, 300, cfg).max_tokens, 300);
+  assertEquals(adapt({ model: "m", messages: [] }, 8000, cfg).max_tokens, 2048);
+  assertEquals(adapt({ model: "m", messages: [] }, 300, cfg).max_tokens, 300);
 });
 
 Deno.test("max_tokens is omitted when AI_MAX_TOKENS_PARAM=none", () => {
-  const out = adaptChatBody({ model: "m", messages: [] }, 500, resolveAIConfig({ AI_MAX_TOKENS_PARAM: "none" }));
+  const out = adapt({ model: "m", messages: [] }, 500, resolveAIConfig({ AI_MAX_TOKENS_PARAM: "none" }));
   assert(!("max_tokens" in out));
 });
 
@@ -136,14 +143,14 @@ const listBody = {
 Deno.test("compact mode is off unless AI_COMPACT_OUTPUT is true", () => {
   assertEquals(resolveAIConfig({}).compact, false);
   assertEquals(resolveAIConfig({ AI_COMPACT_OUTPUT: "true" }).compact, true);
-  const out = adaptChatBody(listBody, 100, resolveAIConfig({}));
+  const out = adapt(listBody, 100, resolveAIConfig({}));
   assertEquals(out.tools, listBody.tools);
   assertEquals(out.messages.length, 1);
 });
 
 Deno.test("compact mode caps every list (nested too) and asks for short fields", () => {
   const cfg = resolveAIConfig({ AI_COMPACT_OUTPUT: "true", AI_STRUCTURED_OUTPUT: "json_schema" });
-  const out = adaptChatBody(listBody, 100, cfg);
+  const out = adapt(listBody, 100, cfg);
   const schema = out.response_format.json_schema.schema;
   assertEquals(schema.properties.steps.maxItems, COMPACT_MAX_ITEMS);
   assertEquals(schema.properties.steps.items.properties.tags.maxItems, COMPACT_MAX_ITEMS);
@@ -184,13 +191,13 @@ Deno.test("compact mode caps free-text strings so a looping model has to close t
     }],
     tool_choice: { type: "function", function: { name: "submit" } },
   };
-  const out = adaptChatBody(body, 100, resolveAIConfig({ AI_COMPACT_OUTPUT: "true", AI_STRUCTURED_OUTPUT: "json_schema" }));
+  const out = adapt(body, 100, resolveAIConfig({ AI_COMPACT_OUTPUT: "true", AI_STRUCTURED_OUTPUT: "json_schema" }));
   const p = out.response_format.json_schema.schema.properties;
   assertEquals(p.approach.maxLength, COMPACT_MAX_CHARS);
   assertEquals(p.steps.items.properties.text.maxLength, COMPACT_MAX_CHARS);
   assertEquals("maxLength" in p.level, false);
   assertEquals(p.short.maxLength, 20);
   // Without compact mode nothing is capped.
-  const hosted = adaptChatBody(body, 100, resolveAIConfig({ AI_STRUCTURED_OUTPUT: "tools" }));
+  const hosted = adapt(body, 100, resolveAIConfig({ AI_STRUCTURED_OUTPUT: "tools" }));
   assertEquals("maxLength" in hosted.tools[0].function.parameters.properties.approach, false);
 });

@@ -8,8 +8,9 @@
 // Like feedbackPromptFragment, this block is framed as ADVISORY DATA so
 // imperative phrasing inside cannot hijack the planner.
 
-// deno-lint-ignore no-explicit-any
-type SbClient = any;
+import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+
+type SbClient = SupabaseClient;
 
 export interface HouseRule {
   id: string;
@@ -69,6 +70,8 @@ ${lines}
 
 function sanitize(raw: string): string {
   return (raw || "")
+    // Stripping control characters is the point of this pattern.
+    // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u001F\u007F\u200B-\u200F\u202A-\u202E]/g, " ")
     .replace(/```/g, "ʼʼʼ")
     .replace(/<\/?(system|user|assistant|tool|function)[^>]*>/gi, "")

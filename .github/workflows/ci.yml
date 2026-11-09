@@ -21,8 +21,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Lint
-        run: bun run lint
-        continue-on-error: true
+        run: bun run lint   # blocking: 0 errors since 9 Nov 2026 (warnings allowed)
 
       - name: Test
         run: bun run test   # Vitest (jsdom); `bun test` is Bun's own runner and cannot run these suites
@@ -45,9 +44,13 @@ jobs:
           deno-version: v2.x
 
       - name: Test shared logic
-        run: deno test --allow-net --allow-env --allow-read supabase/functions/_shared/
-        continue-on-error: true
+        run: deno test --allow-net --allow-env --allow-read --no-lock supabase/functions/_shared/
 
       - name: Test run-experiment
-        run: deno test --allow-net --allow-env --allow-read supabase/functions/run-experiment/
-        continue-on-error: true
+        run: deno test --allow-net --allow-env --allow-read --no-lock supabase/functions/run-experiment/
+
+      - name: Type-check every function entry point
+        run: >
+          deno check --no-lock supabase/functions/run-experiment/index.ts supabase/functions/eval-harness/index.ts
+          supabase/functions/distill-house-rules/index.ts supabase/functions/embed-feedback/index.ts
+          supabase/functions/backfill-feedback-embeddings/index.ts

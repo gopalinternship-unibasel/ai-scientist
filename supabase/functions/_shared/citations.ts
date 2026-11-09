@@ -15,7 +15,7 @@
 
 const SEE_RE = /\(\s*see\s*\[([^\]]+)\]\s*\)/gi;
 // (ref. 1), (ref 1, 2), (refs. 1-3), [ref. 1]
-const REF_RE = /[\(\[]\s*refs?\.?\s+([0-9 ,\-]+?)\s*[\)\]]/gi;
+const REF_RE = /[([]\s*refs?\.?\s+([0-9 ,-]+?)\s*[)\]]/gi;
 // Bare bracketed index like "[3]" or "[1, 2]" — keep these as-is but validate.
 const BARE_RE = /\[\s*(\d+(?:\s*[,\s]\s*\d+)*)\s*\]/g;
 

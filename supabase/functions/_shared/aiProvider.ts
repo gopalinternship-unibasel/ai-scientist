@@ -197,23 +197,37 @@ export function promptChars(full: number, compact: number, cfg: AIConfig = aiCon
   return cfg.compact ? Math.min(full, compact) : full;
 }
 
+/** An OpenAI-style tool definition (only the fields adapted here). */
+export interface ChatTool {
+  type?: string;
+  function?: { name?: string; description?: string; parameters?: unknown };
+}
+
+/** An OpenAI-style chat request body (only the fields adapted here are typed). */
+export interface ChatBody {
+  model?: string;
+  messages?: { role: string; content: string }[];
+  tools?: ChatTool[];
+  tool_choice?: { type?: string; function?: { name?: string } };
+  response_format?: unknown;
+  [key: string]: unknown;
+}
+
 /**
  * Copy of a JSON schema with maxItems on every array that has none and,
  * when maxLength is given, maxLength on every free-text string that has
  * none (enums are left alone).
  */
-// deno-lint-ignore no-explicit-any
-export function capArrays(schema: any, maxItems: number, maxLength?: number): any {
-  if (Array.isArray(schema)) return schema.map((s) => capArrays(s, maxItems, maxLength));
+export function capArrays<T>(schema: T, maxItems: number, maxLength?: number): T {
+  if (Array.isArray(schema)) return schema.map((s) => capArrays(s, maxItems, maxLength)) as T;
   if (!schema || typeof schema !== "object") return schema;
-  // deno-lint-ignore no-explicit-any
-  const out: any = {};
+  const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(schema)) out[k] = capArrays(v, maxItems, maxLength);
   if (out.type === "array" && out.maxItems === undefined) out.maxItems = maxItems;
   if (maxLength && out.type === "string" && out.maxLength === undefined && out.enum === undefined) {
     out.maxLength = maxLength;
   }
-  return out;
+  return out as T;
 }
 
 const COMPACT_HINT = `Be concise: keep every text field to one or two short sentences (at most about 30 words) and every list to at most ${COMPACT_MAX_ITEMS} items. Keep exact numbers (concentrations, volumes, durations, costs).`;
@@ -225,20 +239,17 @@ const COMPACT_HINT = `Be concise: keep every text field to one or two short sent
  *    tool_choice);
  *  - max tokens are sent under the parameter name the provider accepts.
  */
-// deno-lint-ignore no-explicit-any
-export function adaptChatBody(body: any, maxTokens: number | undefined, cfg: AIConfig = aiConfig()): any {
-  const out = { ...body };
+export function adaptChatBody(body: ChatBody, maxTokens: number | undefined, cfg: AIConfig = aiConfig()): ChatBody {
+  const out: ChatBody = { ...body };
   if (cfg.compact && Array.isArray(out.tools) && out.tool_choice?.function?.name) {
-    // deno-lint-ignore no-explicit-any
-    out.tools = out.tools.map((t: any) => t?.function?.parameters
+    out.tools = out.tools.map((t) => t?.function?.parameters
       ? { ...t, function: { ...t.function, parameters: capArrays(t.function.parameters, COMPACT_MAX_ITEMS, COMPACT_MAX_CHARS) } }
       : t);
     out.messages = [...(out.messages ?? []), { role: "system", content: COMPACT_HINT }];
   }
   if (cfg.structuredMode === "json_schema" && Array.isArray(out.tools) && out.tool_choice?.function?.name) {
     const name: string = out.tool_choice.function.name;
-    // deno-lint-ignore no-explicit-any
-    const tool = out.tools.find((t: any) => t?.function?.name === name);
+    const tool = out.tools.find((t) => t?.function?.name === name);
     if (tool?.function?.parameters) {
       out.response_format = {
         type: "json_schema",
@@ -269,9 +280,12 @@ function stripFences(s: string): string {
  * which is what json_schema mode produces, and what some models do when they
  * ignore tool_choice.
  */
-// deno-lint-ignore no-explicit-any
-export function extractToolArgs(aiJson: any): string | null {
-  const msg = aiJson?.choices?.[0]?.message;
+interface ChatCompletion {
+  choices?: { message?: { content?: unknown; tool_calls?: { function?: { arguments?: unknown } }[] } }[];
+}
+
+export function extractToolArgs(aiJson: unknown): string | null {
+  const msg = (aiJson as ChatCompletion | null)?.choices?.[0]?.message;
   const args = msg?.tool_calls?.[0]?.function?.arguments;
   if (typeof args === "string" && args.trim()) return args;
   if (args && typeof args === "object") return JSON.stringify(args);

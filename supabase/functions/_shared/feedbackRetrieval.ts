@@ -12,8 +12,9 @@
 
 import { embedText } from "./embeddings.ts";
 
-// deno-lint-ignore no-explicit-any
-type SbClient = any;
+import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+
+type SbClient = SupabaseClient;
 
 export interface FeedbackHint {
   id: string;
@@ -45,6 +46,8 @@ const FETCH_CANDIDATES = 20;   // ask RPC for more than we keep, then re-rank
 function sanitizeCorrection(raw: string): string {
   return (raw || "")
     // strip control chars (incl. zero-width / direction-override)
+    // Stripping control characters is the point of this pattern.
+    // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u001F\u007F\u200B-\u200F\u202A-\u202E]/g, " ")
     // collapse code fences and XML-ish tags that could confuse delimiters
     .replace(/```/g, "ʼʼʼ")

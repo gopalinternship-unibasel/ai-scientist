@@ -56,8 +56,7 @@ export function useBackgroundRunNotifier() {
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "runs" },
         (payload) => {
-          // deno-lint-ignore no-explicit-any
-          const row = payload.new as any;
+          const row = payload.new as { id?: string; status?: string; error?: string | null };
           if (!row?.id || !row.status) return;
           if (row.status !== "done" && row.status !== "failed") return;
 

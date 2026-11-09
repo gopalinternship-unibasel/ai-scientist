@@ -7,7 +7,7 @@
 // The endpoint, key and per-role model chains come from the environment
 // (see aiProvider.ts); the original build hard-coded the Lovable gateway.
 import { fetchWithRetry } from "./fetch-with-retry.ts";
-import { adaptChatBody, aiTimeout, chatCompletionsUrl, modelChain } from "./aiProvider.ts";
+import { adaptChatBody, aiTimeout, chatCompletionsUrl, modelChain, type ChatBody } from "./aiProvider.ts";
 
 export type ModelChain = string[];
 
@@ -27,8 +27,7 @@ interface CallOpts {
   /** Output budget; sent as max_tokens / max_completion_tokens per AI_MAX_TOKENS_PARAM. */
   maxTokens?: number;
   models: ModelChain;
-  // deno-lint-ignore no-explicit-any
-  buildBody: (model: string) => any;
+  buildBody: (model: string) => ChatBody;
   label: string;
   // Per-attempt retry count inside fetchWithRetry. Keep low when we have
   // a fallback available so we don't spend 30s on a dead model.
