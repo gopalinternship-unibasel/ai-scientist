@@ -432,6 +432,7 @@ const RunPage = () => {
                     plan={run.plan}
                     previousPlan={previousPlan}
                     previousVersion={prevVersion?.version}
+                    references={run.qc?.references ?? []}
                     hypothesis={run.hypothesis}
                     version={run.version}
                     runId={run.id}

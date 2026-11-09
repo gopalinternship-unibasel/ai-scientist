@@ -2,7 +2,7 @@
 // Uses jsPDF directly so we get pixel-accurate page breaks, a real cover sheet,
 // and consistent typography — unlike `window.print()` which depended on screen CSS.
 import { jsPDF } from "jspdf";
-import type { ExperimentPlan } from "@/lib/samples";
+import type { ExperimentPlan, LiteratureQC } from "@/lib/samples";
 
 const PAGE = { w: 210, h: 297 }; // A4 mm
 const M = 18;                    // margin
@@ -118,7 +118,17 @@ function kv(ctx: Ctx, label: string, value: string, footer: () => void) {
   ctx.y += 1;
 }
 
-export function exportPlanToPdf(plan: ExperimentPlan, hypothesis: string, version = 1) {
+/**
+ * @param references the run's literature-QC references. The protocol cites
+ *   them as [N] (1-based, in this order), so the PDF lists them at the end;
+ *   without the list an exported plan's citations could not be resolved.
+ */
+export function exportPlanToPdf(
+  plan: ExperimentPlan,
+  hypothesis: string,
+  version = 1,
+  references: LiteratureQC["references"] = [],
+) {
   const doc = new jsPDF({ unit: "mm", format: "a4" });
 
   // Wrap text-emitting APIs so every caller is sanitized to WinAnsi-safe ASCII.
@@ -353,6 +363,19 @@ export function exportPlanToPdf(plan: ExperimentPlan, hypothesis: string, versio
       doc.text(`${t.fte} FTE`, PAGE.w - M, ctx.y, { align: "right" });
       ctx.y += 5;
     }
+  }
+
+  // ── References ───────────────────────────────────────────────────────────
+  if (references.length) {
+    heading(ctx, "11", "References", footer);
+    references.forEach((r, i) => {
+      const authors = (r.authors ?? []).slice(0, 3).join(", ") + ((r.authors?.length ?? 0) > 3 ? " et al." : "");
+      const meta = [authors, r.venue, r.year].filter(Boolean).join(" - ");
+      paragraph(ctx, `[${i + 1}] ${r.title}`, footer, { size: 10, color: 20 });
+      if (meta) paragraph(ctx, meta, footer, { size: 9, color: 80 });
+      if (r.url) paragraph(ctx, r.url, footer, { size: 9, color: 80 });
+      ctx.y += 2;
+    });
   }
 
   // Footer pass: now we know total pages.

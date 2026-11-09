@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import type { ExperimentPlan } from "@/lib/samples";
+import type { ExperimentPlan, LiteratureQC } from "@/lib/samples";
 import { exportPlanToPdf } from "@/lib/exportPdf";
 import { SectionFeedback, type FeedbackSection } from "@/components/SectionFeedback";
 import { Sparkles } from "lucide-react";
@@ -189,6 +189,8 @@ interface PlanViewProps {
   previousPlan?: ExperimentPlan | null;
   /** Version number of previousPlan (a refinement's parent; defaults to version - 1). */
   previousVersion?: number;
+  /** Literature-QC references the protocol cites as [N]; listed in the PDF. */
+  references?: LiteratureQC["references"];
   /** Hypothesis text — needed for the PDF cover sheet. */
   hypothesis?: string;
   /** Version number for the PDF filename / cover sheet. */
@@ -226,7 +228,7 @@ function diffSections(a: ExperimentPlan, b: ExperimentPlan) {
 }
 
 export const ExperimentPlanView = ({
-  plan, previousPlan, previousVersion, hypothesis, version = 1, runId, ownerUserId, appliedFeedback, onShare: onShareRun,
+  plan, previousPlan, previousVersion, references, hypothesis, version = 1, runId, ownerUserId, appliedFeedback, onShare: onShareRun,
 }: PlanViewProps) => {
   const materialsTotal = useMemo(
     () => plan.materials.reduce((s, m) => s + (m.total_cost_usd ?? 0), 0),
@@ -296,7 +298,7 @@ export const ExperimentPlanView = ({
 
   const onExportPdf = () => {
     try {
-      exportPlanToPdf(plan, hypothesis ?? plan.hypothesis_restated, version);
+      exportPlanToPdf(plan, hypothesis ?? plan.hypothesis_restated, version, references ?? []);
       toast.success("PDF downloaded");
     } catch (err) {
       console.error(err);
