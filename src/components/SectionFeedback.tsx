@@ -5,11 +5,12 @@
 //
 // Owners can also edit or delete their previous feedback on this section
 // (RLS-enforced server-side via owner_token / owner_user_id).
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { MessageSquarePlus, Star, Check, Loader2, Pencil, Trash2, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { createScopedClient } from "@/lib/supabaseScoped";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -53,6 +54,12 @@ export const SectionFeedback = ({
   const [existing, setExisting] = useState<ExistingFeedback | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
 
+  // RLS on plan_feedback: signed-in owners are matched by auth.uid(), but
+  // anonymous owners are matched by the x-owner-token request header, which
+  // only the scoped client sends. With the plain client every anonymous
+  // insert/select/update/delete was rejected by RLS.
+  const db = useMemo(() => (ownerUserId ? supabase : createScopedClient()), [ownerUserId]);
+
   const startReplay = (text: string) => {
     if (replaying) return;
     setReplaying(true);
@@ -84,7 +91,7 @@ export const SectionFeedback = ({
     let cancelled = false;
     (async () => {
       const ownerToken = getOwnerToken();
-      const q = supabase
+      const q = db
         .from("plan_feedback")
         .select("id, rating, correction")
         .eq("run_id", runId)
@@ -101,7 +108,7 @@ export const SectionFeedback = ({
       setExisting(data?.[0] ?? null);
     })();
     return () => { cancelled = true; };
-  }, [open, runId, section, ownerUserId]);
+  }, [open, runId, section, ownerUserId, db]);
 
   const startEdit = () => {
     if (!existing) return;
@@ -113,7 +120,7 @@ export const SectionFeedback = ({
   const remove = async () => {
     if (!existing) return;
     if (!confirm("Delete this feedback? It will no longer be used to guide future plans.")) return;
-    const { error } = await supabase
+    const { error } = await db
       .from("plan_feedback")
       .delete()
       .eq("id", existing.id);
@@ -143,7 +150,7 @@ export const SectionFeedback = ({
 
       if (editingId) {
         // EDIT path — re-embed since the correction text may have changed.
-        const { error } = await supabase
+        const { error } = await db
           .from("plan_feedback")
           .update({
             rating,
@@ -171,7 +178,7 @@ export const SectionFeedback = ({
           owner_token: ownerToken,
           owner_user_id: ownerUserId ?? null,
         };
-        const { data: inserted, error } = await supabase
+        const { data: inserted, error } = await db
           .from("plan_feedback")
           // deno-lint-ignore no-explicit-any
           .insert(payload as any)

@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { createScopedClient } from "@/lib/supabaseScoped";
 import { useAuth } from "@/hooks/useAuth";
 import { Logo } from "@/components/Logo";
 import { UserMenu } from "@/components/UserMenu";
@@ -45,13 +46,16 @@ const MyFeedback = () => {
   const [saving, setSaving] = useState(false);
   const [replayingId, setReplayingId] = useState<string | null>(null);
 
+  // Signed-in users are matched by auth.uid(); anonymous owners by the
+  // x-owner-token request header, which only the scoped client sends (the
+  // plain client made every anonymous read/edit/delete fail RLS).
+  const db = useMemo(() => (user ? supabase : createScopedClient()), [user]);
+
   const load = async () => {
-    // RLS already restricts to owner; we still pass an explicit filter for
-    // anonymous owners since the policy compares against an x-owner-token
-    // request header (set by the supabase client only on row inserts/queries
-    // when configured — anonymous select goes through the public role).
+    // RLS already restricts to owner; the explicit filter is a small
+    // belt-and-braces optimisation.
     const ownerToken = getOwnerToken();
-    let q = supabase
+    let q = db
       .from("plan_feedback")
       .select("id, run_id, section, rating, correction, domain, created_at, hidden, runs(hypothesis)")
       .order("created_at", { ascending: false })
@@ -102,7 +106,7 @@ const MyFeedback = () => {
     }
     setSaving(true);
     try {
-      const { error } = await supabase
+      const { error } = await db
         .from("plan_feedback")
         .update({
           rating: editRating,
@@ -133,7 +137,7 @@ const MyFeedback = () => {
 
   const remove = async (row: FeedbackRow) => {
     if (!confirm("Delete this feedback? It will no longer be used to guide future plans.")) return;
-    const { error } = await supabase.from("plan_feedback").delete().eq("id", row.id);
+    const { error } = await db.from("plan_feedback").delete().eq("id", row.id);
     if (error) {
       toast.error("Could not delete.");
       return;
