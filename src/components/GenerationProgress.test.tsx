@@ -21,6 +21,16 @@ describe("describeProgress", () => {
   });
 });
 
+describe("describeProgress feedback loop", () => {
+  it("says which learned rules and corrections the planner is using", () => {
+    expect(describeProgress({ stage: "planning", chars: 0, house_rules: 5, lessons: 1 }))
+      .toBe("Streaming the experiment plan from the model · using 5 house rules and 1 past correction");
+    expect(describeProgress({ stage: "planning", chars: 2000, sections: ["title"], lessons: 3 }))
+      .toContain("sections started: title · using 3 past corrections");
+    expect(describeProgress({ stage: "planning", chars: 10 })).not.toContain("using");
+  });
+});
+
 describe("GenerationProgress", () => {
   it("renders the live progress line when the run reports one", () => {
     render(<GenerationProgress stage="plan" progress={{ stage: "planning", chars: 800, sections: ["title"], model: "qwen2.5:3b" }} />);

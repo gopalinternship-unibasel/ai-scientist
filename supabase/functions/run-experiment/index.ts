@@ -789,7 +789,10 @@ serve(async (req) => {
             .replace(/\n\nProduce the full experiment plan\.$/, `${refinementContext}\n\nProduce the full experiment plan.`);
 
 
-          setProgress({ stage: "planning", chars: 0, model: PLAN_MODELS[0] });
+          // What the planner was given from the feedback loop, so the run
+          // page can say so while the plan streams.
+          const loop = { house_rules: houseRules.length, lessons: feedbackHints.length };
+          setProgress({ stage: "planning", chars: 0, model: PLAN_MODELS[0], ...loop });
 
           // Streaming plan generation with model fallback. Keep the connection
           // budget tight: if a model has not produced headers quickly, move to
@@ -891,7 +894,7 @@ serve(async (req) => {
                     const partial = tryParsePartial(sofar);
                     setProgress({
                       stage: "planning", chars: sofar.length, model: modelUsed,
-                      sections: partial ? Object.keys(partial) : [],
+                      sections: partial ? Object.keys(partial) : [], ...loop,
                     });
                   }
                   // Heartbeat: bump updated_at every ~60s so the stale-run

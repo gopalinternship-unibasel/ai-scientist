@@ -18,6 +18,9 @@ export interface RunProgress {
   sections?: string[];
   model?: string;
   candidates?: number;
+  /** Planning only: distilled house rules and past corrections in the prompt. */
+  house_rules?: number;
+  lessons?: number;
 }
 
 const STAGE_LABEL: Record<string, string> = {
@@ -37,9 +40,17 @@ const SECTION_LABEL: Record<string, string> = {
 export function describeProgress(p: RunProgress | null | undefined): string | null {
   if (!p?.stage || p.stage === "complete") return null;
   const label = STAGE_LABEL[p.stage] ?? p.stage;
-  if (p.stage === "planning" && (p.chars ?? 0) > 0) {
-    const done = (p.sections ?? []).map((k) => SECTION_LABEL[k] ?? k.replace(/_/g, " "));
-    return `${label}: ${p.chars!.toLocaleString("en-US")} characters so far${done.length ? ` · sections started: ${done.join(", ")}` : ""}`;
+  if (p.stage === "planning") {
+    const loop = [
+      p.house_rules ? `${p.house_rules} house rule${p.house_rules === 1 ? "" : "s"}` : "",
+      p.lessons ? `${p.lessons} past correction${p.lessons === 1 ? "" : "s"}` : "",
+    ].filter(Boolean);
+    const using = loop.length ? ` · using ${loop.join(" and ")}` : "";
+    if ((p.chars ?? 0) > 0) {
+      const done = (p.sections ?? []).map((k) => SECTION_LABEL[k] ?? k.replace(/_/g, " "));
+      return `${label}: ${p.chars!.toLocaleString("en-US")} characters so far${done.length ? ` · sections started: ${done.join(", ")}` : ""}${using}`;
+    }
+    return `${label}${using}`;
   }
   if (p.stage === "novelty" && p.candidates != null) return `${label} (${p.candidates} candidates)`;
   return label;
