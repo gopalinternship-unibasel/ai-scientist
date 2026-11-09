@@ -18,6 +18,7 @@ import { detectCanonicalTechnique } from "../_shared/canonicalTechniques.ts";
 import { CANONICAL_RELEVANCE_FLOOR, rankByRelevance, RELEVANCE_FLOOR, type RankedPaper } from "../_shared/relevanceRank.ts";
 import { hypothesisConcepts } from "../_shared/hypothesisTerms.ts";
 import { calibrateNovelty, ON_TOPIC, type NoveltyVerdict } from "../_shared/noveltyVerdict.ts";
+import { cleanCritique } from "../_shared/critiqueGuards.ts";
 import { checkTimelineConsistency } from "../_shared/timelineCheck.ts";
 import { verifyMaterialsLive } from "../_shared/skuVerify.ts";
 import { retrieveRelevantFeedback, feedbackPromptFragment, type FeedbackHint } from "../_shared/feedbackRetrieval.ts";
@@ -1175,7 +1176,23 @@ serve(async (req) => {
             }
 
             setProgress({ stage: "critique" });
-            const critique = await critiquePlan(hypothesis, planObj, AI_API_KEY, extraContext, feedbackHints);
+            // The critic reviews the plan, not the checks' record: with
+            // plan.verification in the prompt it raised the already-corrected
+            // budget figures again (run 78967afc). Open findings reach it
+            // through extraContext.
+            const { verification: _checked, ...planForCritic } = planObj;
+            const rawCritique = await critiquePlan(hypothesis, planForCritic, AI_API_KEY, extraContext, feedbackHints);
+            // Drop concerns built on invented claims (a controlled substance the
+            // plan does not have, catalog numbers that are nowhere in the plan)
+            // and collapse looping phrases (critiqueGuards.ts).
+            const critique = cleanCritique(rawCritique, {
+              plan: planForCritic,
+              preChecks: issueLines.join("\n"),
+              controlledFlagged: safetyFlags.controlled_substances,
+            });
+            if (critique?.removed_concerns?.length) {
+              console.log(JSON.stringify({ run_id: runId, step: "critique_cleaned", removed: critique.removed_concerns.length }));
+            }
             if (critique) {
               await supabase.from("runs").update({ critique }).eq("id", runId);
             }
