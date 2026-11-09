@@ -314,12 +314,23 @@ if (-not $NoFrontend) {
     Write-Step "Vite dev server already running (PID $old)"
   } else {
     Write-Step "Starting Vite dev server on $viteUrl"
-    $p = Start-Process -FilePath 'node' `
-      -ArgumentList @('node_modules/vite/bin/vite.js', '--port', "$Port", '--strictPort', '--host', 'localhost') `
-      -WorkingDirectory $Root -WindowStyle Hidden -PassThru `
-      -RedirectStandardOutput (Join-Path $LogDir 'vite.log') `
-      -RedirectStandardError (Join-Path $LogDir 'vite.err.log')
-    Set-Content -Path $pidFile -Value $p.Id
+    # Start Vite fully detached, through WMI. Start-Process with redirected
+    # output lets the child inherit this script's own stdout/stderr, so when
+    # the script's output is piped (for example from Git Bash: ... | tail)
+    # the pipe stays open as long as Vite runs and the caller never returns.
+    # A process created by Win32_Process.Create inherits no handles. The PID
+    # recorded is the cmd.exe wrapper; stop-local.ps1 ends it with its child.
+    $nodeExe = (Get-Command node).Source
+    $q = '"'
+    $cmdLine = 'cmd.exe /d /c ' + $q + $q + $nodeExe + $q +
+      " node_modules/vite/bin/vite.js --port $Port --strictPort --host localhost > " +
+      $q + '.local-logs/vite.log' + $q + ' 2> ' + $q + '.local-logs/vite.err.log' + $q + $q
+    $startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = [uint16]0 }
+    $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
+      CommandLine = $cmdLine; CurrentDirectory = $Root; ProcessStartupInformation = $startup
+    }
+    if ($r.ReturnValue -ne 0) { throw "Could not start the Vite dev server (Win32_Process.Create returned $($r.ReturnValue))." }
+    Set-Content -Path $pidFile -Value $r.ProcessId
     $deadline = (Get-Date).AddSeconds(90)
     $up = $false
     while ((Get-Date) -lt $deadline) {
