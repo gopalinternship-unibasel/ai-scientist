@@ -258,7 +258,7 @@ docker run --rm -v "${PWD}:/app" -w /app -e DENO_DIR=/app/supabase/.temp/deno-ca
 (With Deno installed locally: `deno test --allow-net --allow-env --allow-read supabase/functions/_shared/ supabase/functions/run-experiment/`.)
 
 Measured on 9 Nov 2026 after the QA round-1 fixes: Vitest 15 files / 57
-tests, Deno 80 tests, ESLint 0 errors (9 warnings), `tsc` and `deno check`
+tests, Deno 83 tests, ESLint 0 errors (9 warnings), `tsc` and `deno check`
 clean. The plan checks have their own Deno suite
 (`supabase/functions/_shared/planGuards.test.ts`, built from the QA's
 failing plans).
