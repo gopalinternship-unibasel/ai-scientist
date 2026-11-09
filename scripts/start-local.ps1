@@ -175,7 +175,9 @@ foreach ($line in Get-Content $fnEnv) {
   if ($line -match '^\s*([A-Z_]+)\s*=\s*(.*)\s*$') { $fnSettings[$Matches[1]] = $Matches[2].Trim('"') }
 }
 $base = $fnSettings['AI_BASE_URL']
-$LocalVariant = 'qwen2.5-3b-4threads'
+# Local model variants this script creates on demand (name -> Ollama base model).
+# qwen2.5-7b-4threads is the optional larger planner (AI_MODEL_PLAN, see .env.example).
+$LocalVariants = @{ 'qwen2.5-3b-4threads' = 'qwen2.5:3b'; 'qwen2.5-7b-4threads' = 'qwen2.5:7b' }
 if ($base -and $base -match 'host\.docker\.internal:11434|localhost:11434|127\.0\.0\.1:11434') {
   try {
     $tags = Invoke-RestMethod -Uri 'http://localhost:11434/api/tags' -TimeoutSec 10
@@ -183,7 +185,8 @@ if ($base -and $base -match 'host\.docker\.internal:11434|localhost:11434|127\.0
     $want = @()
     foreach ($k in $fnSettings.Keys) { if ($k -like 'AI_MODEL*' -or $k -eq 'AI_EMBED_MODEL') { $want += ($fnSettings[$k] -split ',') } }
     foreach ($m in ($want | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Select-Object -Unique)) {
-      if ($m -eq $LocalVariant) {
+      if ($LocalVariants.ContainsKey($m)) {
+        $baseModel = $LocalVariants[$m]
         # The default local chat model is a variant of qwen2.5:3b (shares its
         # weights, no download) with 4 CPU threads and an 8192-token context.
         # Ollama's default context is 4096 tokens, and a planner prompt plus
@@ -197,12 +200,12 @@ if ($base -and $base -match 'host\.docker\.internal:11434|localhost:11434|127\.0
           $params = "$($show.parameters)"
         } catch { }
         if ($params -match 'num_ctx\s+8192' -and $params -match 'num_thread\s+4') { continue }
-        if (-not ($have | Where-Object { $_ -eq 'qwen2.5:3b' })) {
-          Write-Warn "Ollama model '$m' needs qwen2.5:3b first. Run: docker exec cvfix-ollama ollama pull qwen2.5:3b  (or: ollama pull qwen2.5:3b), then start again."
+        if (-not ($have | Where-Object { $_ -eq $baseModel })) {
+          Write-Warn "Ollama model '$m' needs $baseModel first. Run: docker exec cvfix-ollama ollama pull $baseModel  (or: ollama pull $baseModel), then start again."
           continue
         }
-        Write-Step "Creating Ollama model $m (qwen2.5:3b, 4 threads, 8192-token context; no download)"
-        $spec = @{ model = $m; from = 'qwen2.5:3b'; parameters = @{ num_thread = 4; num_ctx = 8192 }; stream = $false } | ConvertTo-Json -Depth 4
+        Write-Step "Creating Ollama model $m ($baseModel, 4 threads, 8192-token context; no download)"
+        $spec = @{ model = $m; from = $baseModel; parameters = @{ num_thread = 4; num_ctx = 8192 }; stream = $false } | ConvertTo-Json -Depth 4
         try {
           Invoke-RestMethod -Method Post -Uri 'http://localhost:11434/api/create' -Body $spec -TimeoutSec 600 | Out-Null
         } catch {
