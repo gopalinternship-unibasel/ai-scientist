@@ -20,6 +20,7 @@ import { untrackRun, trackRun } from "@/hooks/useBackgroundRunNotifier";
 import { startRunStream } from "@/lib/runStream";
 import { getOwnerToken } from "@/lib/owner";
 import { parseRunError, hintForKind, isRetryable } from "@/lib/runErrors";
+import { canRefineRun } from "@/lib/runAccess";
 import type { ExperimentPlan, LiteratureQC, PlanCritique } from "@/lib/samples";
 
 type Status = "pending" | "qc" | "plan" | "done" | "failed";
@@ -265,8 +266,10 @@ const RunPage = () => {
   }
 
   const inFlight = run.status === "pending" || run.status === "qc" || run.status === "plan";
-  const canRefine = run.status === "done" && !!run.plan;
   const isOwner = !!user && run.owner_user_id === user.id;
+  const canRefine = canRefineRun({
+    status: run.status, hasPlan: !!run.plan, isOwner, signedIn: !!user, shareToken,
+  });
 
   return (
     <div className="min-h-screen bg-background">
