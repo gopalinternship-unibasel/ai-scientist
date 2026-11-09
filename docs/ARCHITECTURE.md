@@ -137,9 +137,10 @@ flowchart LR
   NOV --> PERSIST[(INSERT runs<br/>status=plan)]
   PERSIST --> PROMPT[Build planner prompt<br/>+ house rules + feedback hints]
   PROMPT --> PLAN[LLM plan<br/>streaming JSON]
-  PLAN --> CAT[Catalog cross-check<br/>Sigma, NEB, IDT...]
-  CAT --> CIT[Citation sanitiser]
-  CIT --> CRIT[LLM critique<br/>independent call]
+  PLAN --> CIT[Citation sanitiser]
+  CIT --> PG[Plan guards<br/>sources, budget sum,<br/>materials, refinement limits]
+  PG --> CAT[Catalog cross-check<br/>Sigma, NEB, IDT...]
+  CAT --> CRIT[LLM critique<br/>independent call]
   CRIT --> SAVE[(UPDATE runs<br/>status=done)]
   SAVE --> OUT_OK[SSE: done]
 ```
@@ -152,8 +153,9 @@ branching loops — so failures are easy to attribute.
 
 ## 4. Deterministic guards
 
-The six guards that keep the model honest. All are pure TypeScript; all run
-**outside** the LLM so they can't be argued with.
+The guards that keep the model honest. All are pure TypeScript; all run
+**outside** the LLM so they can't be argued with. The first three run before
+the planner; the rest check the plan it returns.
 
 | Guard | File | What it catches |
 |---|---|---|
@@ -161,11 +163,18 @@ The six guards that keep the model honest. All are pure TypeScript; all run
 | **Feasibility check** | `_shared/feasibilityCheck.ts` | Sub-Abbe optical resolution, FTL signaling, perpetual motion, etc. Pure regex rules. |
 | **Safety screen** | `_shared/safety.ts` | Dual-use bio, controlled substances, human-subjects red flags. |
 | **Catalog cross-check** | `_shared/catalogCheck.ts` + `skuVerify.ts` | Supplier catalog-number formats and a canonical SKU dictionary (Sigma, Thermo, NEB, IDT, Qiagen, Promega, Bio-Rad, ATCC); up to three Sigma-Aldrich SKUs per plan are also looked up live in PubChem's Sigma-Aldrich deposits and flagged when they resolve to a different product. |
-| **Citation sanitiser** | `_shared/citations.ts` | Drops any citation whose DOI/title doesn't appear in the literature pool fetched for *this* run. |
+| **Citation sanitiser** | `_shared/citations.ts` | Normalises inline citations to `[N]` and drops any `[N]` that is not an index into the references retrieved for *this* run. |
+| **Source check** | `_shared/planIntegrity.ts` | Each protocol step's `source` must resolve to a retrieved reference (by `[N]`, URL, DOI or a title of 20+ characters) and is then shown as `[N] title (year)`; a source that cites anything else (URL, DOI, PMID, "et al.", a year) is removed, and so are such links inside step text. Short plain labels ("manufacturer's instructions") stay. The frontend re-applies it to plans saved before 9 Nov 2026. |
+| **Budget arithmetic** | `_shared/planIntegrity.ts` | `budget.total_usd` is set to the sum of `budget.line_items`; a reagents/materials line that differs from the materials table by more than a third is flagged. |
+| **Plan guards** | `_shared/planGuards.ts` | Flags materials that share no specific term with the hypothesis, materials that match cost-catalog items from topic groups the hypothesis does not mention, and refinements whose numeric limit (budget cap, "cut by N%", timeline in days/weeks/months) the new plan breaks. Before the plan: house rules that share no specific term with the hypothesis are dropped (generic rules stay), the cost catalog shows only the topic groups that fit (`costCatalogPrompt`), and a refinement gets a digest of every section of the previous plan plus its limits as hard constraints. |
 | **Canonical-technique override** | `_shared/canonicalTechniques.ts` | Promotes "novel"-classified textbook methods (PCR, Western, ELISA, OD600 growth curves) to `exact_match`, with disqualifiers for non-canonical perturbations (CRISPRi, knockouts, Δ-strains). |
 
-If any guard rejects, the run never reaches the planner — saving tokens and
-preventing nonsense from ever being persisted.
+If a pre-planner guard rejects, the run never reaches the planner — saving
+tokens and preventing nonsense from ever being persisted. The post-plan
+guards fix what is mechanical (sources, the total) and record the rest in
+`plan.verification`, which the run page and the PDF show under "Automated
+checks" and which the reviewer critique receives as high-severity
+pre-check findings. Cached plans are re-checked before they are served.
 
 ---
 
@@ -388,12 +397,13 @@ graph LR
 
 Two retrieval paths feed every planner call:
 
-1. **Per-hypothesis hints** — top-k feedback rows whose embedding is closest to the current hypothesis (cosine similarity > 0.78).
-2. **Per-domain house rules** — distilled wisdom from clustered corrections in the same domain.
+1. **Per-hypothesis hints** — up to 5 feedback rows whose embedding is closest to the current hypothesis, above a cosine floor (`FEEDBACK_MIN_SIMILARITY`; code default 0.55, tuned for Gemini embeddings; 0.7 in the local env for nomic-embed-text).
+2. **Per-domain house rules** — distilled wisdom from clustered corrections in the same domain, up to 8 per domain, of which only the rules that fit the hypothesis reach the prompt (`planGuards.filterRelevantRules`).
 
 The Admin → Uplift panel tracks `uplift_sum / uplift_n` per lesson and
 auto-demotes ones that drag scores down (`auto_demote_low_uplift_lessons`
-RPC, runs nightly).
+RPC, triggered from the Admin page; the migrations schedule no nightly job
+for it).
 
 ---
 
@@ -416,11 +426,12 @@ graph TB
 **Principles**
 
 - **Roles in a separate table** — `user_roles` with a `SECURITY DEFINER` `has_role()` RPC. Never on `profiles`/`auth.users` (privilege-escalation risk).
-- **Anonymous runs** — gated by an opaque random `owner_token` stored in `localStorage`; claimed into the user's account on sign-in via `claim_anonymous_runs` RPC.
+- **Anonymous runs** — gated by an opaque random `owner_token` stored in `localStorage`; claimed into the user's account on sign-in via `claim_anonymous_runs` RPC, which also claims the anonymous feedback on those runs and clears the token. Token access (runs, feedback, realtime) applies only to rows no account owns, and a signed-in user's new runs and feedback store no token.
+- **Server-only writes to runs** — clients have no INSERT, UPDATE or DELETE on `runs` except UPDATE of `share_token` (the owner's Share button). Plans, status, hashes and hypotheses are written only by the edge functions (service role), so no user can plant a plan in the shared cache. run-experiment also serves a cache entry only when its stored hypothesis hashes to the key.
 - **Share links** — separate `share_token`, read-only, no realtime (see §8).
 - **Rate limiting** — `rate_limits` table + `cleanup_old_rate_limits` cron. Per-IP and per-user buckets enforced in the edge function.
 - **No service-role key in the browser.** Ever.
-- **Edge functions** validate JWT by default (`verify_jwt` left at default). Public flows (anon runs) explicitly opt out per function.
+- **Edge functions** validate JWT by default (`verify_jwt` left at default). `run-experiment`, `embed-feedback` and `backfill-feedback-embeddings` opt out because anonymous users call them, and check the caller themselves (`_shared/callerAuth.ts`): `embed-feedback` only for the row's owner (JWT, or the anonymous owner token for an unclaimed row), a moderator/admin or the service role; `backfill-feedback-embeddings` only for a moderator/admin or the service role.
 
 ---
 
@@ -428,13 +439,13 @@ graph TB
 
 | Concern | Mechanism |
 |---|---|
-| **Stuck runs** | `cleanup_stale_runs` RPC marks runs `failed` if `updated_at` older than 10 min while still in `qc`/`plan`. |
+| **Stuck runs** | `cleanup_stale_runs` RPC (pg_cron, every 5 minutes) marks runs `failed` if `updated_at` is older than 20 minutes while still in `pending`/`qc`/`plan`. Running pipelines bump `updated_at` every 20 s. |
 | **Cost catalog drift** | `_shared/costCatalog.ts` is checked in; updated by hand against supplier price lists, version-tagged. |
 | **Eval harness** | `eval-harness` edge function replays a batch of canonical hypotheses against current code, scores via LLM judge, persists to `eval_runs`. Surfaced in Admin. |
-| **Embeddings degraded mode** | If the gateway has no embedding model, feedback retrieval falls back to lexical search on `correction`. The function logs `[embeddings] disabled — running in degraded mode`. |
-| **Feedback dedup** | `find_duplicate_feedback` RPC + `bump_feedback_dup` collapses near-duplicate corrections (cosine > 0.93). |
+| **Embeddings degraded mode** | With no embedding model configured (or the provider down), new feedback is stored with `embedding = null`, retrieval returns no past corrections (there is no lexical fallback) and the backfill function embeds pending rows later. Plans are generated as usual. |
+| **Feedback dedup** | `find_duplicate_feedback` RPC + `bump_feedback_dup` collapses near-duplicate corrections (cosine ≥ 0.92, `embed-feedback`). |
 | **Linting RLS** | `bunx supabase db lint` + the in-tree `supabase--linter` flags missing policies on new tables. |
-| **CI** | `.github/workflows/ci.yml` runs `vitest run` and `deno test` on every PR. |
+| **CI** | `.github/workflows/ci.yml` runs ESLint (blocking, 0 errors), Vitest, the production build, `deno test` and `deno check` of every function on every PR. |
 
 ---
 
