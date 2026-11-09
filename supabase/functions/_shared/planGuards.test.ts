@@ -78,6 +78,17 @@ Deno.test("budget: total is reset to the sum of the line items", () => {
   assertEquals(check, { line_item_sum: 12133, stated_total: 10233, mismatch: true });
   assertEquals(checkBudget({ line_items: [{ amount_usd: 2170 }], total_usd: 2170 })?.mismatch, false);
   assertEquals(checkBudget({ line_items: [{ amount_usd: "1,000" }], total_usd: "1000" })?.mismatch, false);
+  // run 6140bde5: a "Total" row among the line items is not a cost
+  const withTotalRow = reconcileBudget({
+    line_items: [
+      { category: "Materials", amount_usd: 132 }, { category: "Labour", amount_usd: 1400 },
+      { category: "Overhead", amount_usd: 1568 }, { category: "Total", amount_usd: 3000 },
+    ],
+    total_usd: 3000,
+  });
+  assertEquals(withTotalRow.budget.total_usd, 3100);
+  assertEquals(withTotalRow.budget.line_items?.length, 3);
+  assertEquals(checkBudget({ line_items: [{ category: "Grand total", amount_usd: 5 }], total_usd: 5 }), null);
 });
 
 // --- materials, catalog, house rules (QA defect 4) -------------------------
@@ -107,6 +118,11 @@ Deno.test("materials copied from the PCR catalog are flagged for an NAD+ hypothe
   assert(kinds.includes("materials_off_topic"));
   // the reviewer gets open findings, high severity first
   assert(verificationIssueLines(verification)[0].startsWith("- No material mentions"));
+});
+
+Deno.test("materials without any cost are flagged", () => {
+  const { verification } = verifyPlan({ materials: [{ name: "NMN", total_cost_usd: 0 }, { name: "SH-SY5Y cells", total_cost_usd: 0 }] }, { hypothesis: NR, references: [] });
+  assert(verification.issues.some((i) => i.kind === "materials_unpriced"));
 });
 
 Deno.test("materials that name the compound and cell line pass", () => {
@@ -196,6 +212,7 @@ Deno.test("planDigest leaves out the numbers a refinement limit rules out", () =
   };
   const b = planDigest(plan, 8000, { budget: true });
   assert(!b.includes("17355") && !b.includes("11965") && b.includes("Labour") && b.includes("5 months"));
+  assert(b.includes("\"total_cost_usd\":15"), "material prices stay");
   const t = planDigest(plan, 8000, { durations: true });
   assert(!t.includes("5 months") && !t.includes("1 month") && t.includes("17355"));
 });
@@ -214,6 +231,7 @@ Deno.test("chooseRepaired keeps the repair only when it clears findings", () => 
 
   const notFixed = chooseRepaired(first, verifyPlan(over, ctx));
   assertEquals(notFixed.verification.repair?.outcome, "not fixed");
+  assertEquals(notFixed.verification.repair?.second_attempt?.length, 1);
   assert(notFixed.verification.issues[0].detail.endsWith("One automatic second attempt did not fix it."));
 
   assertEquals(chooseRepaired(first, null).verification.repair?.outcome, "failed");

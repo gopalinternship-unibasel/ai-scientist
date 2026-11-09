@@ -221,9 +221,21 @@ function num(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+// A line item that is itself a total ("Total", "Grand total", "Subtotal"):
+// run 6140bde5 listed "Total: $3,000" among its line items, and adding it
+// to the sum counted the budget twice.
+const TOTAL_ROW_RE = /^\s*(?:grand\s+|sub-?\s*)?totals?\b/i;
+
+/** Line items that are costs (rows that restate a total are not). */
+export function costLineItems<L extends { category?: string }>(items: L[] | undefined | null): L[] {
+  return (items ?? []).filter((li) => !TOTAL_ROW_RE.test(li?.category ?? ""));
+}
+
 export function checkBudget(budget: BudgetLike | null | undefined): BudgetCheck | null {
-  if (!budget || !Array.isArray(budget.line_items) || budget.line_items.length === 0) return null;
-  const sum = Math.round(budget.line_items.reduce((s, li) => s + (num(li?.amount_usd) ?? 0), 0) * 100) / 100;
+  if (!budget || !Array.isArray(budget.line_items)) return null;
+  const items = costLineItems(budget.line_items);
+  if (items.length === 0) return null;
+  const sum = Math.round(items.reduce((s, li) => s + (num(li?.amount_usd) ?? 0), 0) * 100) / 100;
   const stated = num(budget.total_usd);
   return { line_item_sum: sum, stated_total: stated, mismatch: stated === null || Math.abs(stated - sum) > 1 };
 }
@@ -242,6 +254,6 @@ export function budgetTotal(budget: BudgetLike | null | undefined): number {
 export function reconcileBudget<B extends BudgetLike>(budget: B): { budget: B; check: BudgetCheck | null } {
   const check = checkBudget(budget);
   if (!check) return { budget, check: null };
-  const line_items = (budget.line_items ?? []).map((li) => ({ ...li, amount_usd: num(li?.amount_usd) ?? 0 }));
+  const line_items = costLineItems(budget.line_items).map((li) => ({ ...li, amount_usd: num(li?.amount_usd) ?? 0 }));
   return { budget: { ...budget, line_items, total_usd: check.line_item_sum }, check };
 }

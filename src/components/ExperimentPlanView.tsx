@@ -20,7 +20,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import type { ExperimentPlan, LiteratureQC } from "@/lib/samples";
 import { exportPlanToPdf } from "@/lib/exportPdf";
-import { budgetTotal, checkBudget, checkLabel, planCheckNotes, verifiedSource } from "@/lib/planIntegrity";
+import { budgetTotal, checkBudget, checkLabel, costLineItems, planCheckNotes, verifiedSource } from "@/lib/planIntegrity";
 import { SectionFeedback, type FeedbackSection } from "@/components/SectionFeedback";
 import { Sparkles } from "lucide-react";
 import {
@@ -499,7 +499,7 @@ export const ExperimentPlanView = ({
       <Section number="04" label="Budget" icon={CircleDollarSign} changed={changed?.budget} feedback={fb("budget")}>
         <div className="grid gap-4 md:grid-cols-[1fr,auto]">
           <ul className="divide-y divide-rule">
-            {plan.budget.line_items.map((li, i) => (
+            {costLineItems(plan.budget.line_items).map((li, i) => (
               <li key={i} className="flex items-center justify-between py-3">
                 <div>
                   <div className="font-medium text-foreground">{li.category}</div>

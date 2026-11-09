@@ -3,7 +3,7 @@
 // and consistent typography — unlike `window.print()` which depended on screen CSS.
 import { jsPDF } from "jspdf";
 import type { ExperimentPlan, LiteratureQC } from "@/lib/samples";
-import { budgetTotal, checkLabel, planCheckNotes, verifiedSource } from "@/lib/planIntegrity";
+import { budgetTotal, checkLabel, costLineItems, planCheckNotes, verifiedSource } from "@/lib/planIntegrity";
 
 const PAGE = { w: 210, h: 297 }; // A4 mm
 const M = 18;                    // margin
@@ -294,7 +294,7 @@ export function exportPlanToPdf(
 
   // ── 04 Budget ────────────────────────────────────────────────────────────
   heading(ctx, "04", "Budget", footer);
-  for (const li of plan.budget.line_items) {
+  for (const li of costLineItems(plan.budget.line_items)) {
     ensureSpace(ctx, 6, footer);
     doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.setTextColor(30);
     doc.text(li.category, M, ctx.y);

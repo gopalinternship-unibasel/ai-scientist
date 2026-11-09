@@ -22,6 +22,7 @@ export interface PlanIssue {
     | "budget_total_corrected"
     | "materials_subtotal_mismatch"
     | "materials_off_topic"
+    | "materials_unpriced"
     | "catalog_items_copied"
     | "refinement_budget_not_met"
     | "refinement_timeline_not_met"
@@ -37,7 +38,12 @@ export interface PlanVerification {
   refinement?: RefinementConstraints;
   issues: PlanIssue[];
   /** Set when the plan was regenerated once because of a repairable finding. */
-  repair?: { attempted: PlanIssue["kind"][]; outcome: "fixed" | "partly fixed" | "not fixed" | "failed" };
+  repair?: {
+    attempted: PlanIssue["kind"][];
+    outcome: "fixed" | "partly fixed" | "not fixed" | "failed";
+    /** What the second attempt still broke (when it was not kept or not clean). */
+    second_attempt?: string[];
+  };
 }
 
 // High-severity findings worth one automatic second attempt at the plan:
@@ -78,13 +84,14 @@ export function chooseRepaired<P extends { verification?: PlanVerification }>(
     return { plan: { ...r.plan, verification }, verification };
   };
   if (!second) return pick(first, "failed");
-  const left = repairableIssues(second.verification).length;
-  if (left === 0) {
+  const left = repairableIssues(second.verification);
+  if (left.length === 0) {
     const verification: PlanVerification = { ...second.verification, repair: { attempted, outcome: "fixed" } };
     return { plan: { ...second.plan, verification }, verification };
   }
-  if (left < attempted.length) return pick(second, "partly fixed");
-  return pick(first, "not fixed");
+  const chosen = left.length < attempted.length ? pick(second, "partly fixed") : pick(first, "not fixed");
+  chosen.verification.repair!.second_attempt = left.map((i) => i.detail);
+  return chosen;
 }
 
 // --- key terms -------------------------------------------------------------
@@ -396,6 +403,13 @@ export function verifyPlan(
       detail: `Materials that match cost-catalog examples from a topic this hypothesis does not mention (copied from the price list?): ${copied.slice(0, 6).join(", ")}.`,
     });
   }
+  if (materials.length > 0 && materials.every((m) => !(Number(m?.total_cost_usd) > 0))) {
+    issues.push({
+      kind: "materials_unpriced",
+      severity: "medium",
+      detail: "No material has a cost, so the materials budget is not grounded in the materials list.",
+    });
+  }
   if (materials.length > 0) {
     const hTerms = keyTerms(ctx.hypothesis);
     const mTerms = keyTerms(materials.map((m) => `${m?.name ?? ""} ${m?.notes ?? ""}`).join(" "));
@@ -493,9 +507,10 @@ export function planDigest(
   const p = { ...((plan && typeof plan === "object" ? plan : {}) as Loose) };
   delete p.verification;
   if (omit.budget) {
+    // Budget amounts only: without material prices (first try) the model
+    // priced every material at $0 (run 6140bde5).
     const b = (p.budget && typeof p.budget === "object" ? p.budget : {}) as Loose;
     p.budget = { line_items: arr(b.line_items).map((li) => pick(li, ["category"])), total_usd: "(to be revised)" };
-    p.materials = arr(p.materials).map((m) => pick(m, ["name", "supplier", "catalog_number", "notes"]));
   }
   if (omit.durations) {
     p.timeline = arr(p.timeline).map((t) => ({ ...t, duration: "(to be revised)" }));

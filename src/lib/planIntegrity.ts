@@ -13,6 +13,7 @@ import type { ExperimentPlan, PlanCheckIssue } from "./samples";
 export {
   budgetTotal,
   checkBudget,
+  costLineItems,
   matchReference,
   verifiedSource,
 } from "../../supabase/functions/_shared/planIntegrity.ts";
