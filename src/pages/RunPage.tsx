@@ -197,7 +197,14 @@ const RunPage = () => {
       setRun({ ...run, share_token: token });
     }
     const url = `${window.location.origin}/runs/${run.id}?t=${token}`;
-    await navigator.clipboard.writeText(url);
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      // Clipboard can be unavailable (no focus, browser policy): show the
+      // link so it can still be copied by hand.
+      toast.message("Share link created", { description: url, duration: 15000 });
+      return;
+    }
     setShareCopied(true);
     toast.success("Share link copied to clipboard.");
     setTimeout(() => setShareCopied(false), 2000);
@@ -427,6 +434,7 @@ const RunPage = () => {
                     runId={run.id}
                     ownerUserId={run.owner_user_id}
                     appliedFeedback={run.applied_feedback ?? null}
+                    onShare={isOwner && run.status === "done" ? onShare : undefined}
                   />
                 </ErrorBoundary>
               )}

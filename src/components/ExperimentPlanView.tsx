@@ -197,6 +197,13 @@ interface PlanViewProps {
   ownerUserId?: string | null;
   /** Past corrections that the planner pulled in for this run (cross-run learning loop). */
   appliedFeedback?: AppliedFeedbackEntry[] | null;
+  /**
+   * Creates (or reuses) the run's share token and copies the public link.
+   * Passed by RunPage for the signed-in owner; without it the toolbar can
+   * only copy the current URL, which works for others only when it already
+   * carries a share token (?t=).
+   */
+  onShare?: () => void;
 }
 
 /** Cheap structural diff: stringify each section and compare. */
@@ -217,7 +224,7 @@ function diffSections(a: ExperimentPlan, b: ExperimentPlan) {
 }
 
 export const ExperimentPlanView = ({
-  plan, previousPlan, hypothesis, version = 1, runId, ownerUserId, appliedFeedback,
+  plan, previousPlan, hypothesis, version = 1, runId, ownerUserId, appliedFeedback, onShare: onShareRun,
 }: PlanViewProps) => {
   const materialsTotal = useMemo(
     () => plan.materials.reduce((s, m) => s + (m.total_cost_usd ?? 0), 0),
@@ -268,6 +275,15 @@ export const ExperimentPlanView = ({
   };
 
   const onShare = async () => {
+    // The signed-in owner gets a real public link (share token).
+    if (onShareRun) { onShareRun(); return; }
+    // Anyone else can only pass on the link they are on. Without a share
+    // token that link is private to this browser (RLS), so say so instead
+    // of copying a link that shows "Run not found" to everyone else.
+    if (!new URL(window.location.href).searchParams.get("t")) {
+      toast.error("Sign in to create a share link for this run.");
+      return;
+    }
     try {
       await navigator.clipboard.writeText(window.location.href);
       toast.success("Link copied to clipboard");
