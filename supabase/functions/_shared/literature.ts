@@ -39,7 +39,25 @@ const UA = "AI-Scientist/1.0 (Lovable)";
 const DEFAULT_TIMEOUT = 4500;
 const DEGRADED_TIMEOUT = 2500;
 
-async function searchS2(q: string, timeoutMs = DEFAULT_TIMEOUT): Promise<LitPaper[]> {
+// Semantic Scholar's unauthenticated pool is shared by every anonymous
+// client and answers HTTP 429 most of the time (seen on 9 Nov 2026 for
+// almost every query). A free API key (SEMANTIC_SCHOLAR_API_KEY, sent as
+// x-api-key) gets its own quota. Without one, a throttled call is retried
+// once after a short pause, and a call that stays throttled counts as a
+// failure (not as "no papers"), so an all-sources outage is reported as
+// rate-limited.
+const S2_RETRY_MS = 1100;
+
+function s2Headers(): Record<string, string> {
+  const key = Deno.env.get("SEMANTIC_SCHOLAR_API_KEY")?.trim();
+  return key ? { "User-Agent": UA, "x-api-key": key } : { "User-Agent": UA };
+}
+
+export async function searchS2(
+  q: string,
+  timeoutMs = DEFAULT_TIMEOUT,
+  fetchFn: typeof fetch = fetch,
+): Promise<LitPaper[]> {
   const url = new URL("https://api.semanticscholar.org/graph/v1/paper/search");
   url.searchParams.set("query", q);
   url.searchParams.set("limit", "8");
@@ -47,10 +65,20 @@ async function searchS2(q: string, timeoutMs = DEFAULT_TIMEOUT): Promise<LitPape
     "fields",
     "title,abstract,year,authors.name,venue,citationCount,url,externalIds",
   );
-  const res = await fetch(url.toString(), {
-    headers: { "User-Agent": UA },
+  const call = () => fetchFn(url.toString(), {
+    headers: s2Headers(),
     signal: AbortSignal.timeout(timeoutMs),
   });
+  let res = await call();
+  if (res.status === 429) {
+    try { await res.body?.cancel(); } catch { /* noop */ }
+    await new Promise((r) => setTimeout(r, S2_RETRY_MS));
+    res = await call();
+    if (res.status === 429) {
+      try { await res.body?.cancel(); } catch { /* noop */ }
+      throw new Error("Semantic Scholar rate limit (429)");
+    }
+  }
   if (!res.ok) return [];
   const json = await res.json();
   // deno-lint-ignore no-explicit-any
