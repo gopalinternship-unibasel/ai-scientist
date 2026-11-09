@@ -5,7 +5,7 @@ The hosted backend this app was built on (Lovable Cloud project
 guide runs the whole system on one Windows PC instead:
 
 - a local Supabase stack in Docker (Postgres with the 20 original
-  migrations plus one new one, Auth, Realtime, REST, the edge-function
+  migrations plus two new ones, Auth, Realtime, REST, the edge-function
   runtime, Studio and a mail catcher),
 - the five edge functions (`run-experiment`, `embed-feedback`,
   `distill-house-rules`, `eval-harness`, `backfill-feedback-embeddings`),
@@ -125,6 +125,12 @@ token in the browser and are claimed into your account when you sign in), or
 create a new account on the "Create account" tab (no email confirmation is
 needed locally).
 
+There is no "Continue with Google" button locally. It goes through Lovable
+Cloud's OAuth broker (`/~oauth/initiate` on the site's own origin), which
+exists only on a Lovable-hosted site; self-hosted it opened the app's 404
+page. A build for Lovable hosting shows it again with
+`VITE_LOVABLE_OAUTH=true`.
+
 **Generate a plan.** On the home page type a hypothesis or click one of the
 four sample buttons. You land on the run page, which shows each stage as it
 happens: hypothesis gate, literature search (Semantic Scholar, OpenAlex,
@@ -145,6 +151,41 @@ embedding, and an admin can distil them into house rules), and
 
 A run that fails (for example because the model server was down) shows a
 **Retry** button for its signed-in owner.
+
+**Automated checks.** Before a plan is saved (and again before a cached plan
+is served) deterministic checks run on it (`supabase/functions/_shared/planIntegrity.ts`
+and `planGuards.ts`):
+
+| Check | What happens |
+|---|---|
+| Protocol sources | A step's source is kept only when it is one of the references the literature search returned (matched by `[N]`, URL, DOI or title) and is then shown as `[N] title (year)`. Any other URL, DOI, PMID or author-year citation is removed, also from step text. Plain labels such as "manufacturer's instructions" stay. |
+| Budget total | Set to the sum of the budget line items; the Budget card says what the model's own total was. A reagents/materials line that does not match the materials table is flagged. |
+| Materials | Flagged when no material names anything specific from the hypothesis, or when materials match cost-catalog items from topics the hypothesis does not mention (the catalog copying seen with the small model). |
+| Refinement limits | A budget cap ("under $3,000", "cut the budget by 30%") or timeline cap ("8 weeks", "within 2 months") in the instruction is sent to the model as a hard limit and checked on the new plan. |
+
+Findings appear in an **Automated checks** box above the plan and on the PDF
+cover page, and the reviewer critique receives them as high-severity
+findings. A cached plan with a high-severity finding is not replayed: the
+request generates a fresh plan, which becomes the new cache entry. The plan
+view and PDF apply the source and budget checks to plans saved before these
+checks existed too. Before generation, house rules that share no specific
+term with the hypothesis are left out of the prompt, and the cost catalog
+shows only its topic groups that fit the hypothesis.
+
+**Who may write what.** The browser can read runs (its own, or one it has a
+share link for) but write only one column: `share_token`, through the owner's
+Share button. Everything else in `runs` is written by the edge functions with
+the service role (migration `20261109200000`), so no user can plant a plan in
+the shared cache. Anonymous access by owner token covers only runs and
+feedback that no account owns; signing up claims both and clears the token.
+`embed-feedback` works only for the feedback's owner (or a moderator/admin);
+`backfill-feedback-embeddings` only for a moderator/admin or the service
+role, for example from PowerShell:
+
+```powershell
+$svc = (& C:\Users\gopal\tools\supabase\supabase.exe status -o env | Select-String '^SERVICE_ROLE_KEY=').ToString().Split('=',2)[1].Trim('"')
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:54321/functions/v1/backfill-feedback-embeddings -Headers @{ Authorization = "Bearer $svc" }
+```
 
 ## 5. Stop
 
@@ -182,6 +223,8 @@ powershell -ExecutionPolicy Bypass -File scripts\start-local.ps1 -RestartFunctio
 | `AI_EMBED_BASE_URL`, `AI_EMBED_API_KEY` | Separate embeddings endpoint (for chat providers without one, for example the Hugging Face router or the Lovable gateway). |
 | `AI_EMBED_DIMENSIONS` | `true` to request 768-d vectors from OpenAI / Gemini embedding models. |
 | `FEEDBACK_MIN_SIMILARITY` | Cosine floor for retrieving past corrections (0.7 for nomic-embed-text). |
+| `AI_MODEL_PLAN` | Planner-only model chain. Commented out in the template: `qwen2.5-7b-4threads` gives better plans at about a third of the speed (`start-local.ps1` creates the variant once `qwen2.5:7b` is pulled). |
+| `PLAN_REPAIR_ATTEMPTS` | `1` (default): a plan that breaks a refinement limit or whose materials do not fit the hypothesis is generated once more; `0` turns that off (saves one plan's model time). |
 
 Ready-made blocks in `supabase\functions\.env.example`: OpenAI, Google Gemini
 (OpenAI-compatible endpoint), Hugging Face router, and the original Lovable
@@ -198,6 +241,9 @@ bun run test
 # Type check of the frontend
 node node_modules\typescript\bin\tsc --noEmit -p tsconfig.app.json
 
+# Lint (0 errors required; CI fails on any error, warnings are allowed)
+bun run lint
+
 # Edge-function tests (Deno). Deno is not needed on the host; this runs it in Docker:
 docker run --rm -v "${PWD}:/app" -w /app -e DENO_DIR=/app/supabase/.temp/deno-cache denoland/deno:2.1.4 `
   deno test --allow-net --allow-env --allow-read --no-lock supabase/functions/_shared/ supabase/functions/run-experiment/
@@ -211,6 +257,12 @@ docker run --rm -v "${PWD}:/app" -w /app -e DENO_DIR=/app/supabase/.temp/deno-ca
 
 (With Deno installed locally: `deno test --allow-net --allow-env --allow-read supabase/functions/_shared/ supabase/functions/run-experiment/`.)
 
+Measured on 9 Nov 2026 after the QA round-1 fixes: Vitest 15 files / 57
+tests, Deno 80 tests, ESLint 0 errors (9 warnings), `tsc` and `deno check`
+clean. The plan checks have their own Deno suite
+(`supabase/functions/_shared/planGuards.test.ts`, built from the QA's
+failing plans).
+
 Builds: `bun run build:dev` builds against the local stack
 (`.env.development.local`); plain `bun run build` uses the committed `.env`,
 which still points at the deleted hosted project.
@@ -221,6 +273,8 @@ which still points at the deleted hosted project.
 |---|---|
 | Run page stays on one stage | The run's `progress` and `error` columns (Studio, table `runs`) say where it is. `docker logs -f cvfix-ollama` shows the model server: a request is logged when it starts (`new prompt`) and when it finishes. Ollama runs one request at a time here, so other projects' requests queue in front of yours. `docker logs supabase_edge_runtime_ai-research-assistant` shows only runtime events (requests served, CPU or wall-clock limits); the functions' own `console.log` lines are not forwarded locally because analytics is off. |
 | "CPU time hard limit reached" in the runtime log | The CPU patch is missing: run `start-local.ps1 -RestartFunctions`. |
+| `permission denied for table runs` (HTTP 403) when a script or the browser writes `runs` | Intended: clients may only set `share_token` (migration `20261109200000`). Write runs through the edge functions, or as the service role. |
+| `embed-feedback` or `backfill-feedback-embeddings` answers 401/403 | Intended for callers who do not own the feedback; see "Who may write what" in section 4. |
 | Run failed with "Run timed out - connection lost or generation stalled" | No heartbeat for 20 minutes: the runtime was restarted or stopped while the run was in progress. Press Retry. |
 | Frontend talks to the dead hosted project | `.env.development.local` is missing: run `start-local.ps1` again (it rewrites the file). |
 | Sign-in fails | `.local-test-user.json` is stale: `start-local.ps1` re-checks and recreates the test users. |
@@ -248,6 +302,15 @@ which still points at the deleted hosted project.
   hosted provider brings that back. The pipeline itself has no deadline: the
   stall-cleanup job only fails a run after 20 minutes without a heartbeat,
   and the function sends one every 20 seconds.
+  Later on 9 Nov 2026 (QA round-2 fixes, CPU load 94%, other projects
+  sharing Ollama): generation 3.4-5.7 tokens/s and prompt processing about
+  20 tokens/s with `qwen2.5-3b-4threads`. The filtered cost catalog shrank
+  the planner prompt from about 2,300 to 1,739 tokens. Run 633e1d4f took
+  14 minutes end to end (gate, literature and novelty 2.5 min, plan about
+  9 min, critique 3 min); two runs that shared the queue took 21 minutes
+  each, and a refinement that needed the second attempt 16 minutes.
+  `qwen2.5:7b` measured 5.6 prompt and 1.15 generated tokens/s on the same
+  load, about three times slower.
 - **Ollama thread count.** Ollama runs a model with one thread per CPU core
   (8 here). When the PC is busy those threads stall each other: in a test on
   9 Nov 2026 qwen2.5:3b generated 0.07 tokens/s with the default threads and
@@ -259,15 +322,34 @@ which still points at the deleted hosted project.
 - **Plan quality with qwen2.5:3b** is far below the hosted models the app was
   tuned for: shorter plans (compact mode caps every list at 5 items),
   plainer critiques, and the hypothesis gate and novelty classifier make
-  more mistakes. Seen on 9 Nov 2026: a cryopreservation plan whose
-  materials list was copied from the PCR examples in the cost catalog, and
-  a distilled house rule copied from the distillation prompt's example. A
-  plan can also fail with "Model returned malformed plan" when the model
+  more mistakes. Before the QA round-1 fixes, plans copied their materials
+  from the PCR examples of the cost catalog, pasted house rules from an
+  unrelated trehalose study, cited invented URLs and ignored refinement
+  limits. After them (runs of 9 Nov 2026, evening):
+  - the QA's own NR / NAD+ hypothesis (run 5330844e) and a new NMN one
+    (633e1d4f) got materials that fit (the compound, SH-SY5Y cells, culture
+    media, an NAD+ assay kit in the first), no unrelated house rules and no
+    invented sources;
+  - the model's budget total was wrong in all three local plans (corrected
+    to the line-item sum), and one plan priced its materials at $109,403
+    against a $1,635 materials line (flagged, not fixable without a model);
+  - "Keep the total budget under $3,000." was first ignored outright (the
+    old $17,355 budget copied, run f6ad46e3, flagged). With the old amounts
+    hidden from the refinement prompt and one automatic second attempt,
+    the next try (run 41cff2b1) cut the budget to $3,132 at the first
+    attempt and $3,165 at the second: close to the cap but over it, with
+    "$3,000" written as the total and labour of $1,000 for two full-time
+    people. The plan is saved with "Check: ... One automatic second attempt
+    did not fix it." The small model follows the instruction now but cannot
+    do the arithmetic; the checks say so instead of hiding it;
+  - the reviewer critique repeats an injected past correction as a concern
+    even when the plan already follows it (run 633e1d4f).
+  A plan can also fail with "Model returned malformed plan" when the model
   loops inside the JSON until the output budget runs out (one of three
   local plans that streamed to the end on 9 Nov 2026, before text fields
-  were capped); Retry starts a fresh attempt.
-  A larger model (for example a `qwen2.5:7b` variant with
-  `"num_ctx":8192`) is better and about 2.5 times slower.
+  were capped); Retry starts a fresh attempt. `AI_MODEL_PLAN=qwen2.5-7b-4threads`
+  (see `.env.example`) gives the planner the larger model at about a third
+  of the speed; it was not run end to end here.
 - **The edge runtime is patched at start.** `start-local.ps1` raises the
   CPU budget the Supabase CLI gives each function worker (1 s soft / 2 s
   hard over the worker's life) by editing the generated main service in the
