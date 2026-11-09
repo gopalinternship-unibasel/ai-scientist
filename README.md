@@ -30,7 +30,8 @@ You type a hypothesis like:
 > *"CRISPR-Cas9 knockout of sox2 in axolotl limb blastema cells will reduce
 > regeneration rate by ≥50% compared to wild-type controls over 28 days."*
 
-…and the system streams back, in **~60–90 seconds**:
+…and the system streams back, in **~60–90 seconds** on the hosted models
+(a CPU-only local model takes far longer; see [`RUNNING.md`](./RUNNING.md)):
 
 | Stage | Output |
 |---|---|
@@ -51,7 +52,7 @@ outside the LLM**:
 
 | Guard | Where | Catches |
 |---|---|---|
-| **Hypothesis gate** | `_shared/hypothesisGate.ts` | Vague goals (`"improve cancer treatment"`), non-scientific input (`"my cat likes tuna"`), instructions to the AI, gibberish. Returns HTTP 400 + suggestion. |
+| **Hypothesis gate** | `_shared/hypothesisGate.ts` | Vague goals (`"improve cancer treatment"`), non-scientific input (`"my cat likes tuna"`), instructions to the AI, gibberish. Runs as the first step of the run: the run fails with a `VALIDATION` error and a suggested rewrite. |
 | **Feasibility check** | `_shared/feasibilityCheck.ts` | Hard physical/biological impossibilities — Abbe diffraction limit, FTL signalling, perpetual motion, absolute zero, **cryogenic exposure of living vertebrates**, no-communication theorem. Pure regex, fast and free. |
 | **Safety screen** | `_shared/safety.ts` | Human/animal subjects, BSL ≥2, controlled substances, recombinant DNA, hazardous chemicals — feeds requirements into the planning prompt. |
 | **Catalog cross-check** | `_shared/catalogCheck.ts` | Validates supplier-specific catalog-number formats (Sigma `A1234-5G`, Thermo 7–9 digits, etc.) and flags name/SKU mismatches against a canonical dictionary. |
@@ -163,7 +164,7 @@ git clone https://github.com/lovable-dev/ai-scientist.git
 cd ai-scientist
 bun install
 bun run dev          # Vite dev server on :8080
-bun test             # Vitest (frontend + lib)
+bun run test         # Vitest (frontend + lib); plain `bun test` is Bun's own runner
 bun run build        # production build
 ```
 
@@ -232,8 +233,8 @@ kind)`.
 
 | Input | Result |
 |---|---|
-| `"improve cancer treatment"` | 400 — vague; suggestion returned |
-| `"My cat likes tuna fish."` | 400 — non-scientific |
+| `"improve cancer treatment"` | Run fails at the hypothesis gate (`VALIDATION`) — vague; suggestion returned |
+| `"My cat likes tuna fish."` | Run fails at the hypothesis gate (`VALIDATION`) — non-scientific |
 | Resolve atoms with brightfield optical microscopy | 400 — Abbe diffraction limit |
 | Cool zebrafish to 4 K in liquid helium | 400 — cryogenic-vertebrate rule |
 | Standard PCR / Western blot / ELISA protocol | `exact_match` literature, full plan |

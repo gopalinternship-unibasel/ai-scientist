@@ -25,7 +25,7 @@ jobs:
         continue-on-error: true
 
       - name: Test
-        run: bun test
+        run: bun run test   # Vitest (jsdom); `bun test` is Bun's own runner and cannot run these suites
 
       - name: Build
         run: bun run build
