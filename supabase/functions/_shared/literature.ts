@@ -141,14 +141,23 @@ async function searchOpenAlex(q: string, timeoutMs = DEFAULT_TIMEOUT): Promise<L
   });
 }
 
-async function searchPubMed(q: string, timeoutMs = DEFAULT_TIMEOUT): Promise<LitPaper[]> {
-  // 1) esearch for PMIDs
+export async function searchPubMed(
+  q: string,
+  timeoutMs = DEFAULT_TIMEOUT,
+  fetchFn: typeof fetch = fetch,
+): Promise<LitPaper[]> {
+  // 1) esearch for PMIDs. sort=relevance is PubMed's "Best Match". Without
+  //    it E-utilities return the most recently added PMIDs first: for
+  //    "ELISA method protocol" that was this month's papers on HTLV-1 in
+  //    blood donors and a virus RT-LAMP assay, instead of the ELISA methods
+  //    reviews Best Match puts first.
   const search = new URL("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi");
   search.searchParams.set("db", "pubmed");
   search.searchParams.set("term", q);
   search.searchParams.set("retmode", "json");
   search.searchParams.set("retmax", "8");
-  const sRes = await fetch(search.toString(), {
+  search.searchParams.set("sort", "relevance");
+  const sRes = await fetchFn(search.toString(), {
     headers: { "User-Agent": UA },
     signal: AbortSignal.timeout(timeoutMs),
   });
@@ -161,7 +170,7 @@ async function searchPubMed(q: string, timeoutMs = DEFAULT_TIMEOUT): Promise<Lit
   sum.searchParams.set("db", "pubmed");
   sum.searchParams.set("id", ids.join(","));
   sum.searchParams.set("retmode", "json");
-  const uRes = await fetch(sum.toString(), {
+  const uRes = await fetchFn(sum.toString(), {
     headers: { "User-Agent": UA },
     signal: AbortSignal.timeout(timeoutMs),
   });

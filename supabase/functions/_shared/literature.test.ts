@@ -1,7 +1,7 @@
 // Tests for the Semantic Scholar client in literature.ts (stubbed network).
 // Run: deno test --allow-net --allow-env --allow-read supabase/functions/_shared/
 import { assert, assertEquals, assertRejects } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { searchS2 } from "./literature.ts";
+import { searchPubMed, searchS2 } from "./literature.ts";
 
 const page = { data: [{ paperId: "p1", title: "Trehalose cryopreservation", year: 2015, externalIds: { DOI: "10.1/ABC" }, authors: [{ name: "A" }] }] };
 
@@ -39,4 +39,22 @@ Deno.test("searchS2 sends SEMANTIC_SCHOLAR_API_KEY as x-api-key when set", async
   const seen2: Headers[] = [];
   await searchS2("trehalose", 4500, stub([200], seen2));
   assert(!seen2[0].has("x-api-key"));
+});
+
+Deno.test("searchPubMed asks E-utilities for Best Match order and maps the summary", async () => {
+  const urls: string[] = [];
+  const fake = ((url: string | URL | Request) => {
+    const u = String(url);
+    urls.push(u);
+    const body = u.includes("esearch")
+      ? { esearchresult: { idlist: ["35737237"] } }
+      : { result: { uids: ["35737237"], "35737237": { title: "Enzyme-Linked Immunosorbent Assay (ELISA).", pubdate: "2022 Jun", authors: [{ name: "B" }], fulljournalname: "J", articleids: [{ idtype: "doi", value: "10.1/X" }] } } };
+    return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+  }) as typeof fetch;
+  const papers = await searchPubMed("ELISA method protocol", 4500, fake);
+  assertEquals(new URL(urls[0]).searchParams.get("sort"), "relevance");
+  assertEquals(papers.length, 1);
+  assertEquals(papers[0].source, "pubmed");
+  assertEquals(papers[0].year, 2022);
+  assertEquals(papers[0].url, "https://doi.org/10.1/x");
 });
