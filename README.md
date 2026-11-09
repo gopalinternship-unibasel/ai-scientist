@@ -10,13 +10,13 @@ safety/feasibility checks, and a structured AI critique.**
 
 [![Self-host](https://img.shields.io/badge/run-locally-0f172a?style=flat-square)](./RUNNING.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](./LICENSE)
-[![CI](https://img.shields.io/github/actions/workflow/status/lovable-dev/ai-scientist/ci.yml?branch=main&style=flat-square&label=CI)](./.github/workflows/ci.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/gopalinternship-unibasel/ai-scientist/ci.yml?branch=main&style=flat-square&label=CI)](./.github/workflows/ci.yml)
 [![Built with Lovable](https://img.shields.io/badge/built%20with-Lovable-ff5c8a?style=flat-square)](https://lovable.dev)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](./CONTRIBUTING.md)
 
 [**Run it locally**](./RUNNING.md) ·
-[**Report a bug**](https://github.com/lovable-dev/ai-scientist/issues/new?template=bug_report.yml) ·
-[**Request a feature**](https://github.com/lovable-dev/ai-scientist/issues/new?template=feature_request.yml) ·
+[**Report a bug**](https://github.com/gopalinternship-unibasel/ai-scientist/issues/new?template=bug_report.yml) ·
+[**Request a feature**](https://github.com/gopalinternship-unibasel/ai-scientist/issues/new?template=feature_request.yml) ·
 [**Contributing**](./CONTRIBUTING.md)
 
 </div>
@@ -60,12 +60,13 @@ outside the LLM**, before and after the plan is generated:
 | **Hypothesis gate** | `_shared/hypothesisGate.ts` | Vague goals (`"improve cancer treatment"`), non-scientific input (`"my cat likes tuna"`), instructions to the AI, gibberish. Runs as the first step of the run: the run fails with a `VALIDATION` error and a suggested rewrite. |
 | **Feasibility check** | `_shared/feasibilityCheck.ts` | Hard physical/biological impossibilities — Abbe diffraction limit, FTL signalling, perpetual motion, absolute zero, **cryogenic exposure of living vertebrates**, no-communication theorem. Pure regex, fast and free. |
 | **Safety screen** | `_shared/safety.ts` | Human/animal subjects, BSL ≥2, controlled substances, recombinant DNA, hazardous chemicals — feeds requirements into the planning prompt. |
-| **Catalog cross-check** | `_shared/catalogCheck.ts` | Validates supplier-specific catalog-number formats (Sigma `A1234-5G`, Thermo 7–9 digits, etc.) and flags name/SKU mismatches against a canonical dictionary. |
+| **Catalog numbers** | `_shared/catalogCheck.ts`, `skuVerify.ts` | Supplier-specific catalog-number formats (Sigma `A1234-5G`, Thermo 7–9 digits, etc.), a canonical SKU dictionary and a live lookup of Sigma-Aldrich SKUs in PubChem. A number that belongs to another product or breaks the format is removed before the plan is saved, with a note on the material. |
 | **Citation sanitiser** | `_shared/citations.ts` | Strips out-of-range or malformed `[N]` references in protocol steps and reports the count of hallucinated/rewritten/valid citations. |
 | **Source check** | `_shared/planIntegrity.ts` | A protocol step's `source` must be one of the retrieved references (matched by `[N]`, URL, DOI or title); anything else that looks like a citation is removed, also from step text. The plan view and the PDF apply the same check to older plans. |
-| **Budget arithmetic** | `_shared/planIntegrity.ts` | The total is set to the sum of the budget line items (the model's own total disagreed in every local plan); a materials line that does not match the materials table is flagged. |
-| **Plan guards** | `_shared/planGuards.ts` | Flags materials that name nothing from the hypothesis or are copied from cost-catalog topics it does not mention, and refinements whose budget or timeline limit ("under $3,000", "8 weeks") the new plan breaks. House rules unrelated to the hypothesis are kept out of the prompt, and the catalog shows only the topic groups that fit. Findings are stored on the plan, shown under "Automated checks" and sent to the reviewer. |
-| **Query degradation** | `_shared/queryDegradation.ts` | When the full hypothesis returns 0 lit hits, retries with progressively broader keyword queries. |
+| **Budget arithmetic** | `_shared/planIntegrity.ts` | A materials line below the materials table subtotal is raised to it, and the total is set to the sum of the budget line items (the model's own total disagreed in every local plan). |
+| **Plan guards** | `_shared/planGuards.ts`, `planContentChecks.ts` | Flags materials that leave out what the hypothesis is about (its cell line, compound, measurands) or are copied from cost-catalog topics it does not mention, protocol doses that differ from the hypothesis' dose, protocol steps that only list materials, protocol steps longer than the timeline, and refinements whose budget or timeline limit ("under $3,000", "8 weeks") the new plan breaks. A high-severity finding gets one automatic second attempt. House rules unrelated to the hypothesis are kept out of the prompt, and the catalog shows only the topic groups that fit. Findings are stored on the plan, shown under "Automated checks" and sent to the reviewer. |
+| **Literature queries** | `_shared/queryDegradation.ts`, `hypothesisTerms.ts` | Besides the full hypothesis, each source gets keyword queries built from the hypothesis' weighted concepts (cell line, compound, acronyms, topic), from the 5 heaviest down to 2, and the candidates are ranked by how much of the hypothesis they cover. |
+| **Novelty verdict check** | `_shared/noveltyVerdict.ts` | Corrects the AI classifier when it contradicts the retrieved papers: "not found" with on-topic papers becomes "similar", "exact match" without a paper that names the hypothesis' core is downgraded, and off-topic papers are not shown as references. Textbook-technique "exact match" applies only to protocol requests, not to claims that use the technique as a readout or comparator. |
 
 The plan and its critique are also generated by **two independent AI calls**
 so the reviewer can flag the planner's mistakes (and we feed deterministic
@@ -100,7 +101,7 @@ catalog issues into the reviewer as extra context).
 │  7. safety screen             deterministic (prompt fragment)        │
 │  8. plan generation (SSE)     gemini-3-flash-preview → gpt-5-mini    │
 │  9. citation sanitise         deterministic (strip out-of-range)     │
-│ 10. catalog + SKU + timeline  deterministic (Sigma SKUs via PubChem) │
+│ 10. plan guards + SKU check   deterministic (Sigma SKUs via PubChem) │
 │ 11. critique pass             gpt-5-mini → gemini-3-flash-preview    │
 └──────────────────────────────────────────────────────────────────────┘
                                 │
@@ -168,7 +169,7 @@ instead of 500-ing.
 You'll need [Bun](https://bun.sh) (or npm) and a Lovable Cloud project.
 
 ```bash
-git clone https://github.com/lovable-dev/ai-scientist.git
+git clone https://github.com/gopalinternship-unibasel/ai-scientist.git
 cd ai-scientist
 bun install
 bun run dev          # Vite dev server on :8080
@@ -231,11 +232,19 @@ kind)`.
 
 ### Row-level security
 
-- Anon viewers can read a run via `owner_token` (browser-local) or the
-  public `share_token`.
-- Signed-in users can read/write only their own runs.
+- Anon viewers can read a run via `owner_token` (browser-local, runs no
+  account owns) or the run's `share_token`; signed-in viewers read their own
+  runs and any run they hold a share link for.
+- Clients cannot insert, update or delete runs, except the owner setting
+  `share_token` (the Share button). The edge function writes QC, plan and
+  critique with the service role.
+- Feedback: owners insert their own rows and may edit only `rating` and
+  `correction`; moderation (`hidden`) goes through `set_feedback_hidden()`,
+  and ranking columns (`dup_count`, uplift counters, `embedding`) are
+  server-written.
+- The similarity search over everyone's corrections (`match_plan_feedback`)
+  and the other server helpers are executable by the service role only.
 - Anon runs created before sign-in are claimed via `claim_anonymous_runs(token)`.
-- The edge function uses the service role to write QC/plan/critique.
 
 ## ✅ Edge cases — verified behaviour
 
@@ -278,7 +287,7 @@ We welcome PRs! Start with [`CONTRIBUTING.md`](./CONTRIBUTING.md) for setup,
 conventions, and the PR checklist. Please also read our
 [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md).
 
-Good first issues are tagged [`good first issue`](https://github.com/lovable-dev/ai-scientist/labels/good%20first%20issue).
+Good first issues are tagged [`good first issue`](https://github.com/gopalinternship-unibasel/ai-scientist/labels/good%20first%20issue).
 
 ## 📜 License
 

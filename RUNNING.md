@@ -5,7 +5,7 @@ The hosted backend this app was built on (Lovable Cloud project
 guide runs the whole system on one Windows PC instead:
 
 - a local Supabase stack in Docker (Postgres with the 20 original
-  migrations plus two new ones, Auth, Realtime, REST, the edge-function
+  migrations plus three new ones, Auth, Realtime, REST, the edge-function
   runtime, Studio and a mail catcher),
 - the five edge functions (`run-experiment`, `embed-feedback`,
   `distill-house-rules`, `eval-harness`, `backfill-feedback-embeddings`),
@@ -141,7 +141,8 @@ and come back, the run continues on the server.
 
 On a finished plan: **Save as PDF** (the plan and its numbered references),
 **Share** (signed-in owner; copies a link with a share token that anyone can
-open read-only), **Refine** (creates version 2, 3, ... linked to the
+open read-only, signed in or not; share-link viewers get no Refine or
+feedback buttons), **Refine** (creates version 2, 3, ... linked to the
 original; the version switcher appears above the plan, failed versions are
 labelled, and changed sections are marked "Modified" against the version
 that was refined), the star / pencil buttons on each section (feedback that
@@ -152,23 +153,48 @@ embedding, and an admin can distil them into house rules), and
 A run that fails (for example because the model server was down) shows a
 **Retry** button for its signed-in owner.
 
+**Novelty verdict.** The literature search sends each source the full
+hypothesis and keyword queries built from what the hypothesis is about
+(`supabase/functions/_shared/hypothesisTerms.ts`: cell line, compound,
+acronyms, topic nouns, weighted; comparators such as "matching ELISA
+sensitivity" count less), and ranks the papers by how much of the hypothesis
+they cover. The AI classifier's verdict is then checked against those papers
+(`noveltyVerdict.ts`): "not found" while an on-topic paper was retrieved
+becomes "similar", "exact match" needs a paper that names the hypothesis'
+core, the overlap label follows the verdict, and off-topic papers are not
+shown as references. A corrected verdict says so in its rationale, and the
+run's `qc.classifier_signal` keeps what the classifier said. The
+textbook-technique rule (PCR, Western blot, ELISA, ... are "exact match")
+applies only to hypotheses that ask for the technique itself, not to claims
+that use it as a readout or comparator.
+
 **Automated checks.** Before a plan is saved (and again before a cached plan
-is served) deterministic checks run on it (`supabase/functions/_shared/planIntegrity.ts`
-and `planGuards.ts`):
+is served) deterministic checks run on it (`supabase/functions/_shared/planIntegrity.ts`,
+`planGuards.ts` and `planContentChecks.ts`). "Fixed" findings were corrected
+by the check; "Check" findings are for the reader:
 
 | Check | What happens |
 |---|---|
-| Protocol sources | A step's source is kept only when it is one of the references the literature search returned (matched by `[N]`, URL, DOI or title) and is then shown as `[N] title (year)`. Any other URL, DOI, PMID or author-year citation is removed, also from step text. Plain labels such as "manufacturer's instructions" stay. |
-| Budget total | Set to the sum of the budget line items; the Budget card says what the model's own total was. A reagents/materials line that does not match the materials table is flagged. |
-| Materials | Flagged when no material names anything specific from the hypothesis, or when materials match cost-catalog items from topics the hypothesis does not mention (the catalog copying seen with the small model). |
-| Refinement limits | A budget cap ("under $3,000", "cut the budget by 30%") or timeline cap ("8 weeks", "within 2 months") in the instruction is sent to the model as a hard limit and checked on the new plan. |
+| Protocol sources (Fixed) | A step's source is kept only when it is one of the references the literature search returned (matched by `[N]`, URL, DOI or title) and is then shown as `[N] title (year)`. Any other URL, DOI, PMID or author-year citation is removed, also from step text. Plain labels such as "manufacturer's instructions" stay. The note says how many were removed and no longer repeats the removed link. |
+| Catalog numbers (Fixed) | A catalog number that belongs to another product (the SKU dictionary, or Sigma-Aldrich's catalogue looked up through PubChem: Metformin "T9531" is trehalose) or does not fit the supplier's format is removed, and the material's notes say why. The planner prompt no longer shows example SKUs, which the small model copied. |
+| Budget (Fixed) | A materials line below the materials table subtotal is raised to the subtotal; the total is set to the sum of the line items, and the Budget card says what the model's own total was. A materials line far above the table is flagged. |
+| Materials (Check) | High severity when the materials do not name at least 40% of what the hypothesis is about (its cell line, compound, named measurands, by weight); also flagged when materials match cost-catalog items from topics the hypothesis does not mention (the catalog copying seen with the small model). |
+| Doses (Check) | High severity when the protocol gives the hypothesis' substance a concentration that is not within 1.5x of the hypothesis' dose ("10 mM metformin" for a 10 uM hypothesis). Stock solutions are not counted. |
+| Protocol steps (Check) | High severity when at least half of the steps are only material lists. Medium when the protocol's step durations add up to more than the timeline. |
+| Refinement limits (Check) | A budget cap ("under $3,000", "cut the budget by 30%") or timeline cap ("8 weeks", "within 2 months") in the instruction is sent to the model as a hard limit and checked on the new plan. |
+
+A plan with a high-severity finding (materials, doses, material-list steps,
+refinement limits) is generated once more with the findings spelled out
+(`PLAN_REPAIR_ATTEMPTS`), and the better of the two is kept.
 
 Findings appear in an **Automated checks** box above the plan and on the PDF
 cover page, and the reviewer critique receives them as high-severity
-findings. A cached plan with a high-severity finding is not replayed: the
-request generates a fresh plan, which becomes the new cache entry. The plan
-view and PDF apply the source and budget checks to plans saved before these
-checks existed too. Before generation, house rules that share no specific
+findings (the "Fixed" ones are not sent: they are already corrected). A
+cached plan with a high-severity finding is not replayed: the request
+generates a fresh plan, which becomes the new cache entry; a replayed copy
+keeps the corrections made when the plan was first saved. The plan view and
+PDF apply the source and budget checks to plans saved before these checks
+existed too. Before generation, house rules that share no specific
 term with the hypothesis are left out of the prompt, and the cost catalog
 shows only its topic groups that fit the hypothesis.
 
@@ -178,7 +204,15 @@ Share button. Everything else in `runs` is written by the edge functions with
 the service role (migration `20261109200000`), so no user can plant a plan in
 the shared cache. Anonymous access by owner token covers only runs and
 feedback that no account owns; signing up claims both and clears the token.
-`embed-feedback` works only for the feedback's owner (or a moderator/admin);
+Feedback (migration `20261110090000`): the owner inserts the typed columns
+and may later change only `rating` and `correction` (a changed correction is
+embedded again); `hidden` is set only through `set_feedback_hidden()`, which
+checks the moderator/admin role (the Admin page's Hide / Restore buttons);
+`dup_count`, the uplift counters, `embedding` and timestamps are written by
+the server. The similarity search over everyone's corrections
+(`match_plan_feedback`), the dedup helpers and the cleanup jobs can be called
+only with the service role (edge functions, pg_cron), not with the public
+anon key. `embed-feedback` works only for the feedback's owner (or a moderator/admin);
 `backfill-feedback-embeddings` only for a moderator/admin or the service
 role, for example from PowerShell:
 
@@ -257,11 +291,15 @@ docker run --rm -v "${PWD}:/app" -w /app -e DENO_DIR=/app/supabase/.temp/deno-ca
 
 (With Deno installed locally: `deno test --allow-net --allow-env --allow-read supabase/functions/_shared/ supabase/functions/run-experiment/`.)
 
-Measured on 9 Nov 2026 after the QA round-1 fixes: Vitest 15 files / 57
-tests, Deno 83 tests, ESLint 0 errors (9 warnings), `tsc` and `deno check`
-clean. The plan checks have their own Deno suite
-(`supabase/functions/_shared/planGuards.test.ts`, built from the QA's
-failing plans).
+Measured on 9 Nov 2026 after the QA round-2 fixes: Vitest 18 files / 68
+tests, Deno 108 tests, ESLint 0 errors (9 warnings), `tsc` and `deno check`
+clean. The plan checks have their own Deno suites built from the QA's
+failing plans (`supabase/functions/_shared/planGuards.test.ts` for round 1,
+`planChecksRound2.test.ts` for round 2), and the literature queries and the
+novelty verdict check are tested in `novelty.test.ts`. The access rules of
+migration `20261110090000` are not covered by these unit tests; they were
+checked against the running stack with the scripts in
+`_e2e/ai-research-assistant-fix/round3/` on Gopal's PC (`01-feedback-security.mjs`).
 
 Builds: `bun run build:dev` builds against the local stack
 (`.env.development.local`); plain `bun run build` uses the committed `.env`,
@@ -275,6 +313,8 @@ which still points at the deleted hosted project.
 | "CPU time hard limit reached" in the runtime log | The CPU patch is missing: run `start-local.ps1 -RestartFunctions`. |
 | `permission denied for table runs` (HTTP 403) when a script or the browser writes `runs` | Intended: clients may only set `share_token` (migration `20261109200000`). Write runs through the edge functions, or as the service role. |
 | `embed-feedback` or `backfill-feedback-embeddings` answers 401/403 | Intended for callers who do not own the feedback; see "Who may write what" in section 4. |
+| `permission denied for function match_plan_feedback` (or `bump_feedback_dup`, `cleanup_stale_runs`, ...) | Intended: those RPCs are for the service role only (migration `20261110090000`). Call them with the service-role key, as the edge functions do. |
+| `permission denied for table plan_feedback` when a client PATCHes `hidden`, `dup_count` or `embedding` | Intended: clients may change only `rating` and `correction`; moderators use `set_feedback_hidden`. |
 | Run failed with "Run timed out - connection lost or generation stalled" | No heartbeat for 20 minutes: the runtime was restarted or stopped while the run was in progress. Press Retry. |
 | Frontend talks to the dead hosted project | `.env.development.local` is missing: run `start-local.ps1` again (it rewrites the file). |
 | Sign-in fails | `.local-test-user.json` is stale: `start-local.ps1` re-checks and recreates the test users. |
@@ -366,14 +406,32 @@ which still points at the deleted hosted project.
   below) and OpenAlex rate-limited anonymous search for minutes at a time
   ("temporarily rate-limited while the search cluster is under elevated
   load"), so some runs used PubMed alone. Each source has a 2.5-4.5 s
-  budget; a source that fails just contributes no papers. For textbook
-  techniques (PCR, Western blot, ELISA, ...) the canonical-technique rule
-  marks the hypothesis `exact_match` and cites the top methods papers even
-  when the hypothesis only mentions the technique in passing.
+  budget; a source that fails just contributes no papers. Later the same
+  evening Semantic Scholar answered some anonymous requests again. For
+  textbook techniques (PCR, Western blot, ELISA, ...) asked for as such
+  ("Use standard PCR to amplify GAPDH") the canonical-technique rule marks
+  the hypothesis `exact_match` and cites the top methods papers; since QA
+  round 2 it no longer fires when the technique is only a readout or the
+  comparator of something new.
+- **The novelty verdict check is word-based.** It decides "on-topic" by how
+  much of the hypothesis' weighted vocabulary a paper's title and abstract
+  share (`hypothesisTerms.ts`), not by reading the paper. It catches the
+  contradictions the QA found (and keeps "not found" only when nothing
+  on-topic was retrieved), but a paper that uses the same words for another
+  question can still count as related, and synonyms the hypothesis does not
+  use (a drug's brand name, a gene's alias) are missed. "Exact match" still
+  comes only from the AI classifier (or the canonical rule); the check can
+  only downgrade it.
 - **Live SKU check covers Sigma-Aldrich only**, through PubChem (Sigma's
   own search endpoint no longer accepts plain requests). A catalog number
   PubChem does not know (antibodies, kits, cell lines) is not flagged. Other
   suppliers rely on the format rules and the small canonical dictionary.
+  Since QA round 2 a catalog number found wrong is removed from the plan
+  (with a note), not only mentioned to the reviewer, and the planner prompt
+  has no example SKUs left to copy. With `qwen2.5:3b` the plans then carry
+  hardly any catalog numbers: the small model does not know real ones, and
+  the prompt tells it to leave the field out rather than guess. A hosted
+  model fills them in.
 - **Scheduled jobs.** Locally pg_cron runs only the two jobs the migrations
   create (stale-run cleanup every 5 minutes, rate-limit cleanup daily). The
   hosted project's other schedules (nightly house-rule distillation,
