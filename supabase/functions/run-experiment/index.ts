@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
 import { corsHeaders } from "../_shared/cors.ts";
 import { fetchWithRetry } from "../_shared/fetch-with-retry.ts";
@@ -25,6 +25,10 @@ import { planSchema, buildPlannerSystemPrompt, buildPlannerUserMessage } from ".
 import { aiApiKey, contentAsJson, extractToolArgs, promptChars } from "../_shared/aiProvider.ts";
 import { tryParsePartial } from "../_shared/partialJson.ts";
 import { hashForNewRun, markRunDone } from "../_shared/runPersistence.ts";
+import {
+  filterRelevantRules, planDigest, parseRefinementConstraints, refinementConstraintPrompt,
+  scrubCandidateRefs, verificationIssueLines, verifyPlan,
+} from "../_shared/planGuards.ts";
 
 /**
  * Resolve the caller's IP for rate-limiting in a way that resists header
@@ -74,6 +78,8 @@ const critiqueSchema = {
   additionalProperties: false,
 } as const;
 
+// Stripping control characters is the point of this pattern.
+// eslint-disable-next-line no-control-regex
 const stripCtl = (s: string) => s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
 
 // How often the streamed-plan progress is written to runs.progress.
@@ -161,6 +167,10 @@ async function classifyNovelty(hypothesis: string, papers: LitPaper[], apiKey: s
     if (!Array.isArray(parsed.chosen)) parsed.chosen = [];
     // Indices must point into the candidate list the model was shown.
     parsed.chosen = parsed.chosen.filter((i: unknown) => Number.isInteger(i) && (i as number) >= 0 && (i as number) < condensed.length);
+    // Users never see the candidate list: "Candidate 2" becomes the paper's title.
+    if (typeof parsed.rationale === "string") {
+      parsed.rationale = scrubCandidateRefs(parsed.rationale, condensed.map((c) => c.title));
+    }
     return parsed;
   } catch {
     return { signal: "similar" as const, rationale: "Unable to parse classification.", chosen: [0, 1, 2], semantic_overlap: "medium" as const };
@@ -220,9 +230,8 @@ async function critiquePlan(
 }
 
 // Per-identifier rate limit (rolling window).
-// deno-lint-ignore no-explicit-any
 async function checkRateLimit(
-  supabase: any,
+  supabase: SupabaseClient,
   identifier: string,
   kind: string,
   windowMinutes: number,
@@ -256,6 +265,7 @@ interface Reference {
   venue?: string | null;
   citationCount?: number | null;
   url?: string;
+  doi?: string;
 }
 
 serve(async (req) => {
@@ -308,9 +318,21 @@ serve(async (req) => {
     });
   }
 
+  // A body that is not a JSON object is the caller's mistake (400), not a
+  // server error. It used to fall into the generic catch and return 500.
+  let body: Record<string, unknown>;
+  try {
+    const parsed = await req.json();
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("not an object");
+    body = parsed as Record<string, unknown>;
+  } catch {
+    return new Response(JSON.stringify({ error: "Request body must be a JSON object." }), {
+      status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
   let runId: string | null = null;
   try {
-    const body = await req.json();
     const { hypothesis: rawHypothesis, owner_token } = body;
     const rawParentId: unknown = body.parent_run_id;
     const rawRefinement: unknown = body.refinement_instruction;
@@ -476,20 +498,36 @@ serve(async (req) => {
       }
     }
 
-    const { data: cached } = isRefinement ? { data: null } : await supabase
+    const { data: cacheRow } = isRefinement ? { data: null } : await supabase
       .from("runs")
-      .select("id, qc, plan, critique")
+      .select("id, hypothesis, qc, plan, critique")
       .eq("hypothesis_hash", hHash)
       .eq("status", "done")
       .is("parent_run_id", null)
+      .not("plan", "is", null)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
+    // Serve a cache entry only when its stored hypothesis really hashes to
+    // the key (clients can no longer write plan, status or hypothesis_hash:
+    // migration 20261109200000), and re-run the deterministic plan guards on
+    // it, so entries saved before a guard existed are served corrected.
+    let cached: { id: string; qc: unknown; plan: unknown; critique: unknown } | null = null;
+    if (cacheRow && typeof cacheRow.hypothesis === "string" && await hashHypothesis(cacheRow.hypothesis) === hHash) {
+      const refs = ((cacheRow.qc as { references?: Reference[] } | null)?.references) ?? [];
+      const { plan: checked } = verifyPlan(cacheRow.plan, { hypothesis, references: refs });
+      cached = { id: cacheRow.id, qc: cacheRow.qc, plan: checked, critique: cacheRow.critique };
+    } else if (cacheRow) {
+      console.warn(JSON.stringify({ step: "cache_entry_rejected", id: cacheRow.id, reason: "hash does not match its hypothesis" }));
+    }
 
     // Create run row (always create new row for ownership / share semantics, even when reusing data)
     const baseInsert = {
       hypothesis,
-      owner_token: ownerToken,
+      // A signed-in user's run belongs to the account only. Storing the
+      // browser's anonymous token as well let anyone holding that token
+      // (the same browser after sign-out, or a leaked old token) read it.
+      owner_token: userId ? null : ownerToken,
       owner_user_id: userId,
       // A refinement repeats its parent's hypothesis; it is not the cache
       // entry for it (see _shared/runPersistence.ts).
@@ -584,8 +622,7 @@ serve(async (req) => {
           // plan has streamed so far. Fire-and-forget; never blocks the run.
           const setProgress = (p: Record<string, unknown>) => {
             supabase.from("runs")
-              // deno-lint-ignore no-explicit-any
-              .update({ progress: { ...p, at: new Date().toISOString() } } as any)
+              .update({ progress: { ...p, at: new Date().toISOString() } })
               .eq("id", runId)
               .then(() => {}, () => {});
           };
@@ -709,6 +746,8 @@ serve(async (req) => {
                 venue: p.venue,
                 citationCount: p.citationCount,
                 url: p.url,
+                // Lets the source check match a step that cites the DOI.
+                doi: p.externalId?.startsWith("10.") ? p.externalId : undefined,
                 source: p.source,
               }));
             qc = {
@@ -767,19 +806,30 @@ serve(async (req) => {
 
           // House rules: stable, distilled per-domain conventions. Cheap to
           // fetch (single indexed query). Best-effort — empty fragment if none.
-          const houseRules = await fetchHouseRules(supabase, domainGuess);
-          if (houseRules.length > 0) {
+          // House rules are per domain; keep only the ones that fit this
+          // hypothesis (an NAD+ plan used to get trehalose freeze-thaw rules).
+          const domainRules = await fetchHouseRules(supabase, domainGuess);
+          const houseRules = filterRelevantRules(domainRules, `${hypothesis}\n${refinementInstruction ?? ""}`);
+          if (domainRules.length > 0) {
             console.log(JSON.stringify({
               run_id: runId, step: "house_rules_injected",
-              domain: domainGuess, count: houseRules.length,
+              domain: domainGuess, count: houseRules.length, dropped_unrelated: domainRules.length - houseRules.length,
             }));
           }
 
           // 2) Plan generation (streamed)
           // Refinement context is the only piece NOT shared with the eval
           // harness — refinements are user-driven and have no eval analogue.
+          // Compact mode used to send the first 3,500 characters of the
+          // previous plan's JSON, which ends long before its budget and
+          // timeline: the model never saw the numbers it was asked to change.
+          // It now gets a digest of every section, and numeric limits in the
+          // instruction ("under $3,000", "8 weeks") are spelled out as hard
+          // limits and checked after generation (planGuards.ts).
+          const parentTotal = Number((parentRun?.plan as { budget?: { total_usd?: number } } | null)?.budget?.total_usd) || undefined;
+          const refinementLimits = isRefinement ? parseRefinementConstraints(refinementInstruction, parentTotal) : {};
           const refinementContext = isRefinement
-            ? `\n\nREFINEMENT REQUEST — the user has an existing plan and wants you to revise it according to this instruction. Honour it strictly while keeping everything else operationally sound:\n"""${refinementInstruction}"""\n\nPREVIOUS PLAN (for context — do not repeat verbatim, produce a NEW complete plan reflecting the refinement):\n${JSON.stringify(parentRun?.plan).slice(0, promptChars(8000, 3500))}`
+            ? `\n\nPREVIOUS PLAN (for context — do not repeat verbatim, produce a NEW complete plan reflecting the refinement):\n${planDigest(parentRun?.plan, promptChars(8000, 3500))}\n\nREFINEMENT REQUEST — the user has the plan above and wants you to revise it according to this instruction. Honour it strictly while keeping everything else operationally sound; change every section the instruction affects:\n"""${refinementInstruction}"""${refinementConstraintPrompt(refinementLimits)}`
             : "";
 
           const system = buildPlannerSystemPrompt({
@@ -787,6 +837,7 @@ serve(async (req) => {
             houseRules,
             feedbackHints,
             domain: domainGuess,
+            hypothesis: `${hypothesis}\n${refinementInstruction ?? ""}`,
           });
           const userMessage = buildPlannerUserMessage({ hypothesis, references })
             .replace(/\n\nProduce the full experiment plan\.$/, `${refinementContext}\n\nProduce the full experiment plan.`);
@@ -926,14 +977,25 @@ serve(async (req) => {
 
           // Validate + normalise inline citations against the reference list.
           // Strips hallucinated [N] indices and rewrites prose forms to canonical [N].
-          // deno-lint-ignore no-explicit-any
-          const planObj = plan as any;
-          if (planObj && Array.isArray(planObj.protocol)) {
-            const { steps, report } = sanitizeCitationsWithReport(planObj.protocol, references.length);
-            planObj.protocol = steps;
+          const rawPlan = (plan && typeof plan === "object" ? plan : {}) as { protocol?: { description?: string }[] };
+          if (Array.isArray(rawPlan.protocol)) {
+            const { steps, report } = sanitizeCitationsWithReport(rawPlan.protocol, references.length);
+            rawPlan.protocol = steps;
             if (report.hallucinated > 0 || report.rewritten > 0) {
               console.log("citation-sanitize", JSON.stringify({ run_id: runId, ...report, refs: references.length }));
             }
+          }
+          // Deterministic plan guards: unretrieved sources removed, budget
+          // total = sum of line items, off-topic materials and unmet
+          // refinement limits flagged (stored as plan.verification).
+          const { plan: planObj, verification } = verifyPlan(rawPlan, {
+            hypothesis,
+            references,
+            refinementInstruction,
+            parentPlan: parentRun?.plan,
+          });
+          if (verification.issues.length > 0) {
+            console.log(JSON.stringify({ run_id: runId, step: "plan_guards", issues: verification.issues.map((i) => i.kind) }));
           }
 
           // Persist a normalized domain on the run so future feedback rows
@@ -943,7 +1005,7 @@ serve(async (req) => {
           // a more specific label that the regex now matches.
           const planDomainStrict = (planObj as { domain?: string })?.domain;
           const normalizedDomain = planDomainStrict
-            ? await resolveDomain(AI_API_KEY, planDomainStrict, domainGuess, hypothesis, (planObj as { summary?: string })?.summary)
+            ? await resolveDomain(AI_API_KEY, planDomainStrict, domainGuess, hypothesis, typeof planObj.summary === "string" ? planObj.summary : undefined)
             : domainGuess;
           const saved = await markRunDone(supabase, runId!, { plan: planObj, domain: normalizedDomain });
           if (saved.droppedHash) {
@@ -982,6 +1044,7 @@ serve(async (req) => {
               issueLines.push(`- Timeline inconsistency (${timelineIssue.reason}): ${timelineIssue.detail} Either extend the timeline phases or compress the protocol.`);
             }
 
+            issueLines.push(...verificationIssueLines(verification));
             const extraContext = issueLines.length
               ? `\n\nDETERMINISTIC PRE-CHECKS FOUND ${issueLines.length} ISSUE(S) — please raise these in 'concerns' with severity 'high':\n${issueLines.join("\n")}`
               : "";
@@ -1012,13 +1075,12 @@ serve(async (req) => {
             if (solicitSection) {
               await supabase
                 .from("runs")
-                // deno-lint-ignore no-explicit-any
-                .update({ solicit_section: solicitSection, solicit_reason: solicitReason } as any)
+                .update({ solicit_section: solicitSection, solicit_reason: solicitReason })
                 .eq("id", runId);
             }
 
             setProgress({ stage: "critique" });
-            const critique = await critiquePlan(hypothesis, plan, AI_API_KEY, extraContext, feedbackHints);
+            const critique = await critiquePlan(hypothesis, planObj, AI_API_KEY, extraContext, feedbackHints);
             if (critique) {
               await supabase.from("runs").update({ critique }).eq("id", runId);
             }

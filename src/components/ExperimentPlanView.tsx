@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import type { ExperimentPlan, LiteratureQC } from "@/lib/samples";
 import { exportPlanToPdf } from "@/lib/exportPdf";
+import { budgetTotal, checkBudget, planCheckNotes, verifiedSource } from "@/lib/planIntegrity";
 import { SectionFeedback, type FeedbackSection } from "@/components/SectionFeedback";
 import { Sparkles } from "lucide-react";
 import {
@@ -235,6 +236,17 @@ export const ExperimentPlanView = ({
     [plan.materials]
   );
 
+  // The total shown is always the sum of the budget line items; when the
+  // model wrote a different total (fixed server-side since 9 Nov 2026, or an
+  // older plan), say so next to it.
+  const refs = useMemo(() => references ?? [], [references]);
+  const totalUsd = budgetTotal(plan.budget);
+  const budgetCheck = checkBudget(plan.budget);
+  const modelTotal = plan.verification?.budget?.corrected
+    ? plan.verification.budget.stated_total
+    : budgetCheck?.mismatch ? budgetCheck.stated_total : null;
+  const checkNotes = useMemo(() => planCheckNotes(plan, refs), [plan, refs]);
+
   const changed = useMemo(
     () => previousPlan ? diffSections(plan, previousPlan) : null,
     [plan, previousPlan],
@@ -364,7 +376,7 @@ export const ExperimentPlanView = ({
           </div>
 
           <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <Stat label="Total budget" value={fmtUsd(plan.budget.total_usd)} />
+            <Stat label="Total budget" value={fmtUsd(totalUsd)} />
             <Stat
               label="Timeline"
               value={`${plan.timeline.length} phases`}
@@ -374,6 +386,30 @@ export const ExperimentPlanView = ({
           </div>
         </div>
       </section>
+
+      {checkNotes.length > 0 && (
+        <section
+          data-testid="plan-checks"
+          className="rounded-md border border-accent/40 bg-accent/5 p-4"
+          aria-label="Automated checks"
+        >
+          <div className="mb-2 flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+            <ShieldAlert className="h-3.5 w-3.5" /> Automated checks
+          </div>
+          <ul className="space-y-1.5">
+            {checkNotes.map((n, i) => (
+              <li key={i} className="flex items-start gap-2 text-sm">
+                <span
+                  className={`mt-0.5 shrink-0 font-mono text-[10px] uppercase tracking-wider ${n.severity === "high" ? "text-destructive" : "text-accent"}`}
+                >
+                  {n.severity === "high" ? "Check" : "Fixed"}
+                </span>
+                <span className="text-foreground/85">{n.detail}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <Section number="01" label="Success criteria" icon={Target} changed={changed?.success_criteria}>
         <ul className="space-y-2">
@@ -388,7 +424,10 @@ export const ExperimentPlanView = ({
 
       <Section number="02" label="Protocol" icon={FlaskConical} changed={changed?.protocol} feedback={fb("protocol")}>
         <ol className="relative space-y-5 border-l border-rule pl-6">
-          {plan.protocol.map((s) => (
+          {plan.protocol.map((s) => {
+            // Only retrieved references (or a plain label) are shown as a source.
+            const source = verifiedSource(s.source, refs);
+            return (
             <li key={s.step} className="relative">
               <span className="absolute -left-[31px] top-0 flex h-6 w-6 items-center justify-center rounded-full border border-border bg-paper font-mono text-[11px] font-semibold text-foreground">
                 {s.step}
@@ -400,11 +439,12 @@ export const ExperimentPlanView = ({
                 </span>
               </div>
               <p className="mt-1.5 text-sm leading-relaxed text-foreground/80">{s.description}</p>
-              {s.source && (
-                <p className="mt-1.5 font-mono text-[11px] text-muted-foreground">↳ {s.source}</p>
+              {source && (
+                <p data-testid="step-source" className="mt-1.5 font-mono text-[11px] text-muted-foreground">↳ {source}</p>
               )}
             </li>
-          ))}
+            );
+          })}
         </ol>
       </Section>
 
@@ -474,12 +514,17 @@ export const ExperimentPlanView = ({
               <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
                 Total
               </div>
-              <div className="mt-1 font-serif text-3xl font-semibold text-foreground">
-                {fmtUsd(plan.budget.total_usd)}
+              <div data-testid="budget-total" className="mt-1 font-serif text-3xl font-semibold text-foreground">
+                {fmtUsd(totalUsd)}
               </div>
               <div className="mt-1 font-mono text-[11px] text-muted-foreground">
-                {plan.budget.currency}
+                {plan.budget.currency} · sum of line items
               </div>
+              {modelTotal !== null && modelTotal !== undefined && (
+                <div data-testid="budget-model-total" className="mt-2 text-xs text-muted-foreground">
+                  The model's own total was {fmtUsd(modelTotal)}.
+                </div>
+              )}
             </div>
           </div>
         </div>

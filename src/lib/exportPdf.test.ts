@@ -51,3 +51,18 @@ describe("exportPlanToPdf references", () => {
     expect(pdf).not.toContain("References");
   });
 });
+
+describe("exportPlanToPdf integrity", () => {
+  it("prints only retrieved references as sources and the line-item sum as the total", () => {
+    const pdf = capturePdf(() => exportPlanToPdf({
+      ...plan,
+      protocol: [
+        { step: 1, title: "Calibrate", description: "Run a CRP standard curve.", duration: "1 day", source: "https://www.jbc.org/article/S0021-9258(19)30082-7/fulltext" },
+      ],
+      budget: { currency: "USD", line_items: [{ category: "Reagents", amount_usd: 300 }, { category: "Labour", amount_usd: 700 }], total_usd: 400 },
+    }, "h", 1));
+    expect(pdf).not.toContain("jbc.org");
+    expect(pdf).toContain("$1,000");
+    expect(pdf).toContain("AUTOMATED CHECKS");
+  });
+});

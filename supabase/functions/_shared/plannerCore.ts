@@ -6,7 +6,7 @@
 // Anything that affects plan *quality* lives here. Anything that affects
 // persistence, streaming, rate-limits or idempotency stays in run-experiment.
 
-import { COST_CATALOG_PROMPT } from "./costCatalog.ts";
+import { costCatalogPrompt } from "./costCatalog.ts";
 import { safetyPromptFragment, type SafetyFlags } from "./safety.ts";
 import { houseRulesPromptFragment, type HouseRule } from "./houseRules.ts";
 import { feedbackPromptFragment, type FeedbackHint } from "./feedbackRetrieval.ts";
@@ -173,6 +173,8 @@ export function buildPlannerSystemPrompt(opts: {
   houseRules: HouseRule[];
   feedbackHints: FeedbackHint[];
   domain: string | null;
+  /** Picks the cost-catalog topic groups shown (costCatalogPrompt). */
+  hypothesis?: string;
 }): string {
   const houseRulesContext = houseRulesPromptFragment(opts.houseRules, opts.domain);
   const feedbackContext = feedbackPromptFragment(opts.feedbackHints);
@@ -180,9 +182,11 @@ export function buildPlannerSystemPrompt(opts: {
 
 REQUIREMENTS:
 - Ground the protocol in real, published methods (protocols.io, Bio-protocol, Nature Protocols, JOVE, OpenWetWare).
+- Materials MUST be what THIS experiment uses: the compound or intervention under test, the cell line or organism, and the reagents or kit for the primary readout named in the hypothesis come first. Never fill the list with unrelated catalog items.
 - Materials must include real suppliers (Sigma-Aldrich, Thermo Fisher, Promega, Qiagen, IDT, ATCC, Addgene). Catalog numbers MUST be ones you are confident exist on the supplier's site — if you are uncertain, set catalog_number to "Custom" or omit it. Do NOT fabricate plausible-looking SKUs. Sigma SKUs follow patterns like T9531, PHR1084-1G; Thermo Fisher uses 7–9 digit numbers (11965092) or letter+digits (A3160401); IDT Alt-R reagents are 1081xxx; ATCC uses CCL-2, CRL-3216, HTB-22.
 - Budget MUST be anchored to the REFERENCE COST CATALOG below — do not invent prices that are wildly off (>20%).
 - Budget total MUST equal the sum of line items, and line items must roughly equal materials subtotal + labour + equipment + overhead.
+- Protocol step \`source\`: either \`[N]\` for an entry of the KNOWN RELATED WORK list or a short plain label such as "manufacturer's instructions". NEVER write a URL, DOI, PMID or paper title that is not in that list; when there is no list, use only plain labels. Unlisted sources are removed before the plan is shown.
 - CITATIONS: Use ONLY the canonical format \`[N]\` (or \`(see [N, M])\` for multiples). N must be a 1-based index into the KNOWN RELATED WORK list. Never invent reference numbers; never use prose forms like "(ref. 1)" or "(see reference 1)".
 - Timeline must be phased with explicit dependencies.
 - The 'validation' section gives the qualitative approach.
@@ -191,7 +195,7 @@ REQUIREMENTS:
 - Risks must be specific, not generic.
 - Be precise. Use exact concentrations, volumes, durations.
 ${safetyPromptFragment(opts.safetyFlags)}
-${COST_CATALOG_PROMPT}${houseRulesContext}${feedbackContext}`;
+${costCatalogPrompt(opts.hypothesis ?? "")}${houseRulesContext}${feedbackContext}`;
 }
 
 // Builds the user-message body — references + hypothesis. Mirrors production.

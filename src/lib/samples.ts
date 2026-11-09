@@ -25,7 +25,24 @@ export const SAMPLE_HYPOTHESES = [
   },
 ] as const;
 
+/** One finding of the server's deterministic plan guards (planGuards.ts). */
+export interface PlanCheckIssue {
+  kind: string;
+  severity: "high" | "medium";
+  detail: string;
+}
+
 export type ExperimentPlan = {
+  /**
+   * Written by run-experiment after generation: what the deterministic
+   * guards fixed (sources, budget total) and flagged. Absent on plans saved
+   * before 9 Nov 2026 and on the hand-written samples.
+   */
+  verification?: {
+    issues: PlanCheckIssue[];
+    budget?: { stated_total: number | null; line_item_sum: number; corrected: boolean } | null;
+    sources?: { resolved: number; kept: number; removed: number; links_removed: number };
+  };
   title: string;
   domain: string;
   summary: string;

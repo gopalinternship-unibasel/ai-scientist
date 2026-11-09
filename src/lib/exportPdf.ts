@@ -3,6 +3,7 @@
 // and consistent typography — unlike `window.print()` which depended on screen CSS.
 import { jsPDF } from "jspdf";
 import type { ExperimentPlan, LiteratureQC } from "@/lib/samples";
+import { budgetTotal, planCheckNotes, verifiedSource } from "@/lib/planIntegrity";
 
 const PAGE = { w: 210, h: 297 }; // A4 mm
 const M = 18;                    // margin
@@ -22,6 +23,10 @@ const fmtUsd = (n: number) =>
 // render as the wrong glyph (α → ±, → → !') or break splitTextToSize so the
 // text comes out letter-spaced and clipped at the right margin. We don't ship
 // a custom TTF, so transliterate to ASCII before drawing.
+// Anything outside Latin-1 (U+0000-U+00FF). Each half of a surrogate pair is
+// in this range too, as it was with the original negated Latin-1 class.
+const NON_LATIN1 = /[Ā-￿]/g;
+
 function ascii(s: string): string {
   if (!s) return "";
   return s
@@ -45,7 +50,7 @@ function ascii(s: string): string {
     .replace(/\u03c3/g, "sigma")
     .replace(/\u00b0/g, "deg")
     .replace(/\u00b1/g, "+/-")
-    .replace(/[^\x00-\xff]/g, "?");
+    .replace(NON_LATIN1, "?");
 }
 
 function ensureSpace(ctx: Ctx, needed: number, footer: () => void) {
@@ -134,16 +139,14 @@ export function exportPlanToPdf(
   // Wrap text-emitting APIs so every caller is sanitized to WinAnsi-safe ASCII.
   // jsPDF's built-in fonts can't render arbitrary Unicode and silently break
   // line-wrapping when they encounter unsupported codepoints.
-  const origText = doc.text.bind(doc);
-  // deno-lint-ignore no-explicit-any
-  doc.text = ((t: any, x: number, y: number, opts?: any) => {
+  const origText = doc.text.bind(doc) as (t: unknown, x: number, y: number, opts?: unknown) => jsPDF;
+  doc.text = ((t: unknown, x: number, y: number, opts?: unknown) => {
     if (typeof t === "string") return origText(ascii(t), x, y, opts);
     if (Array.isArray(t)) return origText(t.map((s) => typeof s === "string" ? ascii(s) : s), x, y, opts);
     return origText(t, x, y, opts);
   }) as typeof doc.text;
-  const origSplit = doc.splitTextToSize.bind(doc);
-  // deno-lint-ignore no-explicit-any
-  doc.splitTextToSize = ((t: any, w: number, opts?: any) => {
+  const origSplit = doc.splitTextToSize.bind(doc) as (t: unknown, w: number, opts?: unknown) => string[];
+  doc.splitTextToSize = ((t: unknown, w: number, opts?: unknown) => {
     if (typeof t === "string") return origSplit(ascii(t), w, opts);
     return origSplit(t, w, opts);
   }) as typeof doc.splitTextToSize;
@@ -203,7 +206,7 @@ export function exportPlanToPdf(
   doc.setTextColor(80);
   const meta = [
     ["Domain", plan.domain],
-    ["Total budget", fmtUsd(plan.budget.total_usd)],
+    ["Total budget", fmtUsd(budgetTotal(plan.budget))],
     ["Phases", `${plan.timeline.length}`],
     ["Protocol steps", `${plan.protocol.length}`],
     ["Reagents", `${plan.materials.length}`],
@@ -214,6 +217,25 @@ export function exportPlanToPdf(
     doc.setFont("helvetica", "bold"); doc.text(k.toUpperCase(), M, ctx.y);
     doc.setFont("helvetica", "normal"); doc.text(String(v), M + 45, ctx.y);
     ctx.y += 6;
+  }
+
+  // Automated checks (deterministic guards): what was corrected or flagged.
+  const checks = planCheckNotes(plan, references);
+  if (checks.length) {
+    ctx.y += 4;
+    doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(120);
+    doc.text("AUTOMATED CHECKS", M, ctx.y);
+    ctx.y += 5;
+    for (const c of checks) {
+      const lines = doc.splitTextToSize(`${c.severity === "high" ? "Check" : "Fixed"}: ${c.detail}`, COL);
+      doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(c.severity === "high" ? 150 : 80);
+      for (const line of lines) {
+        if (ctx.y > PAGE.h - M - 14) break;
+        doc.text(line, M, ctx.y);
+        ctx.y += 4.5;
+      }
+      ctx.y += 1;
+    }
   }
 
   drawFooter(doc, plan, ctx.page, null);
@@ -236,7 +258,9 @@ export function exportPlanToPdf(
     doc.text(s.duration, PAGE.w - M, ctx.y, { align: "right" });
     ctx.y += 5;
     paragraph(ctx, s.description, footer, { size: 9, color: 60 });
-    if (s.source) paragraph(ctx, `↳ ${s.source}`, footer, { size: 8, color: 120 });
+    // Only retrieved references (or a plain label) are printed as a source.
+    const source = verifiedSource(s.source, references);
+    if (source) paragraph(ctx, `↳ ${source}`, footer, { size: 8, color: 120 });
     ctx.y += 2;
   }
 
@@ -283,8 +307,8 @@ export function exportPlanToPdf(
   ctx.y += 2;
   doc.setDrawColor(60); doc.line(M, ctx.y, PAGE.w - M, ctx.y); ctx.y += 5;
   doc.setFont("helvetica", "bold"); doc.setFontSize(11); doc.setTextColor(20);
-  doc.text("Total", M, ctx.y);
-  doc.text(fmtUsd(plan.budget.total_usd), PAGE.w - M, ctx.y, { align: "right" });
+  doc.text("Total (sum of line items)", M, ctx.y);
+  doc.text(fmtUsd(budgetTotal(plan.budget)), PAGE.w - M, ctx.y, { align: "right" });
   ctx.y += 8;
 
   // ── 05 Timeline ──────────────────────────────────────────────────────────

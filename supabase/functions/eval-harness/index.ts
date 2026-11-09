@@ -14,16 +14,17 @@
 //   - no persistence (no runs row, no rate limit, no idempotency cache)
 //   - no post-plan critique / SKU verify (judge is the eval signal)
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { corsHeaders } from "../_shared/cors.ts";
 import { callAIWithFallback } from "../_shared/ai-fallback.ts";
 import { aiApiKey, extractToolArgs, modelChain, promptChars } from "../_shared/aiProvider.ts";
 import { searchLiterature, type LitPaper } from "../_shared/literature.ts";
 import { rankByRelevance } from "../_shared/relevanceRank.ts";
 import { detectCanonicalTechnique } from "../_shared/canonicalTechniques.ts";
-import { screenSafety } from "../_shared/safety.ts";
+import { screenSafety, type SafetyFlags } from "../_shared/safety.ts";
 import { resolveDomain } from "../_shared/domainNormalize.ts";
-import { fetchHouseRules } from "../_shared/houseRules.ts";
+import { fetchHouseRules, type HouseRule } from "../_shared/houseRules.ts";
+import { filterRelevantRules } from "../_shared/planGuards.ts";
 import { retrieveRelevantFeedback, type FeedbackHint } from "../_shared/feedbackRetrieval.ts";
 import { planSchema, buildPlannerSystemPrompt, buildPlannerUserMessage } from "../_shared/plannerCore.ts";
 
@@ -67,10 +68,8 @@ interface RubricScores {
 interface PreparedContext {
   references: Array<{ title: string; year?: number | null; url?: string }>;
   domain: string | null;
-  // deno-lint-ignore no-explicit-any
-  safetyFlags: any;
-  // deno-lint-ignore no-explicit-any
-  houseRules: any[];
+  safetyFlags: SafetyFlags;
+  houseRules: HouseRule[];
   hintsWith: FeedbackHint[];
 }
 
@@ -184,8 +183,7 @@ serve(async (req) => {
 // house rules, and feedback hints — everything the system prompt sees.
 async function prepareContext(
   hypothesis: string,
-  // deno-lint-ignore no-explicit-any
-  supabase: any,
+  supabase: SupabaseClient,
   apiKey: string,
 ): Promise<PreparedContext> {
   // Literature: same query-degradation + canonical-technique handling as prod.
@@ -205,7 +203,8 @@ async function prepareContext(
 
   const safetyFlags = screenSafety(hypothesis);
   const domain = await resolveDomain(apiKey, hypothesis).catch(() => null);
-  const houseRules = await fetchHouseRules(supabase, domain).catch(() => []);
+  // Same relevance filter as run-experiment (planGuards.ts).
+  const houseRules = filterRelevantRules(await fetchHouseRules(supabase, domain).catch(() => []), hypothesis);
   const hintsWith = await retrieveRelevantFeedback(supabase, hypothesis, domain, apiKey).catch(() => []);
 
   return { references, domain, safetyFlags, houseRules, hintsWith };
@@ -222,6 +221,7 @@ async function realPlan(
     houseRules: ctx.houseRules,
     feedbackHints: hints,
     domain: ctx.domain,
+    hypothesis,
   });
   const user = buildPlannerUserMessage({ hypothesis, references: ctx.references });
 
