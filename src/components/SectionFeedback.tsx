@@ -10,6 +10,7 @@ import { useNavigate } from "react-router-dom";
 import { MessageSquarePlus, Star, Check, Loader2, Pencil, Trash2, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import type { Database } from "@/integrations/supabase/types";
 import { createScopedClient } from "@/lib/supabaseScoped";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -59,6 +60,11 @@ export const SectionFeedback = ({
   // only the scoped client sends. With the plain client every anonymous
   // insert/select/update/delete was rejected by RLS.
   const db = useMemo(() => (ownerUserId ? supabase : createScopedClient()), [ownerUserId]);
+
+  // embed-feedback checks ownership: the JWT for an account-owned run, the
+  // browser's owner token for an anonymous one.
+  const embedBody = (feedbackId: string) =>
+    ownerUserId ? { feedback_id: feedbackId } : { feedback_id: feedbackId, owner_token: getOwnerToken() };
 
   const startReplay = (text: string) => {
     if (replaying) return;
@@ -163,31 +169,32 @@ export const SectionFeedback = ({
         if (error) throw error;
         if (trimmed) {
           supabase.functions.invoke("embed-feedback", {
-            body: { feedback_id: editingId },
+            body: embedBody(editingId),
           }).catch((e) => console.warn("embed-feedback invoke failed", e));
         }
       } else {
         // CREATE path
-        const payload: Record<string, unknown> = {
+        const payload: Database["public"]["Tables"]["plan_feedback"]["Insert"] = {
           run_id: runId,
           section,
           rating,
           correction: trimmed || null,
           domain: canonicalDomain,
           hypothesis_excerpt: (hypothesis ?? "").slice(0, 500) || null,
-          owner_token: ownerToken,
+          // Feedback on an account-owned run belongs to the account only; the
+          // browser token is for anonymous owners (RLS: owner_user_id IS NULL).
+          owner_token: ownerUserId ? null : ownerToken,
           owner_user_id: ownerUserId ?? null,
         };
         const { data: inserted, error } = await db
           .from("plan_feedback")
-          // deno-lint-ignore no-explicit-any
-          .insert(payload as any)
+          .insert(payload)
           .select("id")
           .single();
         if (error) throw error;
         if (inserted?.id) {
           supabase.functions.invoke("embed-feedback", {
-            body: { feedback_id: inserted.id },
+            body: embedBody(inserted.id),
           }).catch((e) => console.warn("embed-feedback invoke failed", e));
         }
       }

@@ -117,7 +117,10 @@ const MyFeedback = () => {
         .eq("id", row.id);
       if (error) throw error;
       if (trimmed) {
-        supabase.functions.invoke("embed-feedback", { body: { feedback_id: row.id } })
+        // embed-feedback checks ownership: the JWT, or the anonymous owner token.
+        supabase.functions.invoke("embed-feedback", {
+          body: user ? { feedback_id: row.id } : { feedback_id: row.id, owner_token: getOwnerToken() },
+        })
           .catch((e) => console.warn("embed-feedback invoke failed", e));
       }
       toast.success("Updated.");

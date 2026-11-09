@@ -31,6 +31,8 @@ dist-ssr
 supabase/functions/.env
 # - generated test-user credentials for the local stack
 .local-test-user.json
+# - extra test users made by e2e checks
+.local-test-user*.json
 # - Supabase CLI working files
 supabase/.temp
 supabase/.branches

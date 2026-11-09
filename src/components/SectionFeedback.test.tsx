@@ -58,5 +58,8 @@ describe("SectionFeedback client selection", () => {
     const insert = calls.find((c) => c.includes(":insert:"))!;
     expect(insert.startsWith("plain:")).toBe(true);
     expect(insert).toContain('"owner_user_id":"user-1"');
+    // Account-owned feedback carries no browser token (RLS: token access
+    // only for rows no account owns; QA round 1).
+    expect(insert).toContain('"owner_token":null');
   });
 });

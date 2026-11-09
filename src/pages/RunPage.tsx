@@ -93,8 +93,7 @@ const RunPage = () => {
     const load = async () => {
       const { data, error } = await client
         .from("runs")
-        // deno-lint-ignore no-explicit-any
-        .select(RUN_COLUMNS as any)
+        .select(RUN_COLUMNS)
         .eq("id", id)
         .maybeSingle();
       if (!active) return;
@@ -106,8 +105,7 @@ const RunPage = () => {
       const rootId = r.parent_run_id ?? r.id;
       const { data: chain } = await client
         .from("runs")
-        // deno-lint-ignore no-explicit-any
-        .select("id,version,refinement_instruction,created_at,status,parent_run_id,plan" as any)
+        .select("id,version,refinement_instruction,created_at,status,parent_run_id,plan")
         .or(`id.eq.${rootId},parent_run_id.eq.${rootId}`)
         .order("version", { ascending: true });
       if (active && chain) setVersions(chain as unknown as VersionEntry[]);
@@ -187,10 +185,11 @@ const RunPage = () => {
     let token = run.share_token;
     if (!token) {
       token = crypto.randomUUID().replace(/-/g, "");
+      // share_token is the one runs column a signed-in owner may write
+      // (migration 20261109200000); everything else is server-only.
       const { error } = await supabase
         .from("runs")
-        // deno-lint-ignore no-explicit-any
-        .update({ share_token: token } as any)
+        .update({ share_token: token })
         .eq("id", run.id);
       if (error) {
         toast.error("Could not create share link.");

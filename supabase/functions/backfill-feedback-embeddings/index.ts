@@ -1,14 +1,18 @@
 // backfill-feedback-embeddings — one-shot (or periodically called) batch
 // embedding job for plan_feedback rows where embedding is NULL.
 //
-// Safe to call repeatedly. Returns counts. No auth — read-only of public
-// columns + service-role write of the embedding vector. Limit is bounded
-// per call to keep latency predictable; the caller can loop.
+// Safe to call repeatedly. Returns counts. Limit is bounded per call to keep
+// latency predictable; the caller can loop.
+//
+// Auth: service role (scheduled jobs, the operator) or a moderator/admin.
+// It used to have none, so anyone with the public anon key could make it
+// spend embedding-model time (QA, 9 Nov 2026).
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { corsHeaders } from "../_shared/cors.ts";
 import { embedText, embeddingsEnabled } from "../_shared/embeddings.ts";
+import { identifyCaller } from "../_shared/callerAuth.ts";
 
 const DEFAULT_BATCH = 25;
 const MAX_BATCH = 100;
@@ -16,6 +20,13 @@ const MAX_BATCH = 100;
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   try {
+    const caller = await identifyCaller(req);
+    if (!caller.isModerator) {
+      return new Response(JSON.stringify({ error: caller.kind === "anon" ? "auth required" : "forbidden" }), {
+        status: caller.kind === "anon" ? 401 : 403,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
     const url = new URL(req.url);
     const limitParam = Number(url.searchParams.get("limit") ?? DEFAULT_BATCH);
     const limit = Math.max(1, Math.min(MAX_BATCH, isFinite(limitParam) ? limitParam : DEFAULT_BATCH));
@@ -58,8 +69,7 @@ serve(async (req) => {
       // embed call throws unexpectedly mid-loop.
       await supabase
         .from("plan_feedback")
-        // deno-lint-ignore no-explicit-any
-        .update({ embedding_attempts: ((row as any).embedding_attempts ?? 0) + 1 } as any)
+        .update({ embedding_attempts: (row.embedding_attempts ?? 0) + 1 })
         .eq("id", row.id);
 
       const text = [row.correction, row.hypothesis_excerpt].filter(Boolean).join("\n\n");
@@ -67,8 +77,7 @@ serve(async (req) => {
       if (!vec) { failed++; continue; }
       const { error: updErr } = await supabase
         .from("plan_feedback")
-        // deno-lint-ignore no-explicit-any
-        .update({ embedding: vec as any, embedded_at: new Date().toISOString() } as any)
+        .update({ embedding: vec, embedded_at: new Date().toISOString() })
         .eq("id", row.id);
       if (updErr) { failed++; continue; }
       ok++;

@@ -46,8 +46,7 @@ export function useAuth() {
 async function claimAnonymousRuns() {
   try {
     const token = getOwnerToken();
-    // deno-lint-ignore no-explicit-any
-    const { data, error } = await (supabase.rpc as any)("claim_anonymous_runs", {
+    const { data, error } = await supabase.rpc("claim_anonymous_runs", {
       _owner_token: token,
     });
     if (error) {
