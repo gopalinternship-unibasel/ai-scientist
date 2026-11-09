@@ -133,11 +133,15 @@ sections so far), then the reviewer critique. With the local CPU model a
 complete run takes a long time (see "Known limits"); you can close the tab
 and come back, the run continues on the server.
 
-On a finished plan: **Save as PDF**, **Share** (signed-in owner; copies a
-link with a share token that anyone can open read-only), **Refine** (creates
-version 2, 3, ... linked to the original; the version switcher appears above
-the plan), the star / pencil buttons on each section (feedback that future
-plans learn from), and **My feedback** in the user menu.
+On a finished plan: **Save as PDF** (the plan and its numbered references),
+**Share** (signed-in owner; copies a link with a share token that anyone can
+open read-only), **Refine** (creates version 2, 3, ... linked to the
+original; the version switcher appears above the plan, failed versions are
+labelled, and changed sections are marked "Modified" against the version
+that was refined), the star / pencil buttons on each section (feedback that
+future plans learn from: the planner retrieves similar past corrections by
+embedding, and an admin can distil them into house rules), and
+**My feedback** in the user menu.
 
 A run that fails (for example because the model server was down) shows a
 **Retry** button for its signed-in owner.
@@ -231,12 +235,15 @@ which still points at the deleted hosted project.
   model requests ran (load average 10-21 on 8 cores): prompt processing 6-18
   tokens/s, generation 0.5-3 tokens/s. One hypothesis-gate call (300 prompt
   tokens, 81 output tokens) took 45 s to 3 min 16 s of model time; a new
-  plan (2,300 prompt + 1,900 output tokens) 47 min; a refined plan (3,800 +
-  1,900 tokens) 27 min; a critique (1,900 + 600 tokens) about 10 min. Ollama
-  answers one request at a time, so every call also waits for the requests
-  queued before it, other projects' included: the gate call above spent 17
-  minutes in the queue. A complete run (gate, literature, novelty, plan,
-  critique) took MEASURED_RUN. The README's "60-90 seconds" was measured on
+  plan (2,300 prompt + 1,900 output tokens) 13 to 47 min; a refined plan
+  (3,800 + 1,900 tokens) 27 to 31 min; a critique (1,900 + 600 tokens) 8 to
+  15 min. Ollama answers one request at a time, so every call also waits
+  for the requests queued before it, other projects' included: the gate call
+  above spent 17 minutes in the queue. A complete run (gate, literature,
+  novelty, plan, critique) took 31 minutes with an almost empty queue (run
+  02d13270: gate 1 min, literature and novelty 3 min, plan 13 min, critique
+  15 min) and 2 hours while other projects kept the model busy (run
+  c1314d1a). The README's "60-90 seconds" was measured on
   the hosted Gemini / GPT-5 models; switching `supabase\functions\.env` to a
   hosted provider brings that back. The pipeline itself has no deadline: the
   stall-cleanup job only fails a run after 20 minutes without a heartbeat,
