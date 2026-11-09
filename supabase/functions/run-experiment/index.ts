@@ -74,6 +74,9 @@ const critiqueSchema = {
 
 const stripCtl = (s: string) => s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
 
+// How often the streamed-plan progress is written to runs.progress.
+const PROGRESS_WRITE_MS = 5000;
+
 // Stable hash of a normalised hypothesis for caching.
 async function hashHypothesis(h: string): Promise<string> {
   const norm = h.toLowerCase().replace(/\s+/g, " ").trim();
@@ -870,18 +873,23 @@ serve(async (req) => {
                   else contentAccum += contentDelta;
                   const now = Date.now();
                   const sofar = argsAccum || contentAccum;
-                  if (now - lastEmit > 250) {
+                  // Partial parses cost CPU, and an edge worker has a small
+                  // CPU budget (locally 1 s soft / 2 s hard per worker, on
+                  // the hosted platform per request), so only parse when
+                  // someone is listening on the SSE stream (it closes right
+                  // after `run` in the normal flow) and, for the run page,
+                  // every PROGRESS_WRITE_MS.
+                  if (streamOpen && now - lastEmit > 250) {
                     lastEmit = now;
+                    send("progress", { chars: sofar.length, partial: tryParsePartial(sofar) });
+                  }
+                  if (now - lastProgressWrite > PROGRESS_WRITE_MS) {
+                    lastProgressWrite = now;
                     const partial = tryParsePartial(sofar);
-                    send("progress", { chars: sofar.length, partial });
-                    // Persist a compact version every 3 s for the run page.
-                    if (now - lastProgressWrite > 3000) {
-                      lastProgressWrite = now;
-                      setProgress({
-                        stage: "planning", chars: sofar.length, model: modelUsed,
-                        sections: partial ? Object.keys(partial) : [],
-                      });
-                    }
+                    setProgress({
+                      stage: "planning", chars: sofar.length, model: modelUsed,
+                      sections: partial ? Object.keys(partial) : [],
+                    });
                   }
                   // Heartbeat: bump updated_at every ~60s so the stale-run
                   // cleanup cron doesn't kill an actively-streaming generation.
