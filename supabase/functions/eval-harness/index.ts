@@ -16,7 +16,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { corsHeaders } from "../_shared/cors.ts";
-import { fetchWithRetry } from "../_shared/fetch-with-retry.ts";
+import { callAIWithFallback } from "../_shared/ai-fallback.ts";
+import { aiApiKey, extractToolArgs, modelChain } from "../_shared/aiProvider.ts";
 import { searchLiterature, type LitPaper } from "../_shared/literature.ts";
 import { rankByRelevance } from "../_shared/relevanceRank.ts";
 import { detectCanonicalTechnique } from "../_shared/canonicalTechniques.ts";
@@ -79,10 +80,10 @@ serve(async (req) => {
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
   const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
-  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+  const AI_API_KEY = aiApiKey();
   const CRON_SECRET = Deno.env.get("EVAL_CRON_SECRET");
 
-  if (!LOVABLE_API_KEY) {
+  if (!AI_API_KEY) {
     return new Response(JSON.stringify({ error: "Service not configured" }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -136,13 +137,13 @@ serve(async (req) => {
   // identical. That isolates the loop's contribution from the planner's.
   for (const item of suite) {
     try {
-      const ctx = await prepareContext(item.hypothesis, writer, LOVABLE_API_KEY);
+      const ctx = await prepareContext(item.hypothesis, writer, AI_API_KEY);
 
-      const planWith = await realPlan(item.hypothesis, ctx, ctx.hintsWith, LOVABLE_API_KEY);
-      const planWithout = await realPlan(item.hypothesis, ctx, [], LOVABLE_API_KEY);
+      const planWith = await realPlan(item.hypothesis, ctx, ctx.hintsWith, AI_API_KEY);
+      const planWithout = await realPlan(item.hypothesis, ctx, [], AI_API_KEY);
 
-      const judgeWith = await judge(item.hypothesis, planWith ?? "", LOVABLE_API_KEY);
-      const judgeWithout = await judge(item.hypothesis, planWithout ?? "", LOVABLE_API_KEY);
+      const judgeWith = await judge(item.hypothesis, planWith ?? "", AI_API_KEY);
+      const judgeWithout = await judge(item.hypothesis, planWithout ?? "", AI_API_KEY);
 
       const rows = [
         toRow({ batchId, hypothesis: item.hypothesis, arm: "with_feedback", plan: planWith, judge: judgeWith, lessonCount: ctx.hintsWith.length }),
@@ -210,39 +211,40 @@ async function realPlan(
   const user = buildPlannerUserMessage({ hypothesis, references: ctx.references });
 
   try {
-    const res = await fetchWithRetry(
-      "https://ai.gateway.lovable.dev/v1/chat/completions",
-      {
-        method: "POST",
-        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          // Pin to flash for cost; production uses fallback chain but flash is
-          // the typical first hop and what most users actually receive.
-          model: "google/gemini-3-flash-preview",
-          temperature: 0.2,
-          // No streaming — eval doesn't need it and one-shot is simpler.
-          messages: [
-            { role: "system", content: system },
-            { role: "user", content: user },
-          ],
-          tools: [{
-            type: "function",
-            function: {
-              name: "submit_experiment_plan",
-              description: "Submit the complete experiment plan.",
-              parameters: planSchema,
-            },
-          }],
-          tool_choice: { type: "function", function: { name: "submit_experiment_plan" } },
-        }),
-      },
-    );
+    const { res } = await callAIWithFallback({
+      apiKey,
+      // EVAL_PLAN chain: pinned to gemini-3-flash-preview on the Lovable
+      // gateway for cost (the typical first hop of the production chain).
+      models: modelChain("EVAL_PLAN"),
+      label: "eval-plan",
+      retries: 1,
+      timeoutMs: 120_000,
+      maxTokens: 8000,
+      buildBody: (model) => ({
+        model,
+        temperature: 0.2,
+        // No streaming — eval doesn't need it and one-shot is simpler.
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user },
+        ],
+        tools: [{
+          type: "function",
+          function: {
+            name: "submit_experiment_plan",
+            description: "Submit the complete experiment plan.",
+            parameters: planSchema,
+          },
+        }],
+        tool_choice: { type: "function", function: { name: "submit_experiment_plan" } },
+      }),
+    });
     if (!res.ok) {
       console.warn("eval planner non-200", res.status);
       return null;
     }
     const j = await res.json();
-    const args = j?.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments;
+    const args = extractToolArgs(j);
     if (typeof args !== "string") return null;
     // Return as JSON string — the judge reads it as text and we store it as
     // plan_excerpt (truncated). No need to round-trip parse.
@@ -256,45 +258,47 @@ async function realPlan(
 async function judge(hypothesis: string, plan: string, apiKey: string): Promise<RubricScores | null> {
   if (!plan) return null;
   try {
-    const res = await fetchWithRetry(
-      "https://ai.gateway.lovable.dev/v1/chat/completions",
-      {
-        method: "POST",
-        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          // Judge runs on a different model family from the planner so judge
-          // errors are uncorrelated with planner errors — tighter eval CIs.
-          model: "openai/gpt-5",
-          temperature: 0.0,
-          messages: [
-            { role: "system", content: "You are a strict, calibrated peer reviewer scoring an experiment plan on a 0-10 rubric across four axes. Be honest — most first-draft plans should score 5-7, not 9. Reserve 9-10 for plans you would publish as a worked example." },
-            { role: "user", content: `HYPOTHESIS:\n${hypothesis}\n\nPLAN (JSON):\n${plan.slice(0, 8000)}\n\nScore this plan via the tool.` },
-          ],
-          tools: [{
-            type: "function",
-            function: {
-              name: "submit_scores",
-              parameters: {
-                type: "object",
-                properties: {
-                  specificity: { type: "integer", minimum: 0, maximum: 10, description: "Are quantities, durations, concentrations specific and operational?" },
-                  sku: { type: "integer", minimum: 0, maximum: 10, description: "Are catalog numbers and supplier formats plausible / not fabricated?" },
-                  timeline: { type: "integer", minimum: 0, maximum: 10, description: "Is the timeline realistic and consistent with the protocol?" },
-                  feasibility: { type: "integer", minimum: 0, maximum: 10, description: "Could a real lab actually execute this plan?" },
-                  notes: { type: "string", description: "Brief justification, max 300 chars." },
-                },
-                required: ["specificity", "sku", "timeline", "feasibility", "notes"],
-                additionalProperties: false,
+    const { res } = await callAIWithFallback({
+      apiKey,
+      // JUDGE chain (gpt-5 on the Lovable gateway): a different model family
+      // from the planner so judge errors are uncorrelated with planner
+      // errors — tighter eval CIs.
+      models: modelChain("JUDGE"),
+      label: "eval-judge",
+      retries: 1,
+      timeoutMs: 60_000,
+      maxTokens: 600,
+      buildBody: (model) => ({
+        model,
+        temperature: 0.0,
+        messages: [
+          { role: "system", content: "You are a strict, calibrated peer reviewer scoring an experiment plan on a 0-10 rubric across four axes. Be honest — most first-draft plans should score 5-7, not 9. Reserve 9-10 for plans you would publish as a worked example." },
+          { role: "user", content: `HYPOTHESIS:\n${hypothesis}\n\nPLAN (JSON):\n${plan.slice(0, 8000)}\n\nScore this plan via the tool.` },
+        ],
+        tools: [{
+          type: "function",
+          function: {
+            name: "submit_scores",
+            parameters: {
+              type: "object",
+              properties: {
+                specificity: { type: "integer", minimum: 0, maximum: 10, description: "Are quantities, durations, concentrations specific and operational?" },
+                sku: { type: "integer", minimum: 0, maximum: 10, description: "Are catalog numbers and supplier formats plausible / not fabricated?" },
+                timeline: { type: "integer", minimum: 0, maximum: 10, description: "Is the timeline realistic and consistent with the protocol?" },
+                feasibility: { type: "integer", minimum: 0, maximum: 10, description: "Could a real lab actually execute this plan?" },
+                notes: { type: "string", description: "Brief justification, max 300 chars." },
               },
+              required: ["specificity", "sku", "timeline", "feasibility", "notes"],
+              additionalProperties: false,
             },
-          }],
-          tool_choice: { type: "function", function: { name: "submit_scores" } },
-        }),
-      },
-    );
+          },
+        }],
+        tool_choice: { type: "function", function: { name: "submit_scores" } },
+      }),
+    });
     if (!res.ok) return null;
     const j = await res.json();
-    const args = j?.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments;
+    const args = extractToolArgs(j);
     if (!args) return null;
     return JSON.parse(args) as RubricScores;
   } catch { return null; }

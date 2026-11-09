@@ -22,6 +22,7 @@ import { retrieveRelevantFeedback, feedbackPromptFragment, type FeedbackHint } f
 import { normalizeDomain, resolveDomain } from "../_shared/domainNormalize.ts";
 import { fetchHouseRules } from "../_shared/houseRules.ts";
 import { planSchema, buildPlannerSystemPrompt, buildPlannerUserMessage } from "../_shared/plannerCore.ts";
+import { aiApiKey, contentAsJson, extractToolArgs } from "../_shared/aiProvider.ts";
 
 /**
  * Resolve the caller's IP for rate-limiting in a way that resists header
@@ -114,6 +115,7 @@ async function classifyNovelty(hypothesis: string, papers: LitPaper[], apiKey: s
     label: "novelty-classify",
     retries: 0,
     timeoutMs: 20_000,
+    maxTokens: 600,
     buildBody: (model) => ({
       model,
       messages: [
@@ -149,7 +151,12 @@ async function classifyNovelty(hypothesis: string, papers: LitPaper[], apiKey: s
   }
   try {
     const aiJson = await aiRes.json();
-    return JSON.parse(aiJson.choices[0].message.tool_calls[0].function.arguments);
+    const parsed = JSON.parse(extractToolArgs(aiJson) ?? "");
+    if (!["not_found", "similar", "exact_match"].includes(parsed?.signal)) throw new Error("bad signal");
+    if (!Array.isArray(parsed.chosen)) parsed.chosen = [];
+    // Indices must point into the candidate list the model was shown.
+    parsed.chosen = parsed.chosen.filter((i: unknown) => Number.isInteger(i) && (i as number) >= 0 && (i as number) < condensed.length);
+    return parsed;
   } catch {
     return { signal: "similar" as const, rationale: "Unable to parse classification.", chosen: [0, 1, 2], semantic_overlap: "medium" as const };
   }
@@ -186,6 +193,7 @@ async function critiquePlan(
     label: "critique",
     retries: 0,
     timeoutMs: 20_000,
+    maxTokens: 1500,
     buildBody: (model) => ({
       model,
       messages: [
@@ -202,7 +210,7 @@ async function critiquePlan(
   if (!aiRes.ok) return null;
   try {
     const aiJson = await aiRes.json();
-    return JSON.parse(aiJson.choices[0].message.tool_calls[0].function.arguments);
+    return JSON.parse(extractToolArgs(aiJson) ?? "");
   } catch { return null; }
 }
 
@@ -251,7 +259,9 @@ serve(async (req) => {
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
   const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
-  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+  // AI provider key (AI_API_KEY, or the legacy LOVABLE_API_KEY). Local
+  // Ollama needs no real key; see _shared/aiProvider.ts.
+  const AI_API_KEY = aiApiKey();
   const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
   // GET /run-experiment → return current quota for this caller without consuming one.
@@ -287,7 +297,7 @@ serve(async (req) => {
     });
   }
 
-  if (!LOVABLE_API_KEY) {
+  if (!AI_API_KEY) {
     return new Response(JSON.stringify({ error: "Service not configured" }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -567,7 +577,7 @@ serve(async (req) => {
           // user has already navigated to /runs/:id and is watching a
           // proper progress UI rather than an idle home screen.
           if (!isRefinement) {
-            const verdict = await gateHypothesis(hypothesis, LOVABLE_API_KEY);
+            const verdict = await gateHypothesis(hypothesis, AI_API_KEY);
             if (!verdict.ok) {
               const msg = verdict.reason ?? "This input doesn't look like a testable hypothesis.";
               await supabase.from("runs").update({
@@ -628,7 +638,7 @@ serve(async (req) => {
               canonical: canon.matched ? canon.technique : null,
             }));
 
-            const verdict = await classifyNovelty(hypothesis, candidates, LOVABLE_API_KEY);
+            const verdict = await classifyNovelty(hypothesis, candidates, AI_API_KEY);
             if (lit.rateLimited && lit.papers.length === 0) {
               verdict.rationale = "All literature sources rate-limited or unreachable. Treating as unknown novelty.";
             }
@@ -699,13 +709,13 @@ serve(async (req) => {
           // when regex returns no match. Doubles domain coverage on long-tail
           // topics, which directly unlocks the domain-boost in retrieval.
           const domainGuess = await resolveDomain(
-            LOVABLE_API_KEY,
+            AI_API_KEY,
             (parentRun as { domain?: string } | null)?.domain,
             (qc as { domain?: string })?.domain,
             hypothesis,
           );
           const feedbackHints = await retrieveRelevantFeedback(
-            supabase, hypothesis, domainGuess, LOVABLE_API_KEY,
+            supabase, hypothesis, domainGuess, AI_API_KEY,
           );
           if (feedbackHints.length > 0) {
             console.log(JSON.stringify({
@@ -762,11 +772,12 @@ serve(async (req) => {
           // budget tight: if a model has not produced headers quickly, move to
           // the next model instead of leaving the user on "Generating".
           const { res: aiRes, modelUsed } = await callAIWithFallback({
-            apiKey: LOVABLE_API_KEY,
+            apiKey: AI_API_KEY,
             models: PLAN_MODELS,
             label: "plan-stream",
             timeoutMs: 90_000,
             retries: 0,
+            maxTokens: 8000,
             buildBody: (model) => ({
               model,
               stream: true,
@@ -811,6 +822,9 @@ serve(async (req) => {
           const decoder = new TextDecoder();
           let buf = "";
           let argsAccum = "";
+          // Plain-content JSON (json_schema mode, or a model that ignored
+          // tool_choice). Used only when no tool-call arguments arrive.
+          let contentAccum = "";
           let lastEmit = 0;
           let lastHeartbeat = Date.now();
           while (true) {
@@ -827,14 +841,21 @@ serve(async (req) => {
               if (payload === "[DONE]") break;
               try {
                 const parsed = JSON.parse(payload);
-                const argsDelta = parsed.choices?.[0]?.delta?.tool_calls?.[0]?.function?.arguments;
-                if (typeof argsDelta === "string") {
-                  argsAccum += argsDelta;
+                const delta = parsed.choices?.[0]?.delta;
+                const rawArgs = delta?.tool_calls?.[0]?.function?.arguments;
+                const argsDelta = typeof rawArgs === "string"
+                  ? rawArgs
+                  : rawArgs && typeof rawArgs === "object" ? JSON.stringify(rawArgs) : null;
+                const contentDelta = typeof delta?.content === "string" ? delta.content : null;
+                if (argsDelta !== null || contentDelta) {
+                  if (argsDelta !== null) argsAccum += argsDelta;
+                  else contentAccum += contentDelta;
                   const now = Date.now();
+                  const sofar = argsAccum || contentAccum;
                   if (now - lastEmit > 250) {
                     lastEmit = now;
-                    const partial = tryParsePartial(argsAccum);
-                    send("progress", { chars: argsAccum.length, partial });
+                    const partial = tryParsePartial(sofar);
+                    send("progress", { chars: sofar.length, partial });
                   }
                   // Heartbeat: bump updated_at every ~60s so the stale-run
                   // cleanup cron doesn't kill an actively-streaming generation.
@@ -850,7 +871,7 @@ serve(async (req) => {
 
           let plan: unknown = null;
           try {
-            plan = JSON.parse(argsAccum);
+            plan = JSON.parse(argsAccum || contentAsJson(contentAccum) || "");
           } catch (e) {
             console.error("Failed to parse plan JSON", e);
             await supabase.from("runs").update({ status: "failed", error: encodeError("PARSE", "Model returned malformed plan.") }).eq("id", runId);
@@ -879,7 +900,7 @@ serve(async (req) => {
           // a more specific label that the regex now matches.
           const planDomainStrict = (planObj as { domain?: string })?.domain;
           const normalizedDomain = planDomainStrict
-            ? await resolveDomain(LOVABLE_API_KEY, planDomainStrict, domainGuess, hypothesis, (planObj as { summary?: string })?.summary)
+            ? await resolveDomain(AI_API_KEY, planDomainStrict, domainGuess, hypothesis, (planObj as { summary?: string })?.summary)
             : domainGuess;
           await supabase.from("runs").update({
             plan: planObj, status: "done", domain: normalizedDomain,
@@ -952,7 +973,7 @@ serve(async (req) => {
                 .eq("id", runId);
             }
 
-            const critique = await critiquePlan(hypothesis, plan, LOVABLE_API_KEY, extraContext, feedbackHints);
+            const critique = await critiquePlan(hypothesis, plan, AI_API_KEY, extraContext, feedbackHints);
             if (critique) {
               await supabase.from("runs").update({ critique }).eq("id", runId);
             }

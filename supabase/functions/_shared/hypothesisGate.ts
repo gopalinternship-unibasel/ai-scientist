@@ -10,18 +10,15 @@
 // through rather than block legitimate users.
 
 import { callAIWithFallback } from "./ai-fallback.ts";
+import { extractToolArgs, modelChain } from "./aiProvider.ts";
 
-// Primary: cheapest classifier. Fallbacks add a different family (OpenAI) so
-// jailbreaks that exploit Gemini-specific patterns get a second-opinion catch.
-// Production logs show gemini-2.5-flash-lite frequently times out under load
-// on the gateway. gemini-3-flash-preview has been the most reliable starter,
-// so promote it. Keep two cross-family fallbacks but with a tight per-model
-// budget so a stalled provider can't burn 45s before we fall back open.
-const GATE_MODELS = [
-  "google/gemini-3-flash-preview",
-  "openai/gpt-5-nano",
-  "google/gemini-2.5-flash-lite",
-];
+// Primary: cheapest classifier. On the Lovable gateway the chain is
+// gemini-3-flash-preview → gpt-5-nano → gemini-2.5-flash-lite (cross-family
+// so jailbreaks that exploit one family get a second-opinion catch); locally
+// it is AI_MODEL_GATE. Keep a tight per-model budget so a stalled provider
+// can't burn 45s before we fall back open (AI_MIN_TIMEOUT_MS raises it for
+// slow local models).
+const GATE_MODELS = modelChain("GATE");
 
 export interface GateVerdict {
   ok: boolean;
@@ -48,6 +45,7 @@ export async function gateHypothesis(hypothesis: string, apiKey: string): Promis
       label: "hypothesis-gate",
       timeoutMs: 6_000,
       retries: 0,
+      maxTokens: 300,
       buildBody: (model) => ({
         model,
         temperature: 0,
@@ -90,7 +88,7 @@ export async function gateHypothesis(hypothesis: string, apiKey: string): Promis
       return { ok: true };
     }
     const json = await res.json();
-    const args = json.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments;
+    const args = extractToolArgs(json);
     if (!args) return { ok: true };
     const parsed = JSON.parse(args) as {
       is_hypothesis: boolean; category: string; reason?: string; suggestion?: string;

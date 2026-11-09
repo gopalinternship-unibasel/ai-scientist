@@ -5,6 +5,9 @@
 // the client (before inserting plan_feedback.domain). Keep this file pure
 // JS/TS so it can be imported from either runtime without bundler tricks.
 
+import { callAIWithFallback } from "./ai-fallback.ts";
+import { extractToolArgs, modelChain } from "./aiProvider.ts";
+
 export const DOMAINS = [
   "cell-biology",
   "molecular-biology",
@@ -85,7 +88,7 @@ export function normalizeDomain(...inputs: Array<string | null | undefined>): Ca
 
 /**
  * LLM-backed fallback classifier. Only call this when `normalizeDomainStrict`
- * returns null — it's cheap (gpt-5-nano, ~$0.0001/call) but not free.
+ * returns null — it's cheap (one short structured call on the DOMAIN model chain) but not free.
  *
  * Returns 'other' on any failure so callers don't need to special-case errors.
  */
@@ -96,17 +99,15 @@ export async function classifyDomainWithLLM(
   if (!text.trim() || !apiKey) return "other";
   const snippet = text.slice(0, 1500);
   try {
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(new Error("domain-classify timed out after 5000ms")), 5_000);
-    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      signal: ac.signal,
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
+    const { res } = await callAIWithFallback({
+      apiKey,
+      models: modelChain("DOMAIN"),
+      label: "domain-classify",
+      retries: 0,
+      timeoutMs: 5_000,
+      maxTokens: 60,
+      buildBody: (model) => ({
+        model,
         messages: [
           {
             role: "system",
@@ -130,10 +131,10 @@ export async function classifyDomainWithLLM(
         }],
         tool_choice: { type: "function", function: { name: "classify_domain" } },
       }),
-    }).finally(() => clearTimeout(timer));
+    });
     if (!res.ok) return "other";
     const j = await res.json();
-    const args = j?.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments;
+    const args = extractToolArgs(j);
     if (!args) return "other";
     const parsed = JSON.parse(args);
     const dom = parsed?.domain;

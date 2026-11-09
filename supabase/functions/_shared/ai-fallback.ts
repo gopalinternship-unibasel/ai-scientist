@@ -1,42 +1,31 @@
-// AI gateway call with model fallback. If the primary model returns a hard
-// failure (5xx, 429, 408, network error), we transparently retry with a
-// secondary model. Restores plan generation when one provider has a bad day.
+// AI call with model fallback. If the primary model returns a hard failure
+// (5xx, 429, 408, network error), we transparently retry with a secondary
+// model. Restores plan generation when one provider has a bad day.
 //
 // Used by both non-streaming (tool-call JSON) and streaming requests.
+//
+// The endpoint, key and per-role model chains come from the environment
+// (see aiProvider.ts); the original build hard-coded the Lovable gateway.
 import { fetchWithRetry } from "./fetch-with-retry.ts";
-
-const ENDPOINT = "https://ai.gateway.lovable.dev/v1/chat/completions";
+import { adaptChatBody, aiTimeout, chatCompletionsUrl, modelChain } from "./aiProvider.ts";
 
 export type ModelChain = string[];
 
 // Hot-path generation: long context + strict JSON + streaming.
-// Recent production logs show 2.5 Flash often burns the whole first-attempt
-// budget before falling through, while 3 Flash is the model that actually
-// starts streaming. Keep 2.5 Flash as backup, then OpenAI as cross-family rescue.
-export const PLAN_MODELS: ModelChain = [
-  "google/gemini-3-flash-preview",
-  "google/gemini-2.5-flash",
-  "openai/gpt-5-mini",
-];
+// On the Lovable gateway this is gemini-3-flash-preview → gemini-2.5-flash →
+// gpt-5-mini; locally it is AI_MODEL_PLAN (default qwen2.5:7b).
+export const PLAN_MODELS: ModelChain = modelChain("PLAN");
 
-// Cheap classification / short structured output (gate, novelty, etc.).
-// Cross-family fallback adds robustness without meaningful cost.
-export const FAST_MODELS: ModelChain = [
-  "google/gemini-3-flash-preview",
-  "openai/gpt-5-nano",
-];
+// Cheap classification / short structured output (novelty, etc.).
+export const FAST_MODELS: ModelChain = modelChain("FAST");
 
-// Reasoning-first single calls (critic, distillation). Production logs on the
-// published site show gpt-5-mini routinely timing out at 20–35s while
-// gemini-3-flash-preview returns critiques in <10s. Lead with Gemini for
-// latency; keep gpt-5-mini as a quality fallback.
-export const REASONING_MODELS: ModelChain = [
-  "google/gemini-3-flash-preview",
-  "openai/gpt-5-mini",
-];
+// Reasoning-first single calls (critic).
+export const REASONING_MODELS: ModelChain = modelChain("REASONING");
 
 interface CallOpts {
   apiKey: string;
+  /** Output budget; sent as max_tokens / max_completion_tokens per AI_MAX_TOKENS_PARAM. */
+  maxTokens?: number;
   models: ModelChain;
   // deno-lint-ignore no-explicit-any
   buildBody: (model: string) => any;
@@ -58,17 +47,17 @@ export async function callAIWithFallback(opts: CallOpts): Promise<{ res: Respons
     const model = opts.models[i];
     const isLast = i === opts.models.length - 1;
     try {
-      const res = await fetchWithRetry(ENDPOINT, {
+      const res = await fetchWithRetry(chatCompletionsUrl(), {
         method: "POST",
         headers: {
           Authorization: `Bearer ${opts.apiKey}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(opts.buildBody(model)),
+        body: JSON.stringify(adaptChatBody(opts.buildBody(model), opts.maxTokens)),
       }, {
         label: `${opts.label}:${model}`,
         retries: opts.retries ?? (isLast ? 2 : 1),
-        timeoutMs: opts.timeoutMs,
+        timeoutMs: aiTimeout(opts.timeoutMs ?? 60_000),
       });
       if (res.ok) return { res, modelUsed: model };
       lastRes = res;

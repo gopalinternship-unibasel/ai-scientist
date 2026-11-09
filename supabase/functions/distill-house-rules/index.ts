@@ -11,7 +11,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { corsHeaders } from "../_shared/cors.ts";
-import { fetchWithRetry } from "../_shared/fetch-with-retry.ts";
+import { callAIWithFallback } from "../_shared/ai-fallback.ts";
+import { aiApiKey, extractToolArgs, modelChain } from "../_shared/aiProvider.ts";
 import { DOMAINS } from "../_shared/domainNormalize.ts";
 
 interface RuleProposal {
@@ -26,9 +27,9 @@ serve(async (req) => {
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
   const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
-  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+  const AI_API_KEY = aiApiKey();
 
-  if (!LOVABLE_API_KEY) {
+  if (!AI_API_KEY) {
     return new Response(JSON.stringify({ error: "Service not configured" }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -96,23 +97,22 @@ serve(async (req) => {
         .map((c, i) => `[${i + 1}] section=${c.section}${c.rating != null ? ` rating=${c.rating}/5` : ""} (×${c.dup_count}): ${c.correction.slice(0, 220)}`)
         .join("\n");
 
-      const aiRes = await fetchWithRetry(
-        "https://ai.gateway.lovable.dev/v1/chat/completions",
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${LOVABLE_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            // gpt-5-mini for distillation: rule quality compounds across every
-            // future plan in this domain, so reasoning matters more than cost.
-            // Low volume (cron job) — extra cost is negligible.
-            model: "openai/gpt-5-mini",
-            messages: [
-              {
-                role: "system",
-                content: `You are an expert research methodologist. Given a list of CORRECTIONS that real scientists left on past experiment plans in the ${domain.toUpperCase()} domain, distill them into 5-8 STABLE HOUSE RULES that should guide future plans in this domain.
+      const { res: aiRes } = await callAIWithFallback({
+        apiKey: AI_API_KEY,
+        // DISTILL chain (gpt-5-mini on the Lovable gateway): rule quality
+        // compounds across every future plan in this domain, so reasoning
+        // matters more than cost. Low volume (cron job).
+        models: modelChain("DISTILL"),
+        label: "distill-house-rules",
+        retries: 1,
+        timeoutMs: 60_000,
+        maxTokens: 1500,
+        buildBody: (model) => ({
+          model,
+          messages: [
+            {
+              role: "system",
+              content: `You are an expert research methodologist. Given a list of CORRECTIONS that real scientists left on past experiment plans in the ${domain.toUpperCase()} domain, distill them into 5-8 STABLE HOUSE RULES that should guide future plans in this domain.
 
 Each rule must be:
 - Concrete and actionable (e.g. "Always use sterile-filtered FBS for primary cell culture", not "Be careful with cells")
@@ -125,40 +125,39 @@ For each rule, set:
 - source_count: how many of the input corrections support this rule
 
 If the corpus does not yield clear stable rules, return fewer rules (or none) rather than inventing them.`,
-              },
-              { role: "user", content: `DOMAIN: ${domain}\n\nCORRECTIONS:\n${condensed}\n\nDistill into stable house rules.` },
-            ],
-            tools: [{
-              type: "function",
-              function: {
-                name: "submit_house_rules",
-                description: "Distilled stable rules for this domain.",
-                parameters: {
-                  type: "object",
-                  properties: {
-                    rules: {
-                      type: "array",
-                      items: {
-                        type: "object",
-                        properties: {
-                          rule: { type: "string", description: "1-2 sentence concrete rule, max 200 chars" },
-                          confidence: { type: "number", minimum: 0, maximum: 1 },
-                          source_count: { type: "integer", minimum: 1 },
-                        },
-                        required: ["rule", "confidence", "source_count"],
-                        additionalProperties: false,
+            },
+            { role: "user", content: `DOMAIN: ${domain}\n\nCORRECTIONS:\n${condensed}\n\nDistill into stable house rules.` },
+          ],
+          tools: [{
+            type: "function",
+            function: {
+              name: "submit_house_rules",
+              description: "Distilled stable rules for this domain.",
+              parameters: {
+                type: "object",
+                properties: {
+                  rules: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        rule: { type: "string", description: "1-2 sentence concrete rule, max 200 chars" },
+                        confidence: { type: "number", minimum: 0, maximum: 1 },
+                        source_count: { type: "integer", minimum: 1 },
                       },
+                      required: ["rule", "confidence", "source_count"],
+                      additionalProperties: false,
                     },
                   },
-                  required: ["rules"],
-                  additionalProperties: false,
                 },
+                required: ["rules"],
+                additionalProperties: false,
               },
-            }],
-            tool_choice: { type: "function", function: { name: "submit_house_rules" } },
-          }),
-        },
-      );
+            },
+          }],
+          tool_choice: { type: "function", function: { name: "submit_house_rules" } },
+        }),
+      });
 
       if (!aiRes.ok) {
         console.warn(`distill ${domain}: ai gateway ${aiRes.status}`);
@@ -166,7 +165,7 @@ If the corpus does not yield clear stable rules, return fewer rules (or none) ra
         continue;
       }
       const aiJson = await aiRes.json();
-      const args = aiJson?.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments;
+      const args = extractToolArgs(aiJson);
       if (!args) {
         results.push({ domain, created: 0, skipped: "no_tool_call" });
         continue;
