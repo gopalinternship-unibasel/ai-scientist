@@ -117,7 +117,7 @@ Deno.test("materials copied from the PCR catalog are flagged for an NAD+ hypothe
   assert(kinds.includes("catalog_items_copied"));
   assert(kinds.includes("materials_off_topic"));
   // the reviewer gets open findings, high severity first
-  assert(verificationIssueLines(verification)[0].startsWith("- No material mentions"));
+  assert(verificationIssueLines(verification)[0].startsWith("- The materials do not name what the hypothesis is about"));
 });
 
 Deno.test("materials without any cost are flagged", () => {

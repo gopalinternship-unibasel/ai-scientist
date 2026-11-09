@@ -15,7 +15,9 @@ import { gateHypothesis } from "../_shared/hypothesisGate.ts";
 import { findCatalogIssues } from "../_shared/catalogCheck.ts";
 import { checkFeasibility } from "../_shared/feasibilityCheck.ts";
 import { detectCanonicalTechnique } from "../_shared/canonicalTechniques.ts";
-import { rankByRelevance } from "../_shared/relevanceRank.ts";
+import { CANONICAL_RELEVANCE_FLOOR, rankByRelevance, RELEVANCE_FLOOR, type RankedPaper } from "../_shared/relevanceRank.ts";
+import { hypothesisConcepts } from "../_shared/hypothesisTerms.ts";
+import { calibrateNovelty, ON_TOPIC, type NoveltyVerdict } from "../_shared/noveltyVerdict.ts";
 import { checkTimelineConsistency } from "../_shared/timelineCheck.ts";
 import { verifyMaterialsLive } from "../_shared/skuVerify.ts";
 import { retrieveRelevantFeedback, feedbackPromptFragment, type FeedbackHint } from "../_shared/feedbackRetrieval.ts";
@@ -106,7 +108,7 @@ async function hashHypothesis(h: string): Promise<string> {
  * different wording, model systems, or measurement methods). This catches the
  * "I reinvented X" failure mode that pure keyword overlap misses.
  */
-async function classifyNovelty(hypothesis: string, papers: LitPaper[], apiKey: string) {
+async function classifyNovelty(hypothesis: string, papers: LitPaper[], apiKey: string): Promise<NoveltyVerdict> {
   if (papers.length === 0) {
     return {
       signal: "not_found" as const,
@@ -252,7 +254,7 @@ async function critiquePlan(
     buildBody: (model) => ({
       model,
       messages: [
-        { role: "system", content: "You are a senior peer reviewer for an experimental biology / chemistry journal. Critically evaluate the proposed experiment plan for: missing controls, weak statistical power, ethical/safety oversights, unrealistic budgets or timelines, supplier/catalog inconsistencies, and gaps between hypothesis and protocol. Be specific and actionable. When LEARNED LESSONS are provided, explicitly verify each one was applied." },
+        { role: "system", content: "You are a senior peer reviewer for an experimental biology / chemistry journal. Critically evaluate the proposed experiment plan for: missing controls, weak statistical power, ethical/safety oversights, unrealistic budgets or timelines, supplier/catalog inconsistencies, and gaps between hypothesis and protocol. Be specific and actionable. Base every concern on the plan text or the pre-check findings: do not propose replacement catalog numbers, and do not call a reagent controlled, toxic or regulated unless the plan or the pre-checks say so. When LEARNED LESSONS are provided, explicitly verify each one was applied." },
         { role: "user", content: `HYPOTHESIS:\n${hypothesis}\n\nPROPOSED PLAN:\n${JSON.stringify(plan).slice(0, promptChars(12000, 6000))}${extraContext}${lessonsBlock}` },
       ],
       tools: [{
@@ -708,6 +710,8 @@ serve(async (req) => {
             references: Reference[];
             sources_used?: { s2: boolean; openalex: boolean; pubmed: boolean };
             semantic_overlap?: "low" | "medium" | "high";
+            /** The classifier's own signal when the automated check changed it. */
+            classifier_signal?: string;
           };
           if (isRefinement && parentRun?.qc) {
             qc = parentRun.qc as typeof qc;
@@ -724,22 +728,22 @@ serve(async (req) => {
               ? `${canon.technique} method protocol`
               : hypothesis;
             setProgress({ stage: "literature" });
-            const lit = await searchLiterature(litQuery);
+            const concepts = hypothesisConcepts(hypothesis);
+            const lit = await searchLiterature(litQuery, hypothesis);
 
-            // Re-rank candidates by token overlap with the hypothesis BEFORE
-            // sending to the classifier. Drop anything below a minimum
-            // overlap floor — those are noise and would mislead the
+            // Re-rank candidates by how much of the hypothesis they cover
+            // BEFORE sending them to the classifier. Drop anything below a
+            // minimum floor — those are noise and would mislead the
             // classifier into surfacing irrelevant references.
-            const ranked = rankByRelevance(lit.papers, hypothesis);
+            const ranked = rankByRelevance(lit.papers, hypothesis, concepts);
             // Canonical techniques (PCR, Western blot, ELISA, …) are by
-            // definition textbook protocols. Their full hypothesis sentence
-            // often produces low Jaccard overlap with methods papers (whose
-            // titles use formal phrasing). For these, we accept a much lower
-            // relevance floor — the canonical detector is itself the strong
+            // definition textbook protocols. Methods papers have generic
+            // titles that cover little of a specific hypothesis, so these get
+            // a lower floor — the canonical detector is itself the strong
             // signal of "exact match", and we just need *some* on-topic refs.
-            const RELEVANCE_FLOOR = canon.matched ? 0.005 : 0.015;
-            const filtered = ranked.filter((p) => p.relevance >= RELEVANCE_FLOOR);
-            const candidates: LitPaper[] = (filtered.length > 0 ? filtered : ranked).slice(0, 8);
+            const floor = canon.matched ? CANONICAL_RELEVANCE_FLOOR : RELEVANCE_FLOOR;
+            const filtered = ranked.filter((p) => p.relevance >= floor);
+            const candidates: RankedPaper[] = (filtered.length > 0 ? filtered : ranked).slice(0, 8);
             console.log(JSON.stringify({
               run_id: runId, step: "lit_rerank",
               raw: lit.papers.length, kept: candidates.length,
@@ -748,7 +752,19 @@ serve(async (req) => {
             }));
 
             setProgress({ stage: "novelty", candidates: candidates.length });
-            const verdict = await classifyNovelty(hypothesis, candidates, AI_API_KEY);
+            const modelVerdict = await classifyNovelty(hypothesis, candidates, AI_API_KEY);
+            // Hold the classifier to its own evidence (noveltyVerdict.ts):
+            // "not found" with on-topic papers, "exact match" without a paper
+            // that names the hypothesis' core, and contradictory overlap
+            // labels are corrected; off-topic picks are dropped.
+            const verdict = calibrateNovelty(modelVerdict, candidates, concepts);
+            if (verdict.corrected_from) {
+              console.log(JSON.stringify({
+                run_id: runId, step: "novelty_corrected",
+                from: verdict.corrected_from, to: verdict.signal,
+                top_relevance: candidates[0]?.relevance ?? 0,
+              }));
+            }
             if (lit.rateLimited && lit.papers.length === 0) {
               verdict.rationale = "All literature sources rate-limited or unreachable. Treating as unknown novelty.";
             }
@@ -767,7 +783,7 @@ serve(async (req) => {
             // low overlap with the hypothesis — flagging that the *application*
             // may be less well-published than the method itself.
             const topRelevance = ranked[0]?.relevance ?? 0;
-            const LOW_CONTEXT_OVERLAP = 0.05;
+            const LOW_CONTEXT_OVERLAP = ON_TOPIC;
             if (canon.matched && candidates.length > 0 && verdict.signal !== "exact_match") {
               console.log(JSON.stringify({
                 run_id: runId, step: "canonical_override",
@@ -805,6 +821,7 @@ serve(async (req) => {
               references,
               sources_used: lit.sources,
               semantic_overlap: verdict.semantic_overlap,
+              ...(verdict.corrected_from ? { classifier_signal: verdict.corrected_from } : {}),
             };
             await supabase.from("runs").update({ qc, status: "plan" }).eq("id", runId);
             send("qc", qc);
@@ -1037,8 +1054,16 @@ serve(async (req) => {
           // Deterministic plan guards: unretrieved sources removed, budget
           // total = sum of line items, off-topic materials and unmet
           // refinement limits flagged (stored as plan.verification).
+          // Sigma-Aldrich catalog numbers are looked up in the supplier's
+          // catalogue (through PubChem) first, so verifyPlan can remove the
+          // ones that belong to another product before the plan is saved
+          // (they used to reach only the reviewer critique).
+          const liveSkuFor = async (p: unknown) => {
+            const mats = (p as { materials?: { name?: string; catalog_number?: string; supplier?: string }[] })?.materials;
+            return await verifyMaterialsLive(mats).catch(() => []);
+          };
           const guardCtx = { hypothesis, references, refinementInstruction, parentPlan: parentRun?.plan };
-          let { plan: planObj, verification } = verifyPlan(rawPlan, guardCtx);
+          let { plan: planObj, verification } = verifyPlan(rawPlan, { ...guardCtx, liveSku: await liveSkuFor(rawPlan) });
           if (verification.issues.length > 0) {
             console.log(JSON.stringify({ run_id: runId, step: "plan_guards", issues: verification.issues.map((i) => i.kind) }));
           }
@@ -1055,7 +1080,7 @@ serve(async (req) => {
             if (second && typeof second === "object") {
               const s = second as { protocol?: { description?: string }[] };
               if (Array.isArray(s.protocol)) s.protocol = sanitizeCitationsWithReport(s.protocol, references.length).steps;
-              secondChecked = verifyPlan(s, guardCtx);
+              secondChecked = verifyPlan(s, { ...guardCtx, liveSku: await liveSkuFor(s) });
             }
             ({ plan: planObj, verification } = chooseRepaired({ plan: planObj, verification }, secondChecked));
             console.log(JSON.stringify({ run_id: runId, step: "plan_repair", ...verification.repair }));
@@ -1084,9 +1109,12 @@ serve(async (req) => {
           //    critique surfaces wrong-form / wrong-cat# materials concretely.
           try {
             const planMaterials = (planObj as { materials?: { name?: string; catalog_number?: string; supplier?: string }[] })?.materials;
+            // Catalog numbers that the dictionary, the format rules or the
+            // live lookup proved wrong were removed by verifyPlan (finding
+            // "catalog_numbers_removed"); what is left here is normally empty.
             const catIssues = findCatalogIssues(planMaterials);
-            // Live SKU verification + timeline check (best-effort, parallel).
-            const skuIssues = await verifyMaterialsLive(planMaterials).catch(() => []);
+            const skuIssues: Awaited<ReturnType<typeof verifyMaterialsLive>> = [];
+            const removedCatalog = verification.issues.find((i) => i.kind === "catalog_numbers_removed");
             const timelineIssue = checkTimelineConsistency(
               (planObj as { protocol?: { duration?: string; title?: string }[] })?.protocol,
               (planObj as { timeline?: { duration?: string; phase?: string }[] })?.timeline,
@@ -1103,10 +1131,8 @@ serve(async (req) => {
             for (const s of skuIssues) {
               issueLines.push(`- Material #${s.material_index + 1} ("${s.declared_name}", cat# ${s.catalog_number}): ${s.supplier_hint ?? s.reason}. The supplier's live catalog could not confirm this exact SKU/name pairing.`);
             }
-            if (timelineIssue) {
-              issueLines.push(`- Timeline inconsistency (${timelineIssue.reason}): ${timelineIssue.detail} Either extend the timeline phases or compress the protocol.`);
-            }
-
+            // The timeline finding is part of verification now
+            // (protocol_exceeds_timeline), like every other open finding.
             issueLines.push(...verificationIssueLines(verification));
             const extraContext = issueLines.length
               ? `\n\nDETERMINISTIC PRE-CHECKS FOUND ${issueLines.length} ISSUE(S) — please raise these in 'concerns' with severity 'high':\n${issueLines.join("\n")}`
@@ -1131,6 +1157,9 @@ serve(async (req) => {
               const first = skuIssues[0] ?? catIssues[0];
               const name = (first as { declared_name?: string })?.declared_name ?? "a material";
               solicitReason = `We weren't able to fully verify "${name}" against the supplier's live catalog. If you know the right SKU, leaving a quick correction will improve future plans for similar experiments.`;
+            } else if (removedCatalog) {
+              solicitSection = "materials";
+              solicitReason = "Some catalog numbers in this plan belonged to other products and were removed. If you know the right catalog numbers, a quick correction will improve future plans for similar experiments.";
             } else if (timelineIssue) {
               solicitSection = "timeline";
               solicitReason = `Our pre-checks flagged a timeline inconsistency (${timelineIssue.reason}). If you have firsthand experience with this protocol, your correction will help future plans.`;

@@ -13,23 +13,40 @@
 //  - refinements "keep total budget under $3,000" and "shorten the overall
 //    timeline to 8 weeks" produced $16,235 and 5 phases of one month.
 
-import { reconcileBudget, sanitizeStepSources, type RefLike, type SourceReport } from "./planIntegrity.ts";
+import {
+  MATERIALS_LINE_RE, materialsSubtotal, reconcileBudget, reconcileMaterialsLine, sanitizeStepSources,
+  type RefLike, type SourceReport,
+} from "./planIntegrity.ts";
 import { CATALOG_GROUPS, relevantCatalogGroups } from "./costCatalog.ts";
-import { parseDurationToHours } from "./timelineCheck.ts";
+import { checkTimelineConsistency, parseDurationToHours } from "./timelineCheck.ts";
+import { anchorConcepts, hypothesisConcepts, mentions, textWords } from "./hypothesisTerms.ts";
+import {
+  doseIssues, type LiveSkuFinding, materialListSteps, type MaterialWithCatalog, removeWrongCatalogNumbers,
+} from "./planContentChecks.ts";
 
 export interface PlanIssue {
   kind:
     | "budget_total_corrected"
+    | "materials_line_corrected"
     | "materials_subtotal_mismatch"
     | "materials_off_topic"
     | "materials_unpriced"
     | "catalog_items_copied"
+    | "catalog_numbers_removed"
+    | "dose_changed"
+    | "protocol_steps_not_actions"
+    | "protocol_exceeds_timeline"
     | "refinement_budget_not_met"
     | "refinement_timeline_not_met"
     | "unverified_sources_removed";
   severity: "high" | "medium";
   detail: string;
 }
+
+/** Findings the guards corrected themselves (shown as "Fixed", not sent to the reviewer). */
+export const FIXED_KINDS = new Set<PlanIssue["kind"]>([
+  "budget_total_corrected", "unverified_sources_removed", "materials_line_corrected", "catalog_numbers_removed",
+]);
 
 export interface PlanVerification {
   version: 1;
@@ -51,6 +68,7 @@ export interface PlanVerification {
 // nothing to do with the hypothesis.
 export const REPAIR_KINDS = new Set<PlanIssue["kind"]>([
   "refinement_budget_not_met", "refinement_timeline_not_met", "materials_off_topic",
+  "dose_changed", "protocol_steps_not_actions",
 ]);
 
 export function repairableIssues(v: PlanVerification): PlanIssue[] {
@@ -274,7 +292,7 @@ export function timelineWeeks(timeline: { duration?: string }[] | undefined): nu
 
 // --- materials ---------------------------------------------------------------
 
-interface MaterialLike { name?: string; notes?: string; total_cost_usd?: number | string | null }
+interface MaterialLike extends MaterialWithCatalog { name?: string; notes?: string; total_cost_usd?: number | string | null }
 
 function itemKey(name: string): string {
   return name.toLowerCase().replace(/\(.*?\)/g, " ").replace(/,.*$/, "").replace(/[^\p{L}\p{N}/ -]+/gu, " ")
@@ -325,7 +343,7 @@ interface BudgetShape {
 
 /** The parts of a plan the guards read; everything else is passed through. */
 export interface PlanShape {
-  protocol?: { description?: string; source?: string }[];
+  protocol?: { title?: string; description?: string; source?: string; duration?: string }[];
   materials?: MaterialLike[];
   budget?: BudgetShape;
   timeline?: { duration?: string }[];
@@ -333,9 +351,32 @@ export interface PlanShape {
   [key: string]: unknown;
 }
 
+// "... were removed (for example https://www.biorxiv.org/...)." Until 9 Nov
+// 2026 (QA round 2) the note quoted the first removed source, so the
+// invented link it had just removed was shown again in the checks box and
+// the PDF. The removed sources stay in verification.sources (not shown).
+export function withoutRemovedExample(detail: string): string {
+  return detail.replace(/ \(for example [\s\S]*\)(?=\.$)/, "");
+}
+
+/**
+ * Notes from an earlier verification of the same plan that a new pass can no
+ * longer see: a cached plan was corrected when it was first saved (sources
+ * removed, total set to the line-item sum), so re-checking it finds nothing
+ * to correct, and its copy for another user used to lose those notes.
+ */
+function carryOver(prev: PlanVerification | undefined, issues: PlanIssue[]): void {
+  if (!prev || !Array.isArray(prev.issues)) return;
+  for (const old of prev.issues) {
+    if (!old || !FIXED_KINDS.has(old.kind) || issues.some((i) => i.kind === old.kind)) continue;
+    issues.push(old.kind === "unverified_sources_removed" ? { ...old, detail: withoutRemovedExample(old.detail) } : old);
+  }
+}
+
 /**
  * Run every deterministic guard on a plan. Returns a copy of the plan with
- * sources and the budget total fixed and `verification` attached.
+ * sources, the budget, wrong catalog numbers fixed and `verification`
+ * attached.
  */
 export function verifyPlan(
   input: unknown,
@@ -345,9 +386,12 @@ export function verifyPlan(
     refinementInstruction?: string | null;
     /** The plan being refined (for limits relative to it, e.g. "cut the budget by 30%"). */
     parentPlan?: unknown;
+    /** Live supplier-catalog findings for this plan's materials (skuVerify.ts), when they were looked up. */
+    liveSku?: LiveSkuFinding[];
   },
 ): { plan: PlanShape; verification: PlanVerification } {
   const plan: PlanShape = input && typeof input === "object" ? { ...(input as PlanShape) } : {};
+  const prev = plan.verification && typeof plan.verification === "object" ? plan.verification : undefined;
   const issues: PlanIssue[] = [];
 
   // 1) Protocol sources: only retrieved references (or a plain label) survive.
@@ -357,43 +401,70 @@ export function verifyPlan(
     issues.push({
       kind: "unverified_sources_removed",
       severity: "medium",
-      detail: `${report.removed + report.links_removed} protocol source(s) cited papers or links that the literature search did not return and were removed${report.removed_examples.length ? ` (for example ${report.removed_examples[0]})` : ""}.`,
+      detail: `${report.removed + report.links_removed} protocol source(s) cited papers or links that the literature search did not return and were removed.`,
     });
   }
 
-  // 2) Budget: the total is the sum of the line items.
-  let budgetOut: PlanVerification["budget"] = null;
-  if (plan.budget && typeof plan.budget === "object") {
-    const { budget, check } = reconcileBudget(plan.budget);
-    plan.budget = budget;
-    if (check) {
-      budgetOut = { stated_total: check.stated_total, line_item_sum: check.line_item_sum, corrected: check.mismatch };
-      if (check.mismatch) {
-        issues.push({
-          kind: "budget_total_corrected",
-          severity: "medium",
-          detail: `The model's budget total (${check.stated_total === null ? "missing" : usd(check.stated_total)}) did not equal the sum of its line items (${usd(check.line_item_sum)}); the total now shows the sum.`,
-        });
-      }
-    }
-    // Materials line item vs the materials table.
-    const materials: MaterialLike[] = Array.isArray(plan.materials) ? plan.materials : [];
-    const matSum = materials.reduce((s, m) => s + (Number(m?.total_cost_usd) || 0), 0);
-    const matLine = (plan.budget.line_items ?? []).find((li) =>
-      /reagent|material|consumable|supplies/i.test(li?.category ?? ""));
-    if (matSum > 0 && matLine && Number(matLine.amount_usd) > 0) {
-      const ratio = Number(matLine.amount_usd) / matSum;
-      if (ratio < 0.75 || ratio > 1.33) {
-        issues.push({
-          kind: "materials_subtotal_mismatch",
-          severity: "medium",
-          detail: `The budget line "${matLine.category ?? "materials"}" (${usd(Number(matLine.amount_usd))}) does not match the materials table subtotal (${usd(matSum)}).`,
-        });
-      }
+  // 2) Catalog numbers that belong to another product (or break the
+  //    supplier's format) are removed before anyone can order them.
+  if (Array.isArray(plan.materials)) {
+    const { materials: cleaned, removed } = removeWrongCatalogNumbers(plan.materials, ctx.liveSku ?? []);
+    plan.materials = cleaned;
+    if (removed.length > 0) {
+      issues.push({
+        kind: "catalog_numbers_removed",
+        severity: "medium",
+        detail: `${removed.length} catalog number(s) were removed because they belong to another product or do not fit the supplier's format: ${removed.slice(0, 4).map((r) => `${r.catalog_number} for ${r.name} (${r.why})`).join("; ")}.`,
+      });
     }
   }
 
-  // 3) Materials must belong to this experiment.
+  // 3) Budget: the materials line covers the materials table, and the total
+  //    is the sum of the line items.
+  let budgetOut: PlanVerification["budget"] = null;
+  if (plan.budget && typeof plan.budget === "object") {
+    const materialsTable: MaterialLike[] = Array.isArray(plan.materials) ? plan.materials : [];
+    const { budget: withMaterials, change } = reconcileMaterialsLine(plan.budget, materialsTable);
+    if (change) {
+      issues.push({
+        kind: "materials_line_corrected",
+        severity: "medium",
+        detail: `The budget line "${change.category}" (${usd(change.stated)}) was lower than the materials table subtotal (${usd(change.table)}); it now shows the subtotal, and the total includes it.`,
+      });
+    }
+    const { budget, check } = reconcileBudget(withMaterials);
+    plan.budget = budget;
+    if (check) {
+      // A plan checked before (a cached copy, an older plan) carries the
+      // total its model wrote in verification.budget; its total_usd is
+      // already the earlier corrected sum.
+      const earlier = prev?.budget?.corrected ? prev.budget.stated_total : undefined;
+      const stated = earlier !== undefined ? earlier : check.stated_total;
+      const differs = check.mismatch || (stated !== null && Math.abs(stated - check.line_item_sum) > 1);
+      budgetOut = { stated_total: stated, line_item_sum: check.line_item_sum, corrected: differs };
+      if (differs) {
+        issues.push({
+          kind: "budget_total_corrected",
+          severity: "medium",
+          detail: change
+            ? `The model's budget total (${stated === null ? "missing" : usd(stated)}) did not equal the sum of its line items with the corrected materials line (${usd(check.line_item_sum)}); the total now shows the sum.`
+            : `The model's budget total (${stated === null ? "missing" : usd(stated)}) did not equal the sum of its line items (${usd(check.line_item_sum)}); the total now shows the sum.`,
+        });
+      }
+    }
+    // A materials line far above the table may pay for unlisted items: flag it.
+    const matSum = materialsSubtotal(materialsTable);
+    const matLine = (plan.budget.line_items ?? []).find((li) => MATERIALS_LINE_RE.test(li?.category ?? ""));
+    if (!change && matSum > 0 && matLine && Number(matLine.amount_usd) > matSum * 1.33) {
+      issues.push({
+        kind: "materials_subtotal_mismatch",
+        severity: "medium",
+        detail: `The budget line "${matLine.category ?? "materials"}" (${usd(Number(matLine.amount_usd))}) is well above the materials table subtotal (${usd(matSum)}); the difference is not itemised.`,
+      });
+    }
+  }
+
+  // 4) Materials must belong to this experiment.
   const materials: MaterialLike[] = Array.isArray(plan.materials) ? plan.materials : [];
   const copied = catalogCopies(materials, ctx.hypothesis);
   if (copied.length > 0) {
@@ -411,18 +482,33 @@ export function verifyPlan(
     });
   }
   if (materials.length > 0) {
-    const hTerms = keyTerms(ctx.hypothesis);
-    const mTerms = keyTerms(materials.map((m) => `${m?.name ?? ""} ${m?.notes ?? ""}`).join(" "));
-    if (hTerms.size > 0 && sharedTerms(hTerms, mTerms).length === 0) {
-      issues.push({
-        kind: "materials_off_topic",
-        severity: "high",
-        detail: `No material mentions anything specific to the hypothesis (${[...hTerms].slice(0, 6).join(", ")}).`,
-      });
-    }
+    const offTopic = materialsOffTopic(materials, ctx.hypothesis);
+    if (offTopic) issues.push({ kind: "materials_off_topic", severity: "high", detail: offTopic });
   }
 
-  // 4) Refinement limits.
+  // 5) The protocol: steps that say what to do, at the hypothesis' doses,
+  //    within the timeline.
+  const listSteps = materialListSteps(plan.protocol);
+  if (listSteps) {
+    issues.push({
+      kind: "protocol_steps_not_actions",
+      severity: "high",
+      detail: `${listSteps.steps.length} of ${listSteps.total} protocol steps list materials instead of saying what to do (steps ${listSteps.steps.join(", ")}; for example "${listSteps.example}").`,
+    });
+  }
+  for (const d of doseIssues(ctx.hypothesis, plan.protocol)) {
+    issues.push({
+      kind: "dose_changed",
+      severity: "high",
+      detail: `The hypothesis tests ${d.substance} at ${d.hypothesis}; the protocol uses ${d.plan.join(", ")}.`,
+    });
+  }
+  const timelineIssue = checkTimelineConsistency(plan.protocol, plan.timeline);
+  if (timelineIssue) {
+    issues.push({ kind: "protocol_exceeds_timeline", severity: "medium", detail: timelineIssue.detail });
+  }
+
+  // 6) Refinement limits.
   const parentTotal = Number((ctx.parentPlan as PlanShape | undefined)?.budget?.total_usd) || undefined;
   const constraints = parseRefinementConstraints(ctx.refinementInstruction, parentTotal);
   if (constraints.max_budget_usd !== undefined && plan.budget) {
@@ -446,9 +532,20 @@ export function verifyPlan(
     }
   }
 
+  // 7) Corrections an earlier pass made on this plan (cached copies).
+  carryOver(prev, issues);
+  const prevBudget = prev?.budget;
+  if (prevBudget?.corrected && !budgetOut?.corrected) {
+    budgetOut = { stated_total: prevBudget.stated_total, line_item_sum: budgetOut?.line_item_sum ?? prevBudget.line_item_sum, corrected: true };
+  }
+  const sources: SourceReport = report.removed + report.links_removed === 0 && prev?.sources
+    && (prev.sources.removed > 0 || prev.sources.links_removed > 0)
+    ? { ...report, removed: prev.sources.removed, links_removed: prev.sources.links_removed, removed_examples: prev.sources.removed_examples ?? [] }
+    : report;
+
   const verification: PlanVerification = {
     version: 1,
-    sources: report,
+    sources,
     budget: budgetOut,
     ...(Object.keys(constraints).length ? { refinement: constraints } : {}),
     issues,
@@ -457,9 +554,34 @@ export function verifyPlan(
   return { plan, verification };
 }
 
-// Findings the guards already corrected (shown to the reader, not a concern
-// for the reviewer: run 633e1d4f's critique raised the fixed total as "high").
-const FIXED_KINDS = new Set<PlanIssue["kind"]>(["budget_total_corrected", "unverified_sources_removed"]);
+/**
+ * Whether the materials leave out what the hypothesis is about: its anchor
+ * concepts (cell line or organism, compound or intervention, named
+ * measurands; hypothesisTerms.ts). The materials must name at least 40% of
+ * their weight. Until 9 Nov 2026 one shared word passed: a metformin /
+ * palmitate / HepG2 plan without any of the three passed on "Oil Red O"
+ * (run a60e2fa8). Without anchors, any specific shared term still counts.
+ * Returns the finding's text, or null.
+ */
+export function materialsOffTopic(materials: MaterialLike[], hypothesis: string): string | null {
+  const text = materials.map((m) => `${m?.name ?? ""} ${m?.notes ?? ""}`).join(" ");
+  const anchors = anchorConcepts(hypothesisConcepts(hypothesis));
+  if (anchors.length > 0) {
+    const words = textWords(text);
+    const total = anchors.reduce((s, c) => s + c.weight, 0);
+    const named = anchors.filter((c) => mentions(words, c));
+    const share = named.reduce((s, c) => s + c.weight, 0) / total;
+    if (share >= 0.4) return null;
+    const missing = anchors.filter((c) => !named.includes(c)).map((c) => c.query);
+    return `The materials do not name what the hypothesis is about: ${missing.slice(0, 5).join(", ")} ${missing.length === 1 ? "is" : "are"} missing.`;
+  }
+  const hTerms = keyTerms(hypothesis);
+  const mTerms = keyTerms(text);
+  if (hTerms.size > 0 && sharedTerms(hTerms, mTerms).length === 0) {
+    return `No material mentions anything specific to the hypothesis (${[...hTerms].slice(0, 6).join(", ")}).`;
+  }
+  return null;
+}
 
 /** Pre-check lines for the reviewer critique: open findings only, high severity first. */
 export function verificationIssueLines(v: PlanVerification): string[] {

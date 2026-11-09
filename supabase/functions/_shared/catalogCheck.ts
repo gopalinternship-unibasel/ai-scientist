@@ -20,6 +20,12 @@ const CATALOG: Record<string, CanonicalEntry> = {
   // Sigma-Aldrich
   "T0167":   { name: "D-(+)-Trehalose dihydrate, BioReagent",
                expects: ["trehalose"] },
+  // The planner prompt used T9531 as its Sigma example until 9 Nov 2026 and
+  // the local model copied it onto metformin (QA round 2). PubChem lists
+  // T9531_SIGMA as "D-(+)-Trehalose dihydrate, from Saccharomyces
+  // cerevisiae, >=99%" (checked 9 Nov 2026).
+  "T9531":   { name: "D-(+)-Trehalose dihydrate (Sigma-Aldrich T9531)",
+               expects: ["trehalose"] },
   "D2650":   { name: "Dimethyl sulfoxide (DMSO) Hybri-Max, sterile-filtered",
                expects: ["dmso", "dimethyl sulfoxide"] },
   "L7026":   { name: "Lithium chloride solution 8 M (molecular biology grade)",

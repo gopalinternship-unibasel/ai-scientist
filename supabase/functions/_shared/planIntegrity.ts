@@ -257,3 +257,67 @@ export function reconcileBudget<B extends BudgetLike>(budget: B): { budget: B; c
   const line_items = costLineItems(budget.line_items).map((li) => ({ ...li, amount_usd: num(li?.amount_usd) ?? 0 }));
   return { budget: { ...budget, line_items, total_usd: check.line_item_sum }, check };
 }
+
+// --- Materials line vs materials table --------------------------------------
+
+export interface MaterialCostLike {
+  total_cost_usd?: number | string | null;
+}
+
+export interface MaterialsLineChange {
+  category: string;
+  /** What the model wrote on the budget line. */
+  stated: number;
+  /** Subtotal of the materials table (what the line now says). */
+  table: number;
+}
+
+/** The budget line that pays for the materials table ("Materials", "Reagents & consumables"). */
+export const MATERIALS_LINE_RE = /reagent|material|consumable|supplies/i;
+
+/** Sum of the materials table's total_cost_usd. */
+export function materialsSubtotal(materials: MaterialCostLike[] | undefined | null): number {
+  if (!Array.isArray(materials)) return 0;
+  return Math.round(materials.reduce((s, m) => s + (num(m?.total_cost_usd) ?? 0), 0) * 100) / 100;
+}
+
+/**
+ * A materials budget line cannot cost less than the materials it pays for:
+ * when the line is below the table's subtotal (run 020ae70a: "Materials"
+ * $615 against a $1,295 table), it is raised to the subtotal so the budget
+ * and its total include every listed material. A line above the subtotal is
+ * left alone (it may cover consumables the table does not list); the guards
+ * flag it when it is far above. Returns the budget unchanged when there is
+ * no priced table or no materials line.
+ */
+export function reconcileMaterialsLine<B extends BudgetLike>(
+  budget: B,
+  materials: MaterialCostLike[] | undefined | null,
+): { budget: B; change: MaterialsLineChange | null } {
+  const table = materialsSubtotal(materials);
+  if (!budget || !Array.isArray(budget.line_items) || table <= 0) return { budget, change: null };
+  const idx = budget.line_items.findIndex((li) => MATERIALS_LINE_RE.test(li?.category ?? "") && !TOTAL_ROW_RE.test(li?.category ?? ""));
+  if (idx < 0) return { budget, change: null };
+  const stated = num(budget.line_items[idx]?.amount_usd) ?? 0;
+  if (stated >= table - 1) return { budget, change: null };
+  const line_items = budget.line_items.map((li, i) => (i === idx ? { ...li, amount_usd: table } : li));
+  return {
+    budget: { ...budget, line_items },
+    change: { category: budget.line_items[idx]?.category ?? "Materials", stated, table },
+  };
+}
+
+/**
+ * The budget as the plan view and the PDF show it: the materials line
+ * raised to the materials table subtotal when it was lower, and the total
+ * equal to the sum of the line items. Plans saved before these checks
+ * (or before the materials-line rule) are shown corrected too.
+ */
+export function displayBudget<B extends BudgetLike>(
+  budget: B,
+  materials: MaterialCostLike[] | undefined | null,
+): { budget: B; materialsLine: MaterialsLineChange | null; check: BudgetCheck | null } {
+  const { budget: b1, change } = reconcileMaterialsLine(budget, materials);
+  const { budget: b2, check } = reconcileBudget(b1);
+  return { budget: b2, materialsLine: change, check };
+}
