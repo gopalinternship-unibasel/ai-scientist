@@ -187,6 +187,8 @@ interface PlanViewProps {
   plan: ExperimentPlan;
   /** Optional: previous version's plan, used to render "modified" badges per section. */
   previousPlan?: ExperimentPlan | null;
+  /** Version number of previousPlan (a refinement's parent; defaults to version - 1). */
+  previousVersion?: number;
   /** Hypothesis text — needed for the PDF cover sheet. */
   hypothesis?: string;
   /** Version number for the PDF filename / cover sheet. */
@@ -224,7 +226,7 @@ function diffSections(a: ExperimentPlan, b: ExperimentPlan) {
 }
 
 export const ExperimentPlanView = ({
-  plan, previousPlan, hypothesis, version = 1, runId, ownerUserId, appliedFeedback, onShare: onShareRun,
+  plan, previousPlan, previousVersion, hypothesis, version = 1, runId, ownerUserId, appliedFeedback, onShare: onShareRun,
 }: PlanViewProps) => {
   const materialsTotal = useMemo(
     () => plan.materials.reduce((s, m) => s + (m.total_cost_usd ?? 0), 0),
@@ -309,7 +311,7 @@ export const ExperimentPlanView = ({
         {previousPlan && (
           <span className="mr-auto inline-flex items-center gap-1.5 rounded-full border border-accent/40 bg-accent/10 px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider text-accent">
             <GitCompare className="h-3 w-3" />
-            Comparing to v{Math.max(1, version - 1)}
+            Comparing to v{previousVersion ?? Math.max(1, version - 1)}
           </span>
         )}
         <Button variant="outline" size="sm" onClick={onShare} className="gap-2">

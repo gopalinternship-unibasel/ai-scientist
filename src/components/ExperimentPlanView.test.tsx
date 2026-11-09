@@ -62,3 +62,23 @@ describe("ExperimentPlanView share button", () => {
     await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith(expect.stringContaining("/runs/abc?t=tok123")));
   });
 });
+
+describe("ExperimentPlanView version comparison", () => {
+  it("names the version a refinement is compared with, and marks changed sections", () => {
+    const refined: ExperimentPlan = {
+      ...plan,
+      budget: { currency: "USD", line_items: [{ category: "Reagents", amount_usd: 90 }], total_usd: 90 },
+    };
+    render(
+      <MemoryRouter>
+        <ExperimentPlanView plan={refined} previousPlan={plan} previousVersion={1} hypothesis="h" version={4} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText(/Comparing to v1/i)).toBeTruthy();
+    // Only the budget changed (the section may render more than once, e.g.
+    // for print), so every "Modified" badge belongs to the Budget section.
+    const badges = screen.getAllByText(/Modified/i);
+    expect(badges.length).toBeGreaterThan(0);
+    for (const b of badges) expect(b.closest("section,div")?.textContent).toMatch(/Budget/);
+  });
+});

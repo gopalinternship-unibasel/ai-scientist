@@ -431,6 +431,7 @@ const RunPage = () => {
                   <ExperimentPlanView
                     plan={run.plan}
                     previousPlan={previousPlan}
+                    previousVersion={prevVersion?.version}
                     hypothesis={run.hypothesis}
                     version={run.version}
                     runId={run.id}
