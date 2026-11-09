@@ -1,5 +1,6 @@
 import { CheckCircle2, AlertTriangle, FileSearch, ExternalLink } from "lucide-react";
 import type { LiteratureQC } from "@/lib/samples";
+import { readableRationale } from "@/lib/rationale";
 
 const signalConfig = {
   not_found: {
@@ -60,7 +61,7 @@ export const LiteratureQCCard = ({ qc }: { qc: LiteratureQC }) => {
             )}
           </div>
           <p className="mt-2 text-sm text-foreground/80">{cfg.description}</p>
-          <p className="mt-3 text-sm font-serif italic text-foreground/90">"{qc.rationale}"</p>
+          <p className="mt-3 text-sm font-serif italic text-foreground/90">"{readableRationale(qc.rationale)}"</p>
         </div>
       </div>
 
