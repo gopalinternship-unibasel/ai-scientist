@@ -1,6 +1,6 @@
 // Modal that lets a user submit a natural-language refinement against an existing
-// plan (e.g. "keep budget under $5k"). Streams the new versioned plan and
-// navigates to it on completion.
+// plan (e.g. "keep budget under $5k"). Starts a new versioned run and navigates
+// to it as soon as the server has created it; RunPage then shows the progress.
 import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Sparkles, Loader2 } from "lucide-react";
@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { startRunStream } from "@/lib/runStream";
 import { getOwnerToken } from "@/lib/owner";
+import { trackRun } from "@/hooks/useBackgroundRunNotifier";
 
 const QUICK_REFINEMENTS = [
   "Keep total budget under $5,000.",
@@ -49,7 +50,6 @@ export const RefineDialog = ({ open, onOpenChange, parentRunId, hypothesis }: Pr
     setSubmitting(true);
     const controller = new AbortController();
     abortRef.current = controller;
-    let newRunId: string | null = null;
 
     try {
       await startRunStream({
@@ -61,14 +61,15 @@ export const RefineDialog = ({ open, onOpenChange, parentRunId, hypothesis }: Pr
         onEvent: (e) => {
           switch (e.type) {
             case "run":
-              newRunId = e.id;
-              break;
-            case "done":
-            case "plan":
-              if (newRunId) {
-                onOpenChange(false);
-                navigate(`/runs/${newRunId}`);
-              }
+              // The server persists the new version and keeps generating in
+              // the background; the stream closes right after this event (the
+              // plan arrives later via realtime/polling on RunPage). So hand
+              // off to the new version's page now — waiting for `plan`/`done`
+              // on this stream would leave the dialog spinning forever.
+              trackRun({ id: e.id, hypothesis });
+              setSubmitting(false);
+              onOpenChange(false);
+              navigate(`/runs/${e.id}`);
               break;
             case "error":
               toast.error(e.message);
