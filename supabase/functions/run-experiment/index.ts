@@ -22,7 +22,7 @@ import { retrieveRelevantFeedback, feedbackPromptFragment, type FeedbackHint } f
 import { normalizeDomain, resolveDomain } from "../_shared/domainNormalize.ts";
 import { fetchHouseRules } from "../_shared/houseRules.ts";
 import { planSchema, buildPlannerSystemPrompt, buildPlannerUserMessage } from "../_shared/plannerCore.ts";
-import { aiApiKey, contentAsJson, extractToolArgs } from "../_shared/aiProvider.ts";
+import { aiApiKey, contentAsJson, extractToolArgs, promptChars } from "../_shared/aiProvider.ts";
 
 /**
  * Resolve the caller's IP for rate-limiting in a way that resists header
@@ -198,7 +198,7 @@ async function critiquePlan(
       model,
       messages: [
         { role: "system", content: "You are a senior peer reviewer for an experimental biology / chemistry journal. Critically evaluate the proposed experiment plan for: missing controls, weak statistical power, ethical/safety oversights, unrealistic budgets or timelines, supplier/catalog inconsistencies, and gaps between hypothesis and protocol. Be specific and actionable. When LEARNED LESSONS are provided, explicitly verify each one was applied." },
-        { role: "user", content: `HYPOTHESIS:\n${hypothesis}\n\nPROPOSED PLAN:\n${JSON.stringify(plan).slice(0, 12000)}${extraContext}${lessonsBlock}` },
+        { role: "user", content: `HYPOTHESIS:\n${hypothesis}\n\nPROPOSED PLAN:\n${JSON.stringify(plan).slice(0, promptChars(12000, 6000))}${extraContext}${lessonsBlock}` },
       ],
       tools: [{
         type: "function",
@@ -755,7 +755,7 @@ serve(async (req) => {
           // Refinement context is the only piece NOT shared with the eval
           // harness — refinements are user-driven and have no eval analogue.
           const refinementContext = isRefinement
-            ? `\n\nREFINEMENT REQUEST — the user has an existing plan and wants you to revise it according to this instruction. Honour it strictly while keeping everything else operationally sound:\n"""${refinementInstruction}"""\n\nPREVIOUS PLAN (for context — do not repeat verbatim, produce a NEW complete plan reflecting the refinement):\n${JSON.stringify(parentRun?.plan).slice(0, 8000)}`
+            ? `\n\nREFINEMENT REQUEST — the user has an existing plan and wants you to revise it according to this instruction. Honour it strictly while keeping everything else operationally sound:\n"""${refinementInstruction}"""\n\nPREVIOUS PLAN (for context — do not repeat verbatim, produce a NEW complete plan reflecting the refinement):\n${JSON.stringify(parentRun?.plan).slice(0, promptChars(8000, 3500))}`
             : "";
 
           const system = buildPlannerSystemPrompt({

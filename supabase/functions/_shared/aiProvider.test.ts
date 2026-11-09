@@ -3,11 +3,14 @@
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
   adaptChatBody,
+  capArrays,
+  COMPACT_MAX_ITEMS,
   contentAsJson,
   DEFAULT_BASE_URL,
   DEFAULT_LOCAL_MODEL,
   extractToolArgs,
   LOVABLE_CHAINS,
+  promptChars,
   resolveAIConfig,
 } from "./aiProvider.ts";
 
@@ -114,4 +117,47 @@ Deno.test("extractToolArgs reads tool_calls (string or object) and falls back to
 
 Deno.test("contentAsJson keeps a bare object unchanged", () => {
   assertEquals(contentAsJson('  {"a":1}  '), '{"a":1}');
+});
+
+const listBody = {
+  model: "m",
+  messages: [{ role: "user", content: "plan" }],
+  tools: [{ type: "function", function: { name: "submit", parameters: {
+    type: "object",
+    properties: {
+      steps: { type: "array", items: { type: "object", properties: { tags: { type: "array", items: { type: "string" } } } } },
+      fixed: { type: "array", maxItems: 2, items: { type: "string" } },
+    },
+  } } }],
+  tool_choice: { type: "function", function: { name: "submit" } },
+};
+
+Deno.test("compact mode is off unless AI_COMPACT_OUTPUT is true", () => {
+  assertEquals(resolveAIConfig({}).compact, false);
+  assertEquals(resolveAIConfig({ AI_COMPACT_OUTPUT: "true" }).compact, true);
+  const out = adaptChatBody(listBody, 100, resolveAIConfig({}));
+  assertEquals(out.tools, listBody.tools);
+  assertEquals(out.messages.length, 1);
+});
+
+Deno.test("compact mode caps every list (nested too) and asks for short fields", () => {
+  const cfg = resolveAIConfig({ AI_COMPACT_OUTPUT: "true", AI_STRUCTURED_OUTPUT: "json_schema" });
+  const out = adaptChatBody(listBody, 100, cfg);
+  const schema = out.response_format.json_schema.schema;
+  assertEquals(schema.properties.steps.maxItems, COMPACT_MAX_ITEMS);
+  assertEquals(schema.properties.steps.items.properties.tags.maxItems, COMPACT_MAX_ITEMS);
+  // An explicit maxItems is kept.
+  assertEquals(schema.properties.fixed.maxItems, 2);
+  assert(out.messages.some((m: { content: string }) => /Be concise/.test(m.content)));
+  // The shared schema object is not mutated.
+  assertEquals("maxItems" in listBody.tools[0].function.parameters.properties.steps, false);
+});
+
+Deno.test("capArrays leaves non-array schemas alone", () => {
+  assertEquals(capArrays({ type: "string" }, 3), { type: "string" });
+});
+
+Deno.test("promptChars shrinks long prompt inputs only in compact mode", () => {
+  assertEquals(promptChars(12000, 6000, resolveAIConfig({})), 12000);
+  assertEquals(promptChars(12000, 6000, resolveAIConfig({ AI_COMPACT_OUTPUT: "1" })), 6000);
 });

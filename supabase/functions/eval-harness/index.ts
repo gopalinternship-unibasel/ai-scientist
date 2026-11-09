@@ -17,7 +17,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { corsHeaders } from "../_shared/cors.ts";
 import { callAIWithFallback } from "../_shared/ai-fallback.ts";
-import { aiApiKey, extractToolArgs, modelChain } from "../_shared/aiProvider.ts";
+import { aiApiKey, extractToolArgs, modelChain, promptChars } from "../_shared/aiProvider.ts";
 import { searchLiterature, type LitPaper } from "../_shared/literature.ts";
 import { rankByRelevance } from "../_shared/relevanceRank.ts";
 import { detectCanonicalTechnique } from "../_shared/canonicalTechniques.ts";
@@ -273,7 +273,7 @@ async function judge(hypothesis: string, plan: string, apiKey: string): Promise<
         temperature: 0.0,
         messages: [
           { role: "system", content: "You are a strict, calibrated peer reviewer scoring an experiment plan on a 0-10 rubric across four axes. Be honest — most first-draft plans should score 5-7, not 9. Reserve 9-10 for plans you would publish as a worked example." },
-          { role: "user", content: `HYPOTHESIS:\n${hypothesis}\n\nPLAN (JSON):\n${plan.slice(0, 8000)}\n\nScore this plan via the tool.` },
+          { role: "user", content: `HYPOTHESIS:\n${hypothesis}\n\nPLAN (JSON):\n${plan.slice(0, promptChars(8000, 6000))}\n\nScore this plan via the tool.` },
         ],
         tools: [{
           type: "function",

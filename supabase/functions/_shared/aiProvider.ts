@@ -25,6 +25,13 @@
 //                          prompt + output must fit in it
 //   AI_MIN_TIMEOUT_MS      floor for every per-call timeout (CPU-only local
 //                          models need minutes, hosted ones seconds)
+//   AI_COMPACT_OUTPUT      "true" for small, slow local models: every list in
+//                          structured output is capped at COMPACT_MAX_ITEMS
+//                          (maxItems, enforced by Ollama's JSON grammar), the
+//                          model is asked for short text fields, and long
+//                          prompt inputs (previous plan, plan under review)
+//                          are cut to fit a 4096-token context window. Leave
+//                          unset for hosted models.
 //   AI_EMBED_BASE_URL      embeddings base URL (defaults to AI_BASE_URL)
 //   AI_EMBED_API_KEY       embeddings key (defaults to AI_API_KEY)
 //   AI_EMBED_MODEL         embedding model; empty disables embeddings
@@ -48,6 +55,7 @@ export interface AIConfig {
   maxTokensParam: MaxTokensParam;
   maxTokensCap: number;
   minTimeoutMs: number;
+  compact: boolean;
   chains: Record<AIRole, string[]>;
   embed: {
     baseUrl: string;
@@ -127,6 +135,7 @@ export function resolveAIConfig(env: Env): AIConfig {
     maxTokensParam,
     maxTokensCap: Number.isFinite(cap) && cap > 0 ? Math.floor(cap) : 0,
     minTimeoutMs: Number.isFinite(minTimeout) && minTimeout > 0 ? minTimeout : 0,
+    compact: /^(1|true|yes)$/i.test(clean(env.AI_COMPACT_OUTPUT) ?? ""),
     chains,
     embed: {
       baseUrl: embedBase,
@@ -163,6 +172,32 @@ export function aiTimeout(ms: number): number {
   return Math.max(ms, aiConfig().minTimeoutMs);
 }
 
+/** Longest list a compact-mode structured output may contain. */
+export const COMPACT_MAX_ITEMS = 5;
+
+/**
+ * Character budget for a long prompt input (the previous plan in a
+ * refinement, the plan under review in the critique). Compact mode uses the
+ * smaller budget so prompt + output fit a 4096-token local context window.
+ */
+export function promptChars(full: number, compact: number, cfg: AIConfig = aiConfig()): number {
+  return cfg.compact ? Math.min(full, compact) : full;
+}
+
+/** Copy of a JSON schema with maxItems on every array that has none. */
+// deno-lint-ignore no-explicit-any
+export function capArrays(schema: any, maxItems: number): any {
+  if (Array.isArray(schema)) return schema.map((s) => capArrays(s, maxItems));
+  if (!schema || typeof schema !== "object") return schema;
+  // deno-lint-ignore no-explicit-any
+  const out: any = {};
+  for (const [k, v] of Object.entries(schema)) out[k] = capArrays(v, maxItems);
+  if (out.type === "array" && out.maxItems === undefined) out.maxItems = maxItems;
+  return out;
+}
+
+const COMPACT_HINT = `Be concise: keep every text field to one or two short sentences (at most about 30 words) and every list to at most ${COMPACT_MAX_ITEMS} items. Keep exact numbers (concentrations, volumes, durations, costs).`;
+
 /**
  * Adapt an OpenAI-style request body to the configured provider:
  *  - json_schema mode turns a forced tool call into response_format
@@ -173,6 +208,13 @@ export function aiTimeout(ms: number): number {
 // deno-lint-ignore no-explicit-any
 export function adaptChatBody(body: any, maxTokens: number | undefined, cfg: AIConfig = aiConfig()): any {
   const out = { ...body };
+  if (cfg.compact && Array.isArray(out.tools) && out.tool_choice?.function?.name) {
+    // deno-lint-ignore no-explicit-any
+    out.tools = out.tools.map((t: any) => t?.function?.parameters
+      ? { ...t, function: { ...t.function, parameters: capArrays(t.function.parameters, COMPACT_MAX_ITEMS) } }
+      : t);
+    out.messages = [...(out.messages ?? []), { role: "system", content: COMPACT_HINT }];
+  }
   if (cfg.structuredMode === "json_schema" && Array.isArray(out.tools) && out.tool_choice?.function?.name) {
     const name: string = out.tool_choice.function.name;
     // deno-lint-ignore no-explicit-any
