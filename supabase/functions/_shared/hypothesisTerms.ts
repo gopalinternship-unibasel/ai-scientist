@@ -129,9 +129,14 @@ const SALIENT = new Set([
   "western", "cytometry", "microscopy", "confocal", "cryo-em", "hplc", "nmr", "knockout", "knockdown",
   "transfection", "transduction", "sequencing", "mouse", "mice", "rat", "rats", "zebrafish", "axolotl",
   "drosophila", "elegans", "arabidopsis", "coli", "yeast", "bacteria", "bacterium", "archaea", "hela",
-  "trehalose", "dmso", "cryoprotectant", "nanofiber", "graphene", "silicon", "perovskite", "lithium",
-  "sodium", "photovoltaic", "supercapacitor", "virus", "oncolytic", "spirulina", "phycocyanin",
+  "trehalose", "dmso", "cryoprotectant", "nanofiber", "graphene", "silicon", "perovskite",
+  "photovoltaic", "supercapacitor", "virus", "oncolytic", "spirulina", "phycocyanin",
 ]);
+
+// Counter-ions and salt forms: "sodium palmitate" is about palmitate. Run
+// 78967afc ranked sodium-palmitate papers above metformin ones because
+// "sodium" weighed as much as the compound.
+const COUNTER_ION = new Set(["sodium", "potassium", "chloride", "hydrochloride", "magnesium", "calcium", "salt"]);
 
 // "compared with vehicle-treated controls", "matching laboratory ELISA sensitivity".
 const COMPARATOR_CUE = new Set(["compared", "comparable", "versus", "vs", "than", "matching", "relative", "against", "outperform", "outperforming", "unlike"]);
@@ -204,6 +209,7 @@ function wordWeight(w: string, raw: string, caseless: boolean): number {
   if (hasDigit && hasLetter) return 3;                                    // HepG2, SH-SY5Y, IL-6, p53
   const acronym = !caseless && /^[A-Z][A-Z0-9+]{1,7}$/.test(raw.replace(/-/g, "")) && /[A-Z].*[A-Z]/.test(raw);
   if (w.endsWith("+") || acronym) return 2.5;                             // NAD+, NMN, CRP, ELISA
+  if (COUNTER_ION.has(w)) return 0.5;
   if (SALIENT.has(w)) return 2;
   if (TOPIC.has(w)) return 2;
   if (CELL_TYPE.has(w)) return 1.5;

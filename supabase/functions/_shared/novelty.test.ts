@@ -140,3 +140,9 @@ Deno.test("canonical rule: the calibration set's protocol requests still match",
     assert(detectCanonicalTechnique(c.hypothesis).matched, c.hypothesis);
   }
 });
+
+Deno.test("a counter-ion does not weigh like the compound ('sodium palmitate', run 78967afc)", () => {
+  const c = hypothesisConcepts("Pre-treating HepG2 cells with 10 uM metformin before a 0.5 mM sodium palmitate challenge will lower lipid accumulation.");
+  assertEquals(c.find((x) => x.query === "sodium")?.weight, 0.5);
+  assertEquals(c.find((x) => x.query === "palmitate")?.weight, 2.5);
+});
