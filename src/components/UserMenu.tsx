@@ -33,11 +33,12 @@ export const UserMenu = () => {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="sm" className="gap-2">
+        <Button variant="outline" size="sm" className="gap-2" aria-label={`Account menu for ${name}`}>
           <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground">
             {initial}
           </span>
-          <span className="max-w-[140px] truncate">{name}</span>
+          {/* Phone width: the initial only (QA round 2: the name pushed the header past 375 px). */}
+          <span className="hidden max-w-[140px] truncate sm:inline">{name}</span>
           <ChevronDown className="h-3.5 w-3.5 opacity-60" />
         </Button>
       </DropdownMenuTrigger>

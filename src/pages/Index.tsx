@@ -76,14 +76,18 @@ const Index = () => {
       <header className="sticky top-0 z-10 border-b border-rule bg-background/85 backdrop-blur">
         <div className="container flex h-16 items-center justify-between gap-3">
           <Logo />
-          <div className="flex items-center gap-3">
-            <RateLimitBadge refreshKey={submitting} />
+          <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+            <RateLimitBadge refreshKey={submitting} className="hidden sm:inline-flex" />
             <UserMenu />
           </div>
         </div>
       </header>
 
       <main className="container max-w-4xl py-8 md:py-12">
+        {/* Phone width: the quota badge sits here instead of in the header. */}
+        <div className="mb-4 sm:hidden">
+          <RateLimitBadge refreshKey={submitting} />
+        </div>
         {!submitting && (
           <section className="mb-10 max-w-3xl animate-fade-in">
             <div className="mb-3 flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.25em] text-muted-foreground">

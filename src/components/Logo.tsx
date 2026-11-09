@@ -1,11 +1,11 @@
 export const Logo = ({ className = "" }: { className?: string }) => (
-  <div className={`flex items-center gap-3 ${className}`}>
+  <div className={`flex min-w-0 items-center gap-3 ${className}`}>
     <LogoMark />
-    <div className="leading-tight">
-      <div className="font-serif text-[17px] font-semibold tracking-tight text-foreground">
+    <div className="min-w-0 leading-tight">
+      <div className="truncate font-serif text-[17px] font-semibold tracking-tight text-foreground">
         The AI Scientist
       </div>
-      <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+      <div className="hidden font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground sm:block">
         Hypothesis → Experiment
       </div>
     </div>

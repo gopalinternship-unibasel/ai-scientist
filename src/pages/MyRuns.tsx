@@ -66,12 +66,12 @@ const MyRuns = () => {
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-10 border-b border-rule bg-background/85 backdrop-blur">
-        <div className="container flex h-16 items-center justify-between">
+        <div className="container flex h-16 items-center justify-between gap-2">
           <Logo />
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             <Link to="/">
-              <Button variant="ghost" size="sm" className="gap-2">
-                <ArrowLeft className="h-3.5 w-3.5" /> New experiment
+              <Button variant="ghost" size="sm" className="gap-2" aria-label="New experiment">
+                <ArrowLeft className="h-3.5 w-3.5" /> <span className="hidden sm:inline">New experiment</span>
               </Button>
             </Link>
             <UserMenu />

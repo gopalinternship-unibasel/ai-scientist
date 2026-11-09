@@ -53,7 +53,7 @@ const Auth = () => {
   const onSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
@@ -67,7 +67,12 @@ const Auth = () => {
       toast.error(error.message);
       return;
     }
-    toast.success("Check your email to confirm your account.");
+    // With email confirmation off (the local stack: enable_confirmations =
+    // false) sign-up returns a session and the user is already signed in;
+    // only ask for the confirmation email when there is no session yet.
+    toast.success(data.session
+      ? "Account created. You are signed in."
+      : "Check your email to confirm your account.");
   };
 
   const onForgot = async () => {
@@ -101,8 +106,8 @@ const Auth = () => {
         <div className="container flex h-16 items-center justify-between">
           <Logo />
           <Link to="/">
-            <Button variant="ghost" size="sm" className="gap-2">
-              <ArrowLeft className="h-3.5 w-3.5" /> Home
+            <Button variant="ghost" size="sm" className="gap-2" aria-label="Home">
+              <ArrowLeft className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Home</span>
             </Button>
           </Link>
         </div>
