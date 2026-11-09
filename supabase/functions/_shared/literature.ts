@@ -13,6 +13,7 @@
 // sentence happens to match no paper title verbatim.
 
 import { degradedQueries } from "./queryDegradation.ts";
+import { hypothesisConcepts, paperRelevance } from "./hypothesisTerms.ts";
 
 export interface LitPaper {
   source: "s2" | "openalex" | "pubmed";
@@ -275,7 +276,17 @@ async function searchSourceWithFallback(
   return { papers: [], status: lastErr ? "rejected" : "fulfilled" };
 }
 
-export async function searchLiterature(query: string): Promise<LitResult> {
+/** How many merged candidates searchLiterature returns (the caller re-ranks and keeps 8). */
+export const MAX_CANDIDATES = 12;
+
+/**
+ * `rankText` (the hypothesis; defaults to `query`) decides which of the
+ * merged hits are kept: the ones that cover most of its weighted concepts.
+ * The merged list used to be sorted by "has an abstract" and citation count
+ * before it was cut to 10, so highly cited papers from the broadest keyword
+ * query pushed out the specific ones.
+ */
+export async function searchLiterature(query: string, rankText?: string): Promise<LitResult> {
   // Fire all three sources in parallel. Each source independently tries
   // degraded queries, so worst-case wall-time = max(single-source cascade)
   // instead of sum(all-sources × all-queries).
@@ -313,9 +324,13 @@ export async function searchLiterature(query: string): Promise<LitResult> {
     seenTitle.add(tKey);
     merged.push(p);
   }
-  // Sort: papers with abstracts first (more useful for novelty classification),
-  // then by citation count desc.
+  // Sort: coverage of the hypothesis first, then papers with abstracts
+  // (more useful for novelty classification), then citation count.
+  const concepts = hypothesisConcepts(rankText ?? query);
+  const score = new Map<LitPaper, number>(merged.map((p) => [p, paperRelevance(concepts, p.title, p.abstract).score]));
   merged.sort((a, b) => {
+    const d = (score.get(b) ?? 0) - (score.get(a) ?? 0);
+    if (Math.abs(d) > 1e-9) return d;
     const aHas = a.abstract ? 1 : 0;
     const bHas = b.abstract ? 1 : 0;
     if (aHas !== bHas) return bHas - aHas;
@@ -323,7 +338,7 @@ export async function searchLiterature(query: string): Promise<LitResult> {
   });
 
   return {
-    papers: merged.slice(0, 10),
+    papers: merged.slice(0, MAX_CANDIDATES),
     sources: {
       s2: s2Status === "fulfilled" && s2Papers.length > 0,
       openalex: oaStatus === "fulfilled" && oaPapers.length > 0,

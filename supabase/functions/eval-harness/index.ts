@@ -19,7 +19,7 @@ import { corsHeaders } from "../_shared/cors.ts";
 import { callAIWithFallback } from "../_shared/ai-fallback.ts";
 import { aiApiKey, extractToolArgs, modelChain, promptChars } from "../_shared/aiProvider.ts";
 import { searchLiterature, type LitPaper } from "../_shared/literature.ts";
-import { rankByRelevance } from "../_shared/relevanceRank.ts";
+import { CANONICAL_RELEVANCE_FLOOR, rankByRelevance, RELEVANCE_FLOOR } from "../_shared/relevanceRank.ts";
 import { detectCanonicalTechnique } from "../_shared/canonicalTechniques.ts";
 import { screenSafety, type SafetyFlags } from "../_shared/safety.ts";
 import { resolveDomain } from "../_shared/domainNormalize.ts";
@@ -191,9 +191,9 @@ async function prepareContext(
   const litQuery = canon.matched ? `${canon.technique} method protocol` : hypothesis;
   let references: Array<{ title: string; year?: number | null; url?: string }> = [];
   try {
-    const lit = await searchLiterature(litQuery);
+    const lit = await searchLiterature(litQuery, hypothesis);
     const ranked = rankByRelevance(lit.papers, hypothesis);
-    const FLOOR = canon.matched ? 0.005 : 0.015;
+    const FLOOR = canon.matched ? CANONICAL_RELEVANCE_FLOOR : RELEVANCE_FLOOR;
     const filtered = ranked.filter((p) => p.relevance >= FLOOR);
     const candidates: LitPaper[] = (filtered.length > 0 ? filtered : ranked).slice(0, 3);
     references = candidates.map((p) => ({ title: p.title, year: p.year, url: p.url }));

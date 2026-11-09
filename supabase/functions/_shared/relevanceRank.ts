@@ -1,62 +1,43 @@
-// Re-rank literature candidates by token overlap with the hypothesis.
+// Re-rank literature candidates by how much of the hypothesis they cover.
 //
 // Why: the OpenAlex/S2/PubMed APIs do raw keyword matching, so degraded
 // queries can return broadly-related but off-topic papers (e.g. a query for
 // "trehalose graphene nanofiber" returns a generic "carbon nanomaterials"
 // review). Before passing to the LLM novelty classifier, sort candidates so
-// the most-overlapping titles come first — the classifier picks from the
-// top-N anyway, so this directly improves the references shown to users.
+// the most relevant come first; the classifier picks from the top-N, and the
+// novelty verdict check (noveltyVerdict.ts) reads the same scores.
 //
-// Pure heuristic: Jaccard overlap on lowercased non-stopword tokens of
-// (title + abstract) vs (hypothesis). No external calls.
+// Score: the weighted share of the hypothesis' concepts (hypothesisTerms.ts:
+// cell lines and genes weigh most, then compounds and acronyms, then topic
+// nouns) that the title, and the title + abstract, mention (paperRelevance). Until 9 Nov 2026 it was a
+// Jaccard overlap of all words, which a long abstract dilutes and which
+// counts "cells" as much as "metformin". No external calls.
 
 import type { LitPaper } from "./literature.ts";
-
-const STOP = new Set([
-  "the","a","an","and","or","but","of","in","on","at","to","for","with","by",
-  "from","as","is","are","was","were","be","been","being","this","that",
-  "these","those","will","would","should","could","may","might","can","do",
-  "does","did","than","then","so","such","into","via","between","across",
-  "within","without","over","under","using","use","used","not","no","nor",
-  "we","our","their","its","it","also","only","more","less","least","most",
-  "compared","comparison","versus","vs","up","down","out","off","if","when",
-  "while","where","what","which","who","whom","because","due","per","each",
-  "every","any","all","some","none","study","studies","analysis","review",
-  "approach","method","methods","results","data","based","novel","new",
-]);
-
-function tokenSet(s: string): Set<string> {
-  const out = new Set<string>();
-  for (const raw of s.toLowerCase().replace(/[^\p{L}\p{N}\-/.\s]/gu, " ").split(/\s+/)) {
-    const t = raw.replace(/^[-/.]+|[-/.]+$/g, "");
-    if (t.length >= 3 && !STOP.has(t) && !/^\d+(?:\.\d+)?$/.test(t)) out.add(t);
-  }
-  return out;
-}
-
-function jaccard(a: Set<string>, b: Set<string>): number {
-  if (a.size === 0 || b.size === 0) return 0;
-  let inter = 0;
-  for (const t of a) if (b.has(t)) inter++;
-  const union = a.size + b.size - inter;
-  return union === 0 ? 0 : inter / union;
-}
+import { type Concept, hypothesisConcepts, paperRelevance } from "./hypothesisTerms.ts";
 
 export interface RankedPaper extends LitPaper {
+  /** Weighted share of the hypothesis concepts the paper mentions (0-1). */
   relevance: number;
+  /** The hypothesis concepts (query spellings) the paper mentions. */
+  matched: string[];
 }
+
+/** Candidates below this score are off-topic for an ordinary hypothesis. */
+export const RELEVANCE_FLOOR = 0.2;
+/** Canonical techniques: methods papers have generic titles, so accept less. */
+export const CANONICAL_RELEVANCE_FLOOR = 0.1;
 
 /**
  * Score each paper against the hypothesis and return them sorted desc.
  * Ties broken by `citationCount`, then by source priority (s2 > openalex > pubmed).
  */
-export function rankByRelevance(papers: LitPaper[], hypothesis: string): RankedPaper[] {
-  const hSet = tokenSet(hypothesis);
+export function rankByRelevance(papers: LitPaper[], hypothesis: string, concepts?: Concept[]): RankedPaper[] {
+  const cs = concepts ?? hypothesisConcepts(hypothesis);
   const sourceWeight: Record<string, number> = { s2: 3, openalex: 2, pubmed: 1 };
   const scored: RankedPaper[] = papers.map((p) => {
-    const text = `${p.title ?? ""} ${p.abstract ?? ""}`;
-    const score = jaccard(hSet, tokenSet(text));
-    return { ...p, relevance: score };
+    const cov = paperRelevance(cs, p.title ?? "", p.abstract);
+    return { ...p, relevance: Math.round(cov.score * 1000) / 1000, matched: cov.matched.map((c) => c.query) };
   });
   scored.sort((a, b) => {
     if (b.relevance !== a.relevance) return b.relevance - a.relevance;

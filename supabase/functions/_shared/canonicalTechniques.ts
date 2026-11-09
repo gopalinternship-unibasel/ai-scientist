@@ -70,6 +70,18 @@ const TECHNIQUES: CanonicalTechnique[] = [
     disqualifyIf: /\b(?:CRISPR|CRISPRi|CRISPRa|Cas9|Cas12|Cas13|knockout|knock-?out|knockdown|knock-?down|knock-?in|RNAi|shRNA|siRNA|engineered|synthetic|riboswitch|optogenetic|novel|mutant|deletion\s+strain|overexpress)|Δ[a-zA-Z]/i,
   },
 ];
+// The technique is the subject only when the hypothesis asks for the
+// technique itself ("Use standard PCR to amplify GAPDH", "Quantify TNF-alpha
+// by sandwich ELISA"). Not when it is the readout of a claim ("... will
+// reduce lipid accumulation, measured by Western blot") or the comparator of
+// something new ("a paper-based biosensor ... matching laboratory ELISA
+// sensitivity"). Both used to fire the rule (QA round 2, 9 Nov 2026: the
+// CRP biosensor run was told "EXACT MATCH FOUND - this experiment appears
+// to have been conducted", and the literature search was replaced by
+// "ELISA method protocol", which returned slot-blot and HTLV-1 papers).
+const CLAIM_RE = /\bwill\s+(?:\w+\s+){0,2}?(?:increase|decrease|reduce|raise|lower|improve|enhance|inhibit|suppress|promote|induce|prevent|restore|protect|detect|outperform|match|exceed|alter|change|affect|block|rescue|attenuate|elevate|boost|impair|extend|shorten|accelerate|delay|kill|cure|correlate|predict|discriminate|distinguish|identify|enable|allow|achieve|yield|produce|lead|cause|result)\b|\b(?:increases|decreases|reduces|raises|lowers|improves|inhibits|suppresses|promotes|induces|prevents|restores|attenuates|elevates|outperforms|exceeds)\b|\bleads?\s+to\b|\bresults?\s+in\b/i;
+const NOVEL_OR_COMPARED_RE = /\b(?:biosensors?|sensors?|devices?|novel|new|develop(?:ed|ing)?|design(?:ed)?|engineer(?:ed)?|prototype|platform|point[- ]of[- ]care|paper[- ]based|microfluidic|wearable|compared?\s+(?:with|to)|comparable|versus|vs\.?|matching|than|instead\s+of|alternative\s+to|replac(?:e|es|ing))\b/i;
+
 export interface CanonicalMatch {
   matched: boolean;
   technique?: string;
@@ -77,6 +89,7 @@ export interface CanonicalMatch {
 }
 
 export function detectCanonicalTechnique(hypothesis: string): CanonicalMatch {
+  if (CLAIM_RE.test(hypothesis) || NOVEL_OR_COMPARED_RE.test(hypothesis)) return { matched: false };
   for (const t of TECHNIQUES) {
     if (t.pattern.test(hypothesis)) {
       if (t.disqualifyIf && t.disqualifyIf.test(hypothesis)) continue;
