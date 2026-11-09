@@ -3,7 +3,8 @@ import {
   extractDoi, matchReference, reconcileBudget, sanitizeStepSources, verifiedSource, checkBudget,
 } from "./planIntegrity.ts";
 import {
-  catalogCopies, filterRelevantRules, keyTerms, parseRefinementConstraints, planDigest,
+  catalogCopies, chooseRepaired, filterRelevantRules, keyTerms, parseRefinementConstraints, planDigest,
+  repairableIssues, repairInstruction,
   scrubCandidateRefs, timelineWeeks, verificationIssueLines, verifyPlan,
 } from "./planGuards.ts";
 import { costCatalogPrompt, relevantCatalogGroups } from "./costCatalog.ts";
@@ -181,4 +182,39 @@ Deno.test("constantTimeEqual", () => {
   assert(constantTimeEqual("abc", "abc"));
   assert(!constantTimeEqual("abc", "abd"));
   assert(!constantTimeEqual("abc", "abcd"));
+});
+
+// --- one automatic repair attempt (run f6ad46e3: the refinement copied $17,355) --
+
+Deno.test("planDigest leaves out the numbers a refinement limit rules out", () => {
+  const plan = {
+    title: "T",
+    materials: [{ name: "NMN", total_cost_usd: 15, unit_cost_usd: 15 }],
+    budget: { currency: "USD", line_items: [{ category: "Labour", amount_usd: 11965 }], total_usd: 17355 },
+    timeline: [{ phase: "Run", duration: "5 months", deliverables: [] }],
+    protocol: [{ step: 1, title: "Treat", description: "x", duration: "1 month" }],
+  };
+  const b = planDigest(plan, 8000, { budget: true });
+  assert(!b.includes("17355") && !b.includes("11965") && b.includes("Labour") && b.includes("5 months"));
+  const t = planDigest(plan, 8000, { durations: true });
+  assert(!t.includes("5 months") && !t.includes("1 month") && t.includes("17355"));
+});
+
+Deno.test("chooseRepaired keeps the repair only when it clears findings", () => {
+  const ctx = { hypothesis: NR, references: [], refinementInstruction: "keep total budget under $3,000" };
+  const over = { budget: { currency: "USD", line_items: [{ category: "Labour", amount_usd: 17355 }], total_usd: 17355 } };
+  const under = { budget: { currency: "USD", line_items: [{ category: "Labour", amount_usd: 2900 }], total_usd: 2900 } };
+  const first = verifyPlan(over, ctx);
+  assertEquals(repairableIssues(first.verification).map((i) => i.kind), ["refinement_budget_not_met"]);
+  assert(repairInstruction(repairableIssues(first.verification)).includes("at most $3,000"));
+
+  const fixed = chooseRepaired(first, verifyPlan(under, ctx));
+  assertEquals(fixed.plan.budget?.total_usd, 2900);
+  assertEquals(fixed.verification.repair?.outcome, "fixed");
+
+  const notFixed = chooseRepaired(first, verifyPlan(over, ctx));
+  assertEquals(notFixed.verification.repair?.outcome, "not fixed");
+  assert(notFixed.verification.issues[0].detail.endsWith("One automatic second attempt did not fix it."));
+
+  assertEquals(chooseRepaired(first, null).verification.repair?.outcome, "failed");
 });

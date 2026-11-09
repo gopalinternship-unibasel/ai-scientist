@@ -29,6 +29,7 @@ const STAGE_LABEL: Record<string, string> = {
   novelty: "Classifying novelty against the retrieved papers",
   planning: "Streaming the experiment plan from the model",
   critique: "Independent reviewer critique in progress",
+  repairing: "The automated checks rejected the first plan; generating it once more",
 };
 
 const SECTION_LABEL: Record<string, string> = {

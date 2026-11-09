@@ -26,8 +26,8 @@ import { aiApiKey, contentAsJson, extractToolArgs, promptChars } from "../_share
 import { tryParsePartial } from "../_shared/partialJson.ts";
 import { hashForNewRun, markRunDone } from "../_shared/runPersistence.ts";
 import {
-  filterRelevantRules, planDigest, parseRefinementConstraints, refinementConstraintPrompt,
-  scrubCandidateRefs, verificationIssueLines, verifyPlan,
+  chooseRepaired, filterRelevantRules, planDigest, parseRefinementConstraints, refinementConstraintPrompt,
+  repairableIssues, repairInstruction, scrubCandidateRefs, verificationIssueLines, verifyPlan,
 } from "../_shared/planGuards.ts";
 
 /**
@@ -174,6 +174,46 @@ async function classifyNovelty(hypothesis: string, papers: LitPaper[], apiKey: s
     return parsed;
   } catch {
     return { signal: "similar" as const, rationale: "Unable to parse classification.", chosen: [0, 1, 2], semantic_overlap: "medium" as const };
+  }
+}
+
+function planRepairAttempts(): number {
+  const n = Number(Deno.env.get("PLAN_REPAIR_ATTEMPTS") ?? "1");
+  return Number.isFinite(n) && n > 0 ? 1 : 0;
+}
+
+/**
+ * Second, non-streamed attempt at a plan (same system prompt and schema as
+ * the streamed one, plus what the first attempt got wrong). Null when the
+ * model fails or returns no parseable plan.
+ */
+async function regeneratePlan(system: string, userMessage: string, apiKey: string): Promise<unknown | null> {
+  const { res } = await callAIWithFallback({
+    apiKey,
+    models: PLAN_MODELS,
+    label: "plan-repair",
+    timeoutMs: 90_000,
+    retries: 0,
+    maxTokens: 8000,
+    buildBody: (model) => ({
+      model,
+      ...(model.startsWith("openai/gpt-5") ? {} : { temperature: 0.2 }),
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: userMessage },
+      ],
+      tools: [{
+        type: "function",
+        function: { name: "submit_experiment_plan", description: "Submit the complete experiment plan.", parameters: planSchema },
+      }],
+      tool_choice: { type: "function", function: { name: "submit_experiment_plan" } },
+    }),
+  });
+  if (!res.ok) return null;
+  try {
+    return JSON.parse(extractToolArgs(await res.json()) ?? "");
+  } catch {
+    return null;
   }
 }
 
@@ -838,7 +878,7 @@ serve(async (req) => {
           const parentTotal = Number((parentRun?.plan as { budget?: { total_usd?: number } } | null)?.budget?.total_usd) || undefined;
           const refinementLimits = isRefinement ? parseRefinementConstraints(refinementInstruction, parentTotal) : {};
           const refinementContext = isRefinement
-            ? `\n\nPREVIOUS PLAN (for context — do not repeat verbatim, produce a NEW complete plan reflecting the refinement):\n${planDigest(parentRun?.plan, promptChars(8000, 3500))}\n\nREFINEMENT REQUEST — the user has the plan above and wants you to revise it according to this instruction. Honour it strictly while keeping everything else operationally sound; change every section the instruction affects:\n"""${refinementInstruction}"""${refinementConstraintPrompt(refinementLimits)}`
+            ? `\n\nPREVIOUS PLAN (for context — do not repeat verbatim, produce a NEW complete plan reflecting the refinement):\n${planDigest(parentRun?.plan, promptChars(8000, 3500), { budget: refinementLimits.max_budget_usd !== undefined, durations: refinementLimits.max_timeline_weeks !== undefined })}\n\nREFINEMENT REQUEST — the user has the plan above and wants you to revise it according to this instruction. Honour it strictly while keeping everything else operationally sound; change every section the instruction affects:\n"""${refinementInstruction}"""${refinementConstraintPrompt(refinementLimits)}`
             : "";
 
           const system = buildPlannerSystemPrompt({
@@ -997,14 +1037,28 @@ serve(async (req) => {
           // Deterministic plan guards: unretrieved sources removed, budget
           // total = sum of line items, off-topic materials and unmet
           // refinement limits flagged (stored as plan.verification).
-          const { plan: planObj, verification } = verifyPlan(rawPlan, {
-            hypothesis,
-            references,
-            refinementInstruction,
-            parentPlan: parentRun?.plan,
-          });
+          const guardCtx = { hypothesis, references, refinementInstruction, parentPlan: parentRun?.plan };
+          let { plan: planObj, verification } = verifyPlan(rawPlan, guardCtx);
           if (verification.issues.length > 0) {
             console.log(JSON.stringify({ run_id: runId, step: "plan_guards", issues: verification.issues.map((i) => i.kind) }));
+          }
+          // One automatic second attempt when the plan broke a refinement
+          // limit or its materials do not fit the hypothesis (QA round 1:
+          // both refinements ignored their instruction). PLAN_REPAIR_ATTEMPTS=0
+          // turns it off.
+          const repairable = repairableIssues(verification);
+          if (repairable.length > 0 && planRepairAttempts() > 0) {
+            setProgress({ stage: "repairing", issues: repairable.map((i) => i.kind), model: modelUsed, ...loop });
+            const second = await regeneratePlan(system, userMessage + repairInstruction(repairable), AI_API_KEY)
+              .catch((e) => { console.error("plan repair failed", e); return null; });
+            let secondChecked: ReturnType<typeof verifyPlan> | null = null;
+            if (second && typeof second === "object") {
+              const s = second as { protocol?: { description?: string }[] };
+              if (Array.isArray(s.protocol)) s.protocol = sanitizeCitationsWithReport(s.protocol, references.length).steps;
+              secondChecked = verifyPlan(s, guardCtx);
+            }
+            ({ plan: planObj, verification } = chooseRepaired({ plan: planObj, verification }, secondChecked));
+            console.log(JSON.stringify({ run_id: runId, step: "plan_repair", ...verification.repair }));
           }
 
           // Persist a normalized domain on the run so future feedback rows

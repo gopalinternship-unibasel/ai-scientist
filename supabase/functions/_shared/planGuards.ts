@@ -36,6 +36,55 @@ export interface PlanVerification {
   budget: { stated_total: number | null; line_item_sum: number; corrected: boolean } | null;
   refinement?: RefinementConstraints;
   issues: PlanIssue[];
+  /** Set when the plan was regenerated once because of a repairable finding. */
+  repair?: { attempted: PlanIssue["kind"][]; outcome: "fixed" | "partly fixed" | "not fixed" | "failed" };
+}
+
+// High-severity findings worth one automatic second attempt at the plan:
+// the model ignored the refinement's limit, or listed materials that have
+// nothing to do with the hypothesis.
+export const REPAIR_KINDS = new Set<PlanIssue["kind"]>([
+  "refinement_budget_not_met", "refinement_timeline_not_met", "materials_off_topic",
+]);
+
+export function repairableIssues(v: PlanVerification): PlanIssue[] {
+  return v.issues.filter((i) => REPAIR_KINDS.has(i.kind));
+}
+
+/** Message for the second attempt: what the first plan broke. */
+export function repairInstruction(issues: PlanIssue[]): string {
+  return `\n\nYOUR PREVIOUS ANSWER WAS REJECTED BY THE AUTOMATED CHECKS:\n${issues.map((i) => `- ${i.detail}`).join("\n")}\nProduce the full experiment plan again and fix every point above. Do not copy numbers from the previous plan that the limits rule out.`;
+}
+
+/**
+ * Pick between the first plan and its repair: the repair wins when it has
+ * fewer repairable findings. Returns the chosen plan and verification with
+ * `repair` filled in; a repair that did not clear a finding says so in that
+ * finding's text.
+ */
+export function chooseRepaired<P extends { verification?: PlanVerification }>(
+  first: { plan: P; verification: PlanVerification },
+  second: { plan: P; verification: PlanVerification } | null,
+): { plan: P; verification: PlanVerification } {
+  const attempted = repairableIssues(first.verification).map((i) => i.kind);
+  const pick = (r: { plan: P; verification: PlanVerification }, outcome: NonNullable<PlanVerification["repair"]>["outcome"]) => {
+    const verification: PlanVerification = {
+      ...r.verification,
+      issues: r.verification.issues.map((i) => REPAIR_KINDS.has(i.kind)
+        ? { ...i, detail: `${i.detail} One automatic second attempt did not fix it.` }
+        : i),
+      repair: { attempted, outcome },
+    };
+    return { plan: { ...r.plan, verification }, verification };
+  };
+  if (!second) return pick(first, "failed");
+  const left = repairableIssues(second.verification).length;
+  if (left === 0) {
+    const verification: PlanVerification = { ...second.verification, repair: { attempted, outcome: "fixed" } };
+    return { plan: { ...second.plan, verification }, verification };
+  }
+  if (left < attempted.length) return pick(second, "partly fixed");
+  return pick(first, "not fixed");
 }
 
 // --- key terms -------------------------------------------------------------
@@ -430,10 +479,28 @@ const pick = (o: Loose, keys: string[]): Loose => Object.fromEntries(keys.filter
  * total, timeline phases, team) instead of the first `maxChars` characters,
  * which used to end before the budget and timeline.
  */
-export function planDigest(plan: unknown, maxChars: number): string {
+export function planDigest(
+  plan: unknown,
+  maxChars: number,
+  /**
+   * Leave out the numbers a refinement limit rules out. Seen with qwen2.5:3b
+   * (run f6ad46e3, "keep the total budget under $3,000"): the model copied
+   * the previous plan's $17,355 budget line by line.
+   */
+  omit: { budget?: boolean; durations?: boolean } = {},
+): string {
   // The previous plan's own check results are not part of the plan.
   const p = { ...((plan && typeof plan === "object" ? plan : {}) as Loose) };
   delete p.verification;
+  if (omit.budget) {
+    const b = (p.budget && typeof p.budget === "object" ? p.budget : {}) as Loose;
+    p.budget = { line_items: arr(b.line_items).map((li) => pick(li, ["category"])), total_usd: "(to be revised)" };
+    p.materials = arr(p.materials).map((m) => pick(m, ["name", "supplier", "catalog_number", "notes"]));
+  }
+  if (omit.durations) {
+    p.timeline = arr(p.timeline).map((t) => ({ ...t, duration: "(to be revised)" }));
+    p.protocol = arr(p.protocol).map((s) => ({ ...s, duration: "(to be revised)" }));
+  }
   const full = JSON.stringify(p);
   if (full.length <= maxChars) return full;
   const budget = (p.budget && typeof p.budget === "object" ? p.budget : {}) as Loose;
