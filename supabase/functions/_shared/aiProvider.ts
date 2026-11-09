@@ -179,6 +179,16 @@ export function aiTimeout(ms: number): number {
 export const COMPACT_MAX_ITEMS = 5;
 
 /**
+ * Longest text field (characters) a compact-mode structured output may
+ * contain. Small local models sometimes fall into a loop inside one string
+ * (seen 9 Nov 2026: a refined plan's validation section grew to 13,000
+ * characters until the 3,072-token budget ran out and the JSON was cut
+ * off). maxLength is enforced by Ollama's JSON grammar, so the string has
+ * to close. The compact hint asks for about 30 words, well under this.
+ */
+export const COMPACT_MAX_CHARS = 400;
+
+/**
  * Character budget for a long prompt input (the previous plan in a
  * refinement, the plan under review in the critique). Compact mode uses the
  * smaller budget so prompt + output fit a small local context window.
@@ -187,15 +197,22 @@ export function promptChars(full: number, compact: number, cfg: AIConfig = aiCon
   return cfg.compact ? Math.min(full, compact) : full;
 }
 
-/** Copy of a JSON schema with maxItems on every array that has none. */
+/**
+ * Copy of a JSON schema with maxItems on every array that has none and,
+ * when maxLength is given, maxLength on every free-text string that has
+ * none (enums are left alone).
+ */
 // deno-lint-ignore no-explicit-any
-export function capArrays(schema: any, maxItems: number): any {
-  if (Array.isArray(schema)) return schema.map((s) => capArrays(s, maxItems));
+export function capArrays(schema: any, maxItems: number, maxLength?: number): any {
+  if (Array.isArray(schema)) return schema.map((s) => capArrays(s, maxItems, maxLength));
   if (!schema || typeof schema !== "object") return schema;
   // deno-lint-ignore no-explicit-any
   const out: any = {};
-  for (const [k, v] of Object.entries(schema)) out[k] = capArrays(v, maxItems);
+  for (const [k, v] of Object.entries(schema)) out[k] = capArrays(v, maxItems, maxLength);
   if (out.type === "array" && out.maxItems === undefined) out.maxItems = maxItems;
+  if (maxLength && out.type === "string" && out.maxLength === undefined && out.enum === undefined) {
+    out.maxLength = maxLength;
+  }
   return out;
 }
 
@@ -214,7 +231,7 @@ export function adaptChatBody(body: any, maxTokens: number | undefined, cfg: AIC
   if (cfg.compact && Array.isArray(out.tools) && out.tool_choice?.function?.name) {
     // deno-lint-ignore no-explicit-any
     out.tools = out.tools.map((t: any) => t?.function?.parameters
-      ? { ...t, function: { ...t.function, parameters: capArrays(t.function.parameters, COMPACT_MAX_ITEMS) } }
+      ? { ...t, function: { ...t.function, parameters: capArrays(t.function.parameters, COMPACT_MAX_ITEMS, COMPACT_MAX_CHARS) } }
       : t);
     out.messages = [...(out.messages ?? []), { role: "system", content: COMPACT_HINT }];
   }

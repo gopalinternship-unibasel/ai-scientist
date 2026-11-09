@@ -4,6 +4,7 @@ import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.t
 import {
   adaptChatBody,
   capArrays,
+  COMPACT_MAX_CHARS,
   COMPACT_MAX_ITEMS,
   contentAsJson,
   DEFAULT_BASE_URL,
@@ -160,4 +161,36 @@ Deno.test("capArrays leaves non-array schemas alone", () => {
 Deno.test("promptChars shrinks long prompt inputs only in compact mode", () => {
   assertEquals(promptChars(12000, 6000, resolveAIConfig({})), 12000);
   assertEquals(promptChars(12000, 6000, resolveAIConfig({ AI_COMPACT_OUTPUT: "1" })), 6000);
+});
+
+Deno.test("compact mode caps free-text strings so a looping model has to close them", () => {
+  const body = {
+    model: "m",
+    messages: [{ role: "user", content: "x" }],
+    tools: [{
+      type: "function",
+      function: {
+        name: "submit",
+        parameters: {
+          type: "object",
+          properties: {
+            approach: { type: "string" },
+            level: { type: "string", enum: ["BSL-1", "BSL-2"] },
+            short: { type: "string", maxLength: 20 },
+            steps: { type: "array", items: { type: "object", properties: { text: { type: "string" } } } },
+          },
+        },
+      },
+    }],
+    tool_choice: { type: "function", function: { name: "submit" } },
+  };
+  const out = adaptChatBody(body, 100, resolveAIConfig({ AI_COMPACT_OUTPUT: "true", AI_STRUCTURED_OUTPUT: "json_schema" }));
+  const p = out.response_format.json_schema.schema.properties;
+  assertEquals(p.approach.maxLength, COMPACT_MAX_CHARS);
+  assertEquals(p.steps.items.properties.text.maxLength, COMPACT_MAX_CHARS);
+  assertEquals("maxLength" in p.level, false);
+  assertEquals(p.short.maxLength, 20);
+  // Without compact mode nothing is capped.
+  const hosted = adaptChatBody(body, 100, resolveAIConfig({ AI_STRUCTURED_OUTPUT: "tools" }));
+  assertEquals("maxLength" in hosted.tools[0].function.parameters.properties.approach, false);
 });
