@@ -34,14 +34,23 @@ Ollama models (once):
 docker exec cvfix-ollama ollama pull qwen2.5:3b         # chat model (all roles)
 docker exec cvfix-ollama ollama pull nomic-embed-text   # embeddings, 768 dimensions
 # with a native Ollama install: ollama pull qwen2.5:3b ; ollama pull nomic-embed-text
-
-# The configured chat model: qwen2.5:3b limited to 4 CPU threads (see "Known limits").
-Invoke-RestMethod -Method Post -Uri http://localhost:11434/api/create `
-  -Body '{"model":"qwen2.5-3b-4threads","from":"qwen2.5:3b","parameters":{"num_thread":4},"stream":false}'
 ```
 
-The variant shares the qwen2.5:3b weights (no extra download). To use plain
-`qwen2.5:3b` instead, set `AI_MODEL=qwen2.5:3b` in `supabase\functions\.env`.
+The configured chat model is `qwen2.5-3b-4threads`: qwen2.5:3b with 4 CPU
+threads and an 8192-token context (see "Known limits"). It shares the
+qwen2.5:3b weights (no extra download), and `start-local.ps1` creates it
+for you as soon as qwen2.5:3b is pulled. By hand it is:
+
+```powershell
+Invoke-RestMethod -Method Post -Uri http://localhost:11434/api/create `
+  -Body '{"model":"qwen2.5-3b-4threads","from":"qwen2.5:3b","parameters":{"num_thread":4,"num_ctx":8192},"stream":false}'
+```
+
+To use another Ollama model (for example `qwen2.5:7b`, better plans, about
+2.5 times slower), create a variant of it the same way with
+`"num_ctx":8192` and put its name in `AI_MODEL` in
+`supabase\functions\.env`. Ollama's default context is 4096 tokens, which
+a plan and its prompt do not fit in.
 
 Ports used (all on localhost): Supabase API 54321, Postgres 54322, shadow
 DB 54320, Studio 54323, Mailpit 54324, edge-function inspector 8083,
@@ -64,7 +73,9 @@ That is all. The first `start-local.ps1` run also:
   the local stack instead of the dead hosted project in the committed
   `.env`,
 - creates two test accounts and writes them to `.local-test-user.json`
-  (gitignored).
+  (gitignored),
+- creates the Ollama model `qwen2.5-3b-4threads` (when `qwen2.5:3b` is
+  pulled).
 
 ## 3. Start
 
@@ -160,8 +171,8 @@ powershell -ExecutionPolicy Bypass -File scripts\start-local.ps1 -RestartFunctio
 | `AI_MODEL` | Model for every role. `AI_MODEL_PLAN`, `_FAST`, `_REASONING`, `_GATE`, `_DOMAIN`, `_DISTILL`, `_EVAL_PLAN`, `_JUDGE` override one role, as a comma-separated fallback chain. |
 | `AI_STRUCTURED_OUTPUT` | `json_schema` for Ollama (grammar-constrained JSON), `tools` for providers that honour forced tool calls. |
 | `AI_MAX_TOKENS_PARAM` | `max_tokens`, `max_completion_tokens` (OpenAI gpt-5 / o-series) or `none`. |
-| `AI_MAX_TOKENS_CAP` | Upper bound on every output budget (2048 locally, to fit Ollama's 4096-token context). |
-| `AI_COMPACT_OUTPUT` | `true` for small local models: lists capped at 5 items, short text fields, long prompt inputs cut to fit 4096 tokens. Set `false` for hosted models. |
+| `AI_MAX_TOKENS_CAP` | Upper bound on every output budget (3072 locally). Prompt + output must fit the model's context window: 8192 tokens for the local `qwen2.5-3b-4threads`. |
+| `AI_COMPACT_OUTPUT` | `true` for small local models: lists capped at 5 items and text fields at 400 characters (both enforced by Ollama's JSON grammar, so a model stuck in a loop has to close the field), short answers requested, long prompt inputs (previous plan, plan under review) cut short. Set `false` for hosted models. |
 | `AI_MIN_TIMEOUT_MS` | Floor for every per-call timeout (60 minutes locally, `0` for hosted). |
 | `AI_EMBED_MODEL` | Embedding model (`nomic-embed-text` locally, natively 768-d). Empty switches embeddings off. |
 | `AI_EMBED_BASE_URL`, `AI_EMBED_API_KEY` | Separate embeddings endpoint (for chat providers without one, for example the Hugging Face router or the Lovable gateway). |
@@ -210,16 +221,23 @@ which still points at the deleted hosted project.
 | Frontend talks to the dead hosted project | `.env.development.local` is missing: run `start-local.ps1` again (it rewrites the file). |
 | Sign-in fails | `.local-test-user.json` is stale: `start-local.ps1` re-checks and recreates the test users. |
 | Admin distillation / eval seem to do nothing | They run in the background; watch the runtime log for `distill_done` or new rows under Recent eval batches. |
+| Ollama log shows `slot context shift` | The model's context window is too small for prompt + plan: Ollama drops the start of the prompt mid-answer and the plan loses its instructions. Use a model created with `"num_ctx":8192` (see Prerequisites); `start-local.ps1` fixes `qwen2.5-3b-4threads` itself. |
 
 ## 9. Known limits
 
 - **Speed with the local model.** Ollama runs on the CPU only and is shared
-  with other projects on this PC. Measured here on 9 Nov 2026, with other
-  workloads running: prompt processing about 10 tokens/s at best, generation
-  well under 1 token/s, and a single hypothesis-gate call (about 300 prompt
-  tokens) took MEASURED_GATE. A complete run (gate, novelty, plan, critique)
-  takes MEASURED_RUN. The README's "60-90 seconds" was measured on the
-  hosted Gemini / GPT-5 models; switching `supabase\functions\.env` to a
+  with other projects on this PC. Measured here on 9 Nov 2026 with
+  `qwen2.5-3b-4threads`, while two other projects' pipelines and their own
+  model requests ran (load average 10-21 on 8 cores): prompt processing 6-18
+  tokens/s, generation 0.5-3 tokens/s. One hypothesis-gate call (300 prompt
+  tokens, 81 output tokens) took 45 s to 3 min 16 s of model time; a new
+  plan (2,300 prompt + 1,900 output tokens) 47 min; a refined plan (3,800 +
+  1,900 tokens) 27 min; a critique (1,900 + 600 tokens) about 10 min. Ollama
+  answers one request at a time, so every call also waits for the requests
+  queued before it, other projects' included: the gate call above spent 17
+  minutes in the queue. A complete run (gate, literature, novelty, plan,
+  critique) took MEASURED_RUN. The README's "60-90 seconds" was measured on
+  the hosted Gemini / GPT-5 models; switching `supabase\functions\.env` to a
   hosted provider brings that back. The pipeline itself has no deadline: the
   stall-cleanup job only fails a run after 20 minutes without a heartbeat,
   and the function sends one every 20 seconds.
@@ -234,8 +252,15 @@ which still points at the deleted hosted project.
 - **Plan quality with qwen2.5:3b** is far below the hosted models the app was
   tuned for: shorter plans (compact mode caps every list at 5 items),
   plainer critiques, and the hypothesis gate and novelty classifier make
-  more mistakes. `AI_MODEL=qwen2.5:7b` is better and about 2.5 times
-  slower.
+  more mistakes. Seen on 9 Nov 2026: a cryopreservation plan whose
+  materials list was copied from the PCR examples in the cost catalog, and
+  a distilled house rule copied from the distillation prompt's example. A
+  plan can also fail with "Model returned malformed plan" when the model
+  loops inside the JSON until the output budget runs out (one of three
+  local plans that streamed to the end on 9 Nov 2026, before text fields
+  were capped); Retry starts a fresh attempt.
+  A larger model (for example a `qwen2.5:7b` variant with
+  `"num_ctx":8192`) is better and about 2.5 times slower.
 - **The edge runtime is patched at start.** `start-local.ps1` raises the
   CPU budget the Supabase CLI gives each function worker (1 s soft / 2 s
   hard over the worker's life) by editing the generated main service in the
@@ -256,21 +281,28 @@ which still points at the deleted hosted project.
   hosted project's other schedules (nightly house-rule distillation,
   embedding backfill, eval harness, lesson auto-demotion) were never in the
   migrations; trigger them from `/admin` or by calling the functions.
-- **Eval harness** (`/admin` -> Loop ops) generates two plans and two judge
-  calls per hypothesis in one HTTP request; the admin button asks for four
-  hypotheses. On the local CPU model that is many hours and the browser
-  request times out long before; use a hosted provider for it.
+- **Eval harness** (`/admin` -> Loop ops -> Run eval) generates two plans
+  and two judge calls per hypothesis, for four hypotheses, in the
+  background. On the local CPU model that is 8 plans and 8 judge calls, many
+  hours of model time, so it was not run end to end here (its role checks
+  were); use a hosted provider for it.
 - **Anonymous rate-limit bucket.** Locally every browser on the PC reaches
   the function from the Docker gateway address, so all anonymous users share
   one bucket of 100 runs per hour (signed-in users each have their own).
-- `bun test` (Bun's own runner, also used in `.github/workflows/ci.yml`) does
-  not run these Vitest suites; use `bun run test`.
+- `bun test` (Bun's own runner) does not run these Vitest suites (no jsdom:
+  the component tests fail with "localStorage is not defined"); use
+  `bun run test`, as `.github/workflows/ci.yml` now does.
 
 ## 10. What only Gopal can do
 
 - Provide a hosted API key (OpenAI, Gemini, Hugging Face or Lovable) if he
   wants plans in about a minute instead of hours; put it only in the
   gitignored `supabase\functions\.env`.
+- Request a free Semantic Scholar API key
+  (https://www.semanticscholar.org/product/api) and put it in
+  `SEMANTIC_SCHOLAR_API_KEY` in `supabase\functions\.env`. Without one the
+  shared anonymous pool answered HTTP 429 to every request on 9 Nov 2026, so
+  literature QC ran on OpenAlex and PubMed only.
 - Decide whether to keep the self-hosted changes on a branch or merge them,
   and push (nothing has been pushed).
 - The original hosted project and the live site `ai-scientist.lovable.app`
