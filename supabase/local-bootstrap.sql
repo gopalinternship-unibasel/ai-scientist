@@ -1,0 +1,18 @@
+-- Local self-host bootstrap. NOT a migration and changes no schema.
+--
+-- Run by scripts/start-local.ps1 as the local superuser (supabase_admin,
+-- via `docker exec ... psql`) after `supabase start` and BEFORE
+-- `supabase migration up`. Idempotent.
+--
+-- Why: migration 20260425210859 (and later 20260426065836) run
+--   ALTER TABLE realtime.messages ENABLE ROW LEVEL SECURITY
+--   CREATE POLICY ... ON realtime.messages
+-- as the `postgres` role. On the hosted Lovable Cloud project `postgres`
+-- could manage realtime.messages; in the local Supabase image the table is
+-- owned by supabase_realtime_admin and `postgres` is not a member, so the
+-- migration failed with "must be owner of table messages (SQLSTATE 42501)".
+-- Only a superuser may grant this membership (supautils reserves it), which
+-- is why this cannot live in supabase/roles.sql (that file runs as postgres).
+-- Granting it restores the hosted behaviour so the original migrations apply
+-- unchanged.
+GRANT supabase_realtime_admin TO postgres;

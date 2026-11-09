@@ -22,3 +22,17 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Local self-hosted stack (see RUNNING.md)
+# - Vite env pointing the dev server at the local Supabase stack (*.local above
+#   already covers .env.development.local; listed for clarity)
+.env.development.local
+# - edge-function env (AI provider settings); template is .env.example
+supabase/functions/.env
+# - generated test-user credentials for the local stack
+.local-test-user.json
+# - Supabase CLI working files
+supabase/.temp
+supabase/.branches
+# - local run logs
+.local-logs/
