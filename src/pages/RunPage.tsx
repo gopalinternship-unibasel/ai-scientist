@@ -20,7 +20,7 @@ import { untrackRun, trackRun } from "@/hooks/useBackgroundRunNotifier";
 import { startRunStream } from "@/lib/runStream";
 import { getOwnerToken } from "@/lib/owner";
 import { parseRunError, hintForKind, isRetryable } from "@/lib/runErrors";
-import { canRefineRun } from "@/lib/runAccess";
+import { canGiveFeedback, canRefineRun } from "@/lib/runAccess";
 import { refinementBase } from "@/lib/versionBase";
 import type { ExperimentPlan, LiteratureQC, PlanCritique } from "@/lib/samples";
 
@@ -77,12 +77,16 @@ const RunPage = () => {
   const retryAbortRef = useRef<AbortController | null>(null);
 
   // Pick a client whose RLS context can read this run:
-  // - signed-in user → default supabase client (their JWT is enough)
-  // - anonymous owner or share link → scoped client with x-owner-token / x-share-token
+  // - signed-in user, no share token → default supabase client (their JWT)
+  // - share link → scoped client with x-share-token, plus the JWT when signed
+  //   in (a signed-in viewer of someone else's link used to get the plain
+  //   client, which never sent the token: "Run not found")
+  // - anonymous owner → scoped client with x-owner-token
+  const signedIn = !!user;
   const client = useMemo(() => {
-    if (user) return supabase;
-    return createScopedClient({ shareToken });
-  }, [user, shareToken]);
+    if (signedIn && !shareToken) return supabase;
+    return createScopedClient({ shareToken, asSignedInUser: signedIn });
+  }, [signedIn, shareToken]);
 
   useEffect(() => {
     if (!id) return;
@@ -270,17 +274,20 @@ const RunPage = () => {
   const canRefine = canRefineRun({
     status: run.status, hasPlan: !!run.plan, isOwner, signedIn: !!user, shareToken,
   });
+  const feedbackAllowed = canGiveFeedback({
+    isOwner, signedIn: !!user, shareToken, ownerUserId: run.owner_user_id,
+  });
 
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-10 border-b border-rule bg-background/85 backdrop-blur no-print">
-        <div className="container flex h-16 items-center justify-between">
+        <div className="container flex h-16 items-center justify-between gap-2">
           <Logo />
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             <Link to="/">
-              <Button variant="ghost" size="sm" className="gap-2">
+              <Button variant="ghost" size="sm" className="gap-2" aria-label="New experiment">
                 <ArrowLeft className="h-3.5 w-3.5" />
-                New experiment
+                <span className="hidden sm:inline">New experiment</span>
               </Button>
             </Link>
             <UserMenu />
@@ -290,7 +297,8 @@ const RunPage = () => {
 
       <main className="container max-w-4xl py-8 md:py-12">
         <div className="mb-6 rounded-md border-l-2 border-accent bg-paper p-4">
-          <div className="flex items-start justify-between gap-3">
+          {/* Phone width: Share / Refine go under the hypothesis instead of squeezing it into a narrow column. */}
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
                 Hypothesis
@@ -313,7 +321,7 @@ const RunPage = () => {
                 </div>
               )}
             </div>
-            <div className="flex flex-shrink-0 flex-wrap items-center justify-end gap-2 no-print">
+            <div className="flex flex-shrink-0 flex-wrap items-center gap-2 no-print sm:justify-end">
               {isOwner && run.status === "done" && (
                 <Button
                   variant="outline"
@@ -435,6 +443,7 @@ const RunPage = () => {
                     hypothesis={run.hypothesis}
                     version={run.version}
                     runId={run.id}
+                    canGiveFeedback={feedbackAllowed}
                     ownerUserId={run.owner_user_id}
                     appliedFeedback={run.applied_feedback ?? null}
                     onShare={isOwner && run.status === "done" ? onShare : undefined}

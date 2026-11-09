@@ -20,7 +20,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import type { ExperimentPlan, LiteratureQC } from "@/lib/samples";
 import { exportPlanToPdf } from "@/lib/exportPdf";
-import { budgetTotal, checkBudget, checkLabel, costLineItems, planCheckNotes, verifiedSource } from "@/lib/planIntegrity";
+import { budgetTotal, checkBudget, checkLabel, costLineItems, planCheckNotes, shownBudget, verifiedSource } from "@/lib/planIntegrity";
 import { SectionFeedback, type FeedbackSection } from "@/components/SectionFeedback";
 import { Sparkles } from "lucide-react";
 import {
@@ -198,6 +198,11 @@ interface PlanViewProps {
   version?: number;
   /** Run id — enables per-section feedback collection that powers the learning loop. */
   runId?: string;
+  /**
+   * Whether this viewer may rate or correct sections (the run's owner).
+   * Share-link viewers see the plan and applied lessons, not feedback buttons.
+   */
+  canGiveFeedback?: boolean;
   /** Auth user id (if logged in) — written alongside owner_token on feedback rows. */
   ownerUserId?: string | null;
   /** Past corrections that the planner pulled in for this run (cross-run learning loop). */
@@ -229,7 +234,7 @@ function diffSections(a: ExperimentPlan, b: ExperimentPlan) {
 }
 
 export const ExperimentPlanView = ({
-  plan, previousPlan, previousVersion, references, hypothesis, version = 1, runId, ownerUserId, appliedFeedback, onShare: onShareRun,
+  plan, previousPlan, previousVersion, references, hypothesis, version = 1, runId, canGiveFeedback = false, ownerUserId, appliedFeedback, onShare: onShareRun,
 }: PlanViewProps) => {
   const materialsTotal = useMemo(
     () => plan.materials.reduce((s, m) => s + (m.total_cost_usd ?? 0), 0),
@@ -240,11 +245,14 @@ export const ExperimentPlanView = ({
   // model wrote a different total (fixed server-side since 9 Nov 2026, or an
   // older plan), say so next to it.
   const refs = useMemo(() => references ?? [], [references]);
-  const totalUsd = budgetTotal(plan.budget);
-  const budgetCheck = checkBudget(plan.budget);
+  // The budget as shown: the materials line covers the materials table
+  // (raised when the model wrote less) and the total is the line-item sum.
+  const budget = useMemo(() => shownBudget(plan), [plan]);
+  const totalUsd = budgetTotal(budget);
+  const modelCheck = checkBudget(plan.budget);
   const modelTotal = plan.verification?.budget?.corrected
     ? plan.verification.budget.stated_total
-    : budgetCheck?.mismatch ? budgetCheck.stated_total : null;
+    : modelCheck?.stated_total != null && Math.abs(modelCheck.stated_total - totalUsd) > 1 ? modelCheck.stated_total : null;
   const checkNotes = useMemo(() => planCheckNotes(plan, refs), [plan, refs]);
 
   const changed = useMemo(
@@ -273,11 +281,12 @@ export const ExperimentPlanView = ({
   // Helper: render the badge + feedback button for a given section.
   const fb = (section: FeedbackSection) => {
     const lessons = lessonsBySection.get(section) ?? [];
-    if (!runId && lessons.length === 0) return undefined;
+    const feedbackButton = !!runId && canGiveFeedback;
+    if (!feedbackButton && lessons.length === 0) return undefined;
     return (
       <span className="inline-flex items-center gap-1.5">
         {lessons.length > 0 && <AppliedLessonsBadge entries={lessons} />}
-        {runId && (
+        {feedbackButton && (
           <SectionFeedback
             runId={runId}
             section={section}
@@ -499,7 +508,7 @@ export const ExperimentPlanView = ({
       <Section number="04" label="Budget" icon={CircleDollarSign} changed={changed?.budget} feedback={fb("budget")}>
         <div className="grid gap-4 md:grid-cols-[1fr,auto]">
           <ul className="divide-y divide-rule">
-            {costLineItems(plan.budget.line_items).map((li, i) => (
+            {costLineItems(budget.line_items).map((li, i) => (
               <li key={i} className="flex items-center justify-between py-3">
                 <div>
                   <div className="font-medium text-foreground">{li.category}</div>

@@ -19,3 +19,23 @@ export function canRefineRun({ status, hasPlan, isOwner, signedIn, shareToken }:
   if (isOwner) return true;
   return !signedIn && !shareToken;
 }
+
+export interface FeedbackAccessInput {
+  isOwner: boolean;
+  signedIn: boolean;
+  shareToken: string | null;
+  /** owner_user_id of the run (null for an anonymous run). */
+  ownerUserId: string | null;
+}
+
+/**
+ * Who may rate or correct a run's sections. plan_feedback RLS accepts rows
+ * only from the run's owner (signed-in owner by user id, anonymous owner by
+ * the browser's owner token), so share-link viewers used to get twelve
+ * feedback buttons that always ended in "Could not save feedback" (QA
+ * round 2, 9 Nov 2026).
+ */
+export function canGiveFeedback({ isOwner, signedIn, shareToken, ownerUserId }: FeedbackAccessInput): boolean {
+  if (isOwner) return true;
+  return !signedIn && !shareToken && ownerUserId === null;
+}

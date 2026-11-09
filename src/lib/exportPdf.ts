@@ -3,7 +3,7 @@
 // and consistent typography — unlike `window.print()` which depended on screen CSS.
 import { jsPDF } from "jspdf";
 import type { ExperimentPlan, LiteratureQC } from "@/lib/samples";
-import { budgetTotal, checkLabel, costLineItems, planCheckNotes, verifiedSource } from "@/lib/planIntegrity";
+import { budgetTotal, checkLabel, costLineItems, planCheckNotes, shownBudget, verifiedSource } from "@/lib/planIntegrity";
 
 const PAGE = { w: 210, h: 297 }; // A4 mm
 const M = 18;                    // margin
@@ -206,7 +206,7 @@ export function exportPlanToPdf(
   doc.setTextColor(80);
   const meta = [
     ["Domain", plan.domain],
-    ["Total budget", fmtUsd(budgetTotal(plan.budget))],
+    ["Total budget", fmtUsd(budgetTotal(shownBudget(plan)))],
     ["Phases", `${plan.timeline.length}`],
     ["Protocol steps", `${plan.protocol.length}`],
     ["Reagents", `${plan.materials.length}`],
@@ -294,7 +294,7 @@ export function exportPlanToPdf(
 
   // ── 04 Budget ────────────────────────────────────────────────────────────
   heading(ctx, "04", "Budget", footer);
-  for (const li of costLineItems(plan.budget.line_items)) {
+  for (const li of costLineItems(shownBudget(plan).line_items)) {
     ensureSpace(ctx, 6, footer);
     doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.setTextColor(30);
     doc.text(li.category, M, ctx.y);
@@ -309,7 +309,7 @@ export function exportPlanToPdf(
   doc.setDrawColor(60); doc.line(M, ctx.y, PAGE.w - M, ctx.y); ctx.y += 5;
   doc.setFont("helvetica", "bold"); doc.setFontSize(11); doc.setTextColor(20);
   doc.text("Total (sum of line items)", M, ctx.y);
-  doc.text(fmtUsd(budgetTotal(plan.budget)), PAGE.w - M, ctx.y, { align: "right" });
+  doc.text(fmtUsd(budgetTotal(shownBudget(plan))), PAGE.w - M, ctx.y, { align: "right" });
   ctx.y += 8;
 
   // ── 05 Timeline ──────────────────────────────────────────────────────────

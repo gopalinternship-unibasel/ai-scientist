@@ -7,6 +7,7 @@ import { ExperimentPlanView } from "./ExperimentPlanView";
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), message: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
 vi.mock("@/lib/exportPdf", () => ({ exportPlanToPdf: vi.fn() }));
+vi.mock("@/integrations/supabase/client", () => ({ supabase: { from: vi.fn(), functions: { invoke: vi.fn() } } }));
 
 // Smallest complete plan the view renders.
 const plan: ExperimentPlan = {
@@ -134,5 +135,19 @@ describe("ExperimentPlanView integrity checks", () => {
   it("shows no checks card for a consistent plan", () => {
     renderView();
     expect(screen.queryByTestId("plan-checks")).toBeNull();
+  });
+});
+
+describe("ExperimentPlanView section feedback", () => {
+  const buttons = () => screen.queryAllByRole("button", { name: /rate or correct this/i });
+
+  it("shows the feedback buttons to the run's owner", () => {
+    render(<MemoryRouter><ExperimentPlanView plan={plan} hypothesis="h" runId="r1" canGiveFeedback /></MemoryRouter>);
+    expect(buttons().length).toBeGreaterThan(0);
+  });
+
+  it("hides them from share-link viewers, whose feedback RLS rejects (QA round 2)", () => {
+    render(<MemoryRouter><ExperimentPlanView plan={plan} hypothesis="h" runId="r1" canGiveFeedback={false} /></MemoryRouter>);
+    expect(buttons()).toHaveLength(0);
   });
 });
