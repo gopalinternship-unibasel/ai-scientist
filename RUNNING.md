@@ -204,7 +204,7 @@ which still points at the deleted hosted project.
 
 | Symptom | Check |
 |---|---|
-| Run page stays on one stage | `docker logs -f supabase_edge_runtime_ai-research-assistant` (pipeline log) and `docker logs -f cvfix-ollama` (model server; a request is logged when it finishes). Ollama serves one request at a time, so other projects' requests queue in front of yours. |
+| Run page stays on one stage | The run's `progress` and `error` columns (Studio, table `runs`) say where it is. `docker logs -f cvfix-ollama` shows the model server: a request is logged when it starts (`new prompt`) and when it finishes. Ollama runs one request at a time here, so other projects' requests queue in front of yours. `docker logs supabase_edge_runtime_ai-research-assistant` shows only runtime events (requests served, CPU or wall-clock limits); the functions' own `console.log` lines are not forwarded locally because analytics is off. |
 | "CPU time hard limit reached" in the runtime log | The CPU patch is missing: run `start-local.ps1 -RestartFunctions`. |
 | Run failed with "Run timed out - connection lost or generation stalled" | No heartbeat for 20 minutes: the runtime was restarted or stopped while the run was in progress. Press Retry. |
 | Frontend talks to the dead hosted project | `.env.development.local` is missing: run `start-local.ps1` again (it rewrites the file). |

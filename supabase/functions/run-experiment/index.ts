@@ -23,6 +23,7 @@ import { normalizeDomain, resolveDomain } from "../_shared/domainNormalize.ts";
 import { fetchHouseRules } from "../_shared/houseRules.ts";
 import { planSchema, buildPlannerSystemPrompt, buildPlannerUserMessage } from "../_shared/plannerCore.ts";
 import { aiApiKey, contentAsJson, extractToolArgs, promptChars } from "../_shared/aiProvider.ts";
+import { tryParsePartial } from "../_shared/partialJson.ts";
 
 /**
  * Resolve the caller's IP for rate-limiting in a way that resists header
@@ -1075,38 +1076,3 @@ serve(async (req) => {
     });
   }
 });
-
-// Best-effort partial JSON parse: trims to the last balanced point so the client can show
-// already-completed plan sections while later ones stream in.
-function tryParsePartial(s: string): Record<string, unknown> | null {
-  if (!s.trim().startsWith("{")) return null;
-  let depth = 0, inStr = false, esc = false, lastValid = -1;
-  for (let i = 0; i < s.length; i++) {
-    const c = s[i];
-    if (inStr) {
-      if (esc) esc = false;
-      else if (c === "\\") esc = true;
-      else if (c === '"') inStr = false;
-      continue;
-    }
-    if (c === '"') inStr = true;
-    else if (c === "{" || c === "[") depth++;
-    else if (c === "}" || c === "]") { depth--; if (depth === 0) lastValid = i; }
-  }
-  // Try progressively shorter candidates.
-  const candidates = [s];
-  if (lastValid > 0) candidates.push(s.slice(0, lastValid + 1));
-  // Close any unclosed strings/objects/arrays naively.
-  let trial = s;
-  if (inStr) trial += '"';
-  // Remove trailing comma if present
-  trial = trial.replace(/,\s*$/, "");
-  // Try to close braces/brackets:
-  let toClose = depth;
-  while (toClose-- > 0) trial += "}";
-  candidates.push(trial);
-  for (const c of candidates) {
-    try { return JSON.parse(c); } catch { /* try next */ }
-  }
-  return null;
-}
