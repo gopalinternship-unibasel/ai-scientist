@@ -25,6 +25,13 @@
        If the runtime is already serving it is left alone (use
        -RestartFunctions after editing function code, or -Watch to keep hot
        reload while developing).
+       It also lifts the per-worker CPU budget the CLI hard-codes into the
+       runtime's main service (1 s soft / 2 s hard, cumulative over the
+       worker's life, background work included). A run on a CPU-only local
+       model streams for an hour or more, and its heartbeats and stream
+       parsing alone exceed 2 s; at the hard limit the worker and every run
+       in it are killed. The patch is local to this project's runtime
+       container and is redone after every recreation.
     9. starts the Vite dev server in the background (PID in .local-logs/vite.pid)
 
   Stop everything with scripts/stop-local.ps1.
@@ -196,8 +203,42 @@ $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
 $edgeCmd = (docker inspect $EdgeContainer --format '{{.State.Running}} {{json .Config.Cmd}}' 2>$null) -join ' '
 $ErrorActionPreference = $prev
 $edgeServing = $edgeCmd -match '^true ' -and $edgeCmd -match '--inspect'
+
+# Raise the CLI's per-worker CPU limits (see step 8 above) and restart the
+# runtime so its main service reloads. Idempotent. Returns $true when done.
+function Set-EdgeCpuLimit {
+  $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+  try {
+    $patched = (docker exec $EdgeContainer grep -c 'cpuTimeHardLimitMs:72e5' /root/index.ts 2>$null) -join ''
+    if ($patched -match '^[1-9]') { return $true }
+    docker exec $EdgeContainer sed -i -E 's/cpuTimeSoftLimitMs:[A-Za-z_$][A-Za-z0-9_$]*,cpuTimeHardLimitMs:[A-Za-z_$][A-Za-z0-9_$]*/cpuTimeSoftLimitMs:36e5,cpuTimeHardLimitMs:72e5/' /root/index.ts 2>$null | Out-Null
+    $patched = (docker exec $EdgeContainer grep -c 'cpuTimeHardLimitMs:72e5' /root/index.ts 2>$null) -join ''
+    if (-not ($patched -match '^[1-9]')) {
+      Write-Warn 'Could not raise the edge runtime CPU limit (the Supabase CLI main service changed). Long local runs may be killed after 2 s of CPU.'
+      return $false
+    }
+    docker restart $EdgeContainer | Out-Null
+  } finally {
+    $ErrorActionPreference = $prev
+  }
+  $probe = "$apiUrl/functions/v1/run-experiment"
+  $deadline = (Get-Date).AddSeconds(120)
+  while ((Get-Date) -lt $deadline) {
+    Start-Sleep -Seconds 3
+    try {
+      Invoke-RestMethod -Uri $probe -Headers @{ apikey = $envMap['ANON_KEY']; Authorization = "Bearer $($envMap['ANON_KEY'])" } -TimeoutSec 30 | Out-Null
+      return $true
+    } catch { }
+  }
+  Write-Warn "Edge runtime did not answer on $probe within 120 s after the restart."
+  return $false
+}
+
 if ($edgeServing -and -not $RestartFunctions -and -not ($Watch -and -not (Test-PidAlive $fsPid))) {
   Write-Step 'Edge functions already served (no wall-clock limit); use -RestartFunctions to reload code'
+  if (-not (Test-PidAlive $fsPid)) {
+    if (Set-EdgeCpuLimit) { Write-Step 'Edge runtime CPU limit raised for long local runs' }
+  }
 } else {
   if (Test-PidAlive $fsPid) {
     & taskkill.exe /PID (Get-Content $fsPid) /T /F | Out-Null
@@ -224,6 +265,9 @@ if ($edgeServing -and -not $RestartFunctions -and -not ($Watch -and -not (Test-P
     & taskkill.exe /PID $p.Id /T /F | Out-Null
     Remove-Item $fsPid -ErrorAction SilentlyContinue
     Write-Step 'Edge runtime is serving; file watcher stopped (re-run with -RestartFunctions after code changes)'
+    if (Set-EdgeCpuLimit) { Write-Step 'Edge runtime CPU limit raised for long local runs' }
+  } else {
+    Write-Warn '-Watch: hot reload on, CLI CPU limit (2 s per worker) kept; long local runs will be killed. Use it only for quick edits.'
   }
 }
 
