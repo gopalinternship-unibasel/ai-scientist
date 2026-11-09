@@ -175,6 +175,7 @@ foreach ($line in Get-Content $fnEnv) {
   if ($line -match '^\s*([A-Z_]+)\s*=\s*(.*)\s*$') { $fnSettings[$Matches[1]] = $Matches[2].Trim('"') }
 }
 $base = $fnSettings['AI_BASE_URL']
+$LocalVariant = 'qwen2.5-3b-4threads'
 if ($base -and $base -match 'host\.docker\.internal:11434|localhost:11434|127\.0\.0\.1:11434') {
   try {
     $tags = Invoke-RestMethod -Uri 'http://localhost:11434/api/tags' -TimeoutSec 10
@@ -182,13 +183,36 @@ if ($base -and $base -match 'host\.docker\.internal:11434|localhost:11434|127\.0
     $want = @()
     foreach ($k in $fnSettings.Keys) { if ($k -like 'AI_MODEL*' -or $k -eq 'AI_EMBED_MODEL') { $want += ($fnSettings[$k] -split ',') } }
     foreach ($m in ($want | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Select-Object -Unique)) {
+      if ($m -eq $LocalVariant) {
+        # The default local chat model is a variant of qwen2.5:3b (shares its
+        # weights, no download) with 4 CPU threads and an 8192-token context.
+        # Ollama's default context is 4096 tokens, and a planner prompt plus
+        # its plan does not fit in that: Ollama then "shifts" the context,
+        # dropping the start of the prompt (the instructions) mid-answer.
+        # Ollama's OpenAI-compatible API cannot set either per request, so
+        # both live in the model. Created or updated here when missing.
+        $params = ''
+        try {
+          $show = Invoke-RestMethod -Method Post -Uri 'http://localhost:11434/api/show' -Body (@{ model = $m } | ConvertTo-Json) -TimeoutSec 30
+          $params = "$($show.parameters)"
+        } catch { }
+        if ($params -match 'num_ctx\s+8192' -and $params -match 'num_thread\s+4') { continue }
+        if (-not ($have | Where-Object { $_ -eq 'qwen2.5:3b' })) {
+          Write-Warn "Ollama model '$m' needs qwen2.5:3b first. Run: docker exec cvfix-ollama ollama pull qwen2.5:3b  (or: ollama pull qwen2.5:3b), then start again."
+          continue
+        }
+        Write-Step "Creating Ollama model $m (qwen2.5:3b, 4 threads, 8192-token context; no download)"
+        $spec = @{ model = $m; from = 'qwen2.5:3b'; parameters = @{ num_thread = 4; num_ctx = 8192 }; stream = $false } | ConvertTo-Json -Depth 4
+        try {
+          Invoke-RestMethod -Method Post -Uri 'http://localhost:11434/api/create' -Body $spec -TimeoutSec 600 | Out-Null
+        } catch {
+          Write-Warn "Could not create Ollama model '$m': $($_.Exception.Message)"
+        }
+        continue
+      }
       $ok = $have | Where-Object { $_ -eq $m -or $_ -eq "$($m):latest" }
       if (-not $ok) {
-        if ($m -eq 'qwen2.5-3b-4threads') {
-          Write-Warn "Ollama model '$m' does not exist yet. Create it once (qwen2.5:3b with 4 threads): Invoke-RestMethod -Method Post -Uri http://localhost:11434/api/create -Body '{""model"":""qwen2.5-3b-4threads"",""from"":""qwen2.5:3b"",""parameters"":{""num_thread"":4},""stream"":false}'  (needs qwen2.5:3b pulled first)"
-        } else {
-          Write-Warn "Ollama model '$m' is not pulled. Run: docker exec cvfix-ollama ollama pull $m  (or: ollama pull $m)"
-        }
+        Write-Warn "Ollama model '$m' is not pulled. Run: docker exec cvfix-ollama ollama pull $m  (or: ollama pull $m)"
       }
     }
   } catch {

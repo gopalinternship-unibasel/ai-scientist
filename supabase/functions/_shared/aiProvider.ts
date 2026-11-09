@@ -20,9 +20,11 @@
 //                          for providers that ignore tool_choice, e.g. Ollama)
 //   AI_MAX_TOKENS_PARAM    "max_tokens" (default), "max_completion_tokens"
 //                          (OpenAI gpt-5 / o-series) or "none"
-//   AI_MAX_TOKENS_CAP      upper bound for every output budget. Ollama serves
-//                          models with a 4096-token context by default and
-//                          prompt + output must fit in it
+//   AI_MAX_TOKENS_CAP      upper bound for every output budget. Prompt +
+//                          output must fit the model's context window (the
+//                          local model is created with num_ctx 8192; Ollama's
+//                          default is 4096, and on overflow it silently drops
+//                          the start of the prompt mid-answer)
 //   AI_MIN_TIMEOUT_MS      floor for every per-call timeout (CPU-only local
 //                          models need minutes, hosted ones seconds)
 //   AI_COMPACT_OUTPUT      "true" for small, slow local models: every list in
@@ -30,8 +32,9 @@
 //                          (maxItems, enforced by Ollama's JSON grammar), the
 //                          model is asked for short text fields, and long
 //                          prompt inputs (previous plan, plan under review)
-//                          are cut to fit a 4096-token context window. Leave
-//                          unset for hosted models.
+//                          are cut short (fewer prompt tokens for a CPU to
+//                          process, and room for the answer). Leave unset for
+//                          hosted models.
 //   AI_EMBED_BASE_URL      embeddings base URL (defaults to AI_BASE_URL)
 //   AI_EMBED_API_KEY       embeddings key (defaults to AI_API_KEY)
 //   AI_EMBED_MODEL         embedding model; empty disables embeddings
@@ -178,7 +181,7 @@ export const COMPACT_MAX_ITEMS = 5;
 /**
  * Character budget for a long prompt input (the previous plan in a
  * refinement, the plan under review in the critique). Compact mode uses the
- * smaller budget so prompt + output fit a 4096-token local context window.
+ * smaller budget so prompt + output fit a small local context window.
  */
 export function promptChars(full: number, compact: number, cfg: AIConfig = aiConfig()): number {
   return cfg.compact ? Math.min(full, compact) : full;
