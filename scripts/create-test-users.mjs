@@ -51,14 +51,14 @@ async function findUser(email) {
   return users.find((u) => u.email === email) ?? null;
 }
 
-async function ensureUser(email, pw) {
+async function ensureUser(email, pw, fullName) {
   const existing = await findUser(email);
   if (existing) {
     // Reset the password so the stored file is always valid.
     const r = await call(`${api}/auth/v1/admin/users/${existing.id}`, {
       method: "PUT",
       headers: { apikey: service, Authorization: `Bearer ${service}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ password: pw, email_confirm: true }),
+      body: JSON.stringify({ password: pw, email_confirm: true, user_metadata: { full_name: fullName } }),
     });
     if (!r.ok) throw new Error(`could not reset ${email}: ${r.status}`);
     return existing.id;
@@ -66,7 +66,7 @@ async function ensureUser(email, pw) {
   const r = await call(`${api}/auth/v1/admin/users`, {
     method: "POST",
     headers: { apikey: service, Authorization: `Bearer ${service}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password: pw, email_confirm: true, user_metadata: { full_name: "Local Tester" } }),
+    body: JSON.stringify({ email, password: pw, email_confirm: true, user_metadata: { full_name: fullName } }),
   });
   if (!r.ok) throw new Error(`could not create ${email}: ${r.status} ${JSON.stringify(r.body)}`);
   return r.body.id;
@@ -102,8 +102,8 @@ const creds = {
   admin: { email: "admin@ai-scientist.local.test", password: password() },
 };
 
-await ensureUser(creds.tester.email, creds.tester.password);
-const adminId = await ensureUser(creds.admin.email, creds.admin.password);
+await ensureUser(creds.tester.email, creds.tester.password, "Local Tester");
+const adminId = await ensureUser(creds.admin.email, creds.admin.password, "Local Admin");
 
 // Grant admin through the app's own one-time bootstrap RPC (refuses once any
 // admin exists). If another account already holds admin, fall back to a
