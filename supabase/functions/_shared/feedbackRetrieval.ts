@@ -4,8 +4,9 @@
 // scientists submitted on PAST plans for similar experiments and inject them
 // as few-shot guidance into the planner prompt.
 //
-// Similarity = cosine over Gemini text-embedding-004 (768d) on
-// (correction + hypothesis excerpt). Falls back gracefully to an empty list
+// Similarity = cosine over a 768-d embedding (Gemini text-embedding-004 on
+// the hosted build, nomic-embed-text locally) of (correction + hypothesis
+// excerpt). Falls back gracefully to an empty list
 // if embeddings or the RPC are unavailable — the planner still works, just
 // without the cross-run boost.
 
@@ -24,7 +25,13 @@ export interface FeedbackHint {
   similarity: number;
 }
 
-const MIN_SIMILARITY = 0.55;   // cosine — below this we treat hits as noise
+// Cosine floor — below this we treat hits as noise. 0.55 was tuned for
+// Gemini text-embedding-004; nomic-embed-text scores unrelated biology texts
+// around 0.5-0.6, so the local env raises it (FEEDBACK_MIN_SIMILARITY=0.7).
+function minSimilarity(): number {
+  const raw = Number(Deno.env.get("FEEDBACK_MIN_SIMILARITY") ?? "");
+  return Number.isFinite(raw) && raw > 0 && raw < 1 ? raw : 0.55;
+}
 const MAX_HINTS = 5;
 const FETCH_CANDIDATES = 20;   // ask RPC for more than we keep, then re-rank
 
@@ -55,7 +62,7 @@ function sanitizeCorrection(raw: string): string {
  * Retrieve the top-N corrections most semantically similar to the current
  * hypothesis. Best-effort — returns [] on any failure.
  *
- * `apiKey` is required for embedding; pass LOVABLE_API_KEY.
+ * `apiKey` is the AI provider key (kept for call-site compatibility).
  */
 export async function retrieveRelevantFeedback(
   supabase: SbClient,
@@ -74,7 +81,7 @@ export async function retrieveRelevantFeedback(
     // 2) Cosine kNN via the SECURITY DEFINER RPC.
     const { data, error } = await supabase.rpc("match_plan_feedback", {
       query_embedding: queryVec,
-      match_threshold: MIN_SIMILARITY,
+      match_threshold: minSimilarity(),
       match_count: FETCH_CANDIDATES,
     });
     if (error || !Array.isArray(data) || data.length === 0) {

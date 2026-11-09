@@ -8,7 +8,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { corsHeaders } from "../_shared/cors.ts";
-import { embedText } from "../_shared/embeddings.ts";
+import { embedText, embeddingsEnabled } from "../_shared/embeddings.ts";
 
 const DEFAULT_BATCH = 25;
 const MAX_BATCH = 100;
@@ -22,10 +22,9 @@ serve(async (req) => {
 
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
     const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) {
-      return new Response(JSON.stringify({ error: "AI key not configured" }), {
-        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    if (!embeddingsEnabled()) {
+      return new Response(JSON.stringify({ error: "Embeddings not configured (set AI_EMBED_MODEL)" }), {
+        status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
     const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
@@ -64,7 +63,7 @@ serve(async (req) => {
         .eq("id", row.id);
 
       const text = [row.correction, row.hypothesis_excerpt].filter(Boolean).join("\n\n");
-      const vec = await embedText(text, LOVABLE_API_KEY);
+      const vec = await embedText(text);
       if (!vec) { failed++; continue; }
       const { error: updErr } = await supabase
         .from("plan_feedback")

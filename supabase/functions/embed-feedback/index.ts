@@ -1,14 +1,14 @@
 // embed-feedback — called by the client after a plan_feedback row is inserted.
 // Reads the new row, embeds the correction text, writes the vector back.
 //
-// Doing this server-side keeps the embedding model + Lovable API key off the
+// Doing this server-side keeps the embedding model + provider API key off the
 // browser and ensures every feedback row ends up in the same vector space as
 // what the planner queries against.
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { corsHeaders } from "../_shared/cors.ts";
-import { embedText } from "../_shared/embeddings.ts";
+import { embedText, embeddingsEnabled } from "../_shared/embeddings.ts";
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -23,10 +23,9 @@ serve(async (req) => {
 
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
     const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) {
-      return new Response(JSON.stringify({ error: "AI key not configured" }), {
-        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    if (!embeddingsEnabled()) {
+      return new Response(JSON.stringify({ error: "Embeddings not configured (set AI_EMBED_MODEL)" }), {
+        status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
     const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
@@ -59,7 +58,7 @@ serve(async (req) => {
     // Embed the combined correction + hypothesis context so retrieval matches
     // both "what's the lesson" and "what kind of experiment was it".
     const text = [row.correction, row.hypothesis_excerpt].filter(Boolean).join("\n\n");
-    const vec = await embedText(text, LOVABLE_API_KEY);
+    const vec = await embedText(text);
     if (!vec) {
       // Permanent failure (after embedText's internal 3 retries). The row
       // stays embedding=null and the daily cron will pick it up.
