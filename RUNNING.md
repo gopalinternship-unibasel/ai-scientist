@@ -166,7 +166,8 @@ shown as references. A corrected verdict says so in its rationale, and the
 run's `qc.classifier_signal` keeps what the classifier said. The
 textbook-technique rule (PCR, Western blot, ELISA, ... are "exact match")
 applies only to hypotheses that ask for the technique itself, not to claims
-that use it as a readout or comparator.
+that use it as a readout or comparator. Runs saved before this check get it on the run page, applied to the
+references they stored (the stored row is not changed).
 
 **Automated checks.** Before a plan is saved (and again before a cached plan
 is served) deterministic checks run on it (`supabase/functions/_shared/planIntegrity.ts`,
@@ -180,6 +181,7 @@ by the check; "Check" findings are for the reader:
 | Budget (Fixed) | A materials line below the materials table subtotal is raised to the subtotal; the total is set to the sum of the line items, and the Budget card says what the model's own total was. A materials line far above the table is flagged. |
 | Materials (Check) | High severity when the materials do not name at least 40% of what the hypothesis is about (its cell line, compound, named measurands, by weight); also flagged when materials match cost-catalog items from topics the hypothesis does not mention (the catalog copying seen with the small model). |
 | Doses (Check) | High severity when the protocol gives the hypothesis' substance a concentration that is not within 1.5x of the hypothesis' dose ("10 mM metformin" for a 10 uM hypothesis). Stock solutions are not counted. |
+| Suppliers (Check) | Medium when a material comes from a specialist supplier that does not sell that kind of item (antibodies from IDT, blood from Addgene). |
 | Protocol steps (Check) | High severity when at least half of the steps are only material lists. Medium when the protocol's step durations add up to more than the timeline. |
 | Refinement limits (Check) | A budget cap ("under $3,000", "cut the budget by 30%") or timeline cap ("8 weeks", "within 2 months") in the instruction is sent to the model as a hard limit and checked on the new plan. |
 
@@ -291,12 +293,12 @@ docker run --rm -v "${PWD}:/app" -w /app -e DENO_DIR=/app/supabase/.temp/deno-ca
 
 (With Deno installed locally: `deno test --allow-net --allow-env --allow-read supabase/functions/_shared/ supabase/functions/run-experiment/`.)
 
-Measured on 9 Nov 2026 after the QA round-2 fixes: Vitest 18 files / 68
-tests, Deno 108 tests, ESLint 0 errors (9 warnings), `tsc` and `deno check`
+Measured on 10 Nov 2026 after the QA round-2 fixes: Vitest 19 files / 73
+tests, Deno 112 tests, ESLint 0 errors (9 warnings), `tsc` and `deno check`
 clean. The plan checks have their own Deno suites built from the QA's
 failing plans (`supabase/functions/_shared/planGuards.test.ts` for round 1,
 `planChecksRound2.test.ts` for round 2), and the literature queries and the
-novelty verdict check are tested in `novelty.test.ts`. The access rules of
+novelty verdict check are tested in `novelty.test.ts`, the critique clean-up in `critiqueGuards.test.ts`. The access rules of
 migration `20261110090000` are not covered by these unit tests; they were
 checked against the running stack with the scripts in
 `_e2e/ai-research-assistant-fix/round3/` on Gopal's PC (`01-feedback-security.mjs`).
@@ -351,6 +353,19 @@ which still points at the deleted hosted project.
   each, and a refinement that needed the second attempt 16 minutes.
   `qwen2.5:7b` measured 5.6 prompt and 1.15 generated tokens/s on the same
   load, about three times slower.
+  After the QA round-2 fixes (9-10 Nov 2026, around midnight; host CPU
+  95-96%, 2 GB of host RAM free, other projects' `llama3.1:8b`,
+  `qwen2.5:7b` and `qwen2.5-7b-4threads` loaded in the same Ollama, 12 GB of
+  its 15 GB): the CRP-biosensor run 739dddf1 saved its plan after 23 minutes
+  and its critique after 56; the metformin run 78967afc, queued behind it,
+  saved its plan after 56 minutes and was complete after 61. Gate about 1
+  minute, literature search 15-20 s, the novelty call 3-8 minutes with the
+  queue. The CRP plan itself: 2,275 prompt tokens at 10.5 tokens/s, 1,702
+  generated tokens at 2.6 tokens/s (14.5 minutes); critiques ran at 0.7-1.0
+  generated tokens/s while the other projects' 7B/8B models were busy. A
+  cache hit (same hypothesis) answered in under a second. These times are
+  set by the shared CPU, not by the pipeline; the only lever on this PC is
+  a smaller or a hosted model.
 - **Ollama thread count.** Ollama runs a model with one thread per CPU core
   (8 here). When the PC is busy those threads stall each other: in a test on
   9 Nov 2026 qwen2.5:3b generated 0.07 tokens/s with the default threads and
@@ -384,6 +399,24 @@ which still points at the deleted hosted project.
     do the arithmetic; the checks say so instead of hiding it;
   - the reviewer critique repeats an injected past correction as a concern
     even when the plan already follows it (run 633e1d4f).
+  After the QA round-2 fixes the checks catch the remaining wrong content
+  instead of letting it through: a protocol dose that differs from the
+  hypothesis' dose (v3's "10 mM metformin" for 10 uM), material-list steps,
+  materials that leave out the compound and cell line (the independent run
+  a60e2fa8), catalog numbers copied onto the wrong product (removed), a
+  materials line below the materials table (raised), unlikely suppliers
+  (antibodies from IDT, blood from Addgene in run 739dddf1). The three
+  high-severity ones get the automatic second attempt. The new metformin
+  plan 78967afc (prompt without example SKUs, "use the hypothesis' doses")
+  had action steps at the hypothesis' 10 uM and 0.5 mM, the compound, cell
+  line and stain in its materials, and no catalog numbers; its materials
+  line ($100 against a $775 table) was raised. Still model-made and not
+  caught: every protocol step citing the same retrieved paper, $0 equipment
+  or overhead lines, and suppliers that are merely odd (Thermo for
+  everything). The critic still invents things; concerns that claim a
+  controlled substance the plan does not have or name catalog numbers that
+  are not in the plan are now dropped (`critique.removed_concerns`), and
+  looping phrases are collapsed.
   A plan can also fail with "Model returned malformed plan" when the model
   loops inside the JSON until the output budget runs out (one of three
   local plans that streamed to the end on 9 Nov 2026, before text fields
