@@ -394,9 +394,13 @@ export function verifyPlan(
   return { plan, verification };
 }
 
-/** Pre-check lines for the reviewer critique (high severity first). */
+// Findings the guards already corrected (shown to the reader, not a concern
+// for the reviewer: run 633e1d4f's critique raised the fixed total as "high").
+const FIXED_KINDS = new Set<PlanIssue["kind"]>(["budget_total_corrected", "unverified_sources_removed"]);
+
+/** Pre-check lines for the reviewer critique: open findings only, high severity first. */
 export function verificationIssueLines(v: PlanVerification): string[] {
-  return [...v.issues]
+  return v.issues.filter((i) => !FIXED_KINDS.has(i.kind))
     .sort((a, b) => (a.severity === b.severity ? 0 : a.severity === "high" ? -1 : 1))
     .map((i) => `- ${i.detail}`);
 }
@@ -427,9 +431,11 @@ const pick = (o: Loose, keys: string[]): Loose => Object.fromEntries(keys.filter
  * which used to end before the budget and timeline.
  */
 export function planDigest(plan: unknown, maxChars: number): string {
-  const full = JSON.stringify(plan ?? {});
+  // The previous plan's own check results are not part of the plan.
+  const p = { ...((plan && typeof plan === "object" ? plan : {}) as Loose) };
+  delete p.verification;
+  const full = JSON.stringify(p);
   if (full.length <= maxChars) return full;
-  const p = (plan && typeof plan === "object" ? plan : {}) as Loose;
   const budget = (p.budget && typeof p.budget === "object" ? p.budget : {}) as Loose;
   const sd = (p.statistical_design && typeof p.statistical_design === "object" ? p.statistical_design : {}) as Loose;
   const digest: Loose = {

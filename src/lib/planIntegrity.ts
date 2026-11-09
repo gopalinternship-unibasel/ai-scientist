@@ -45,3 +45,12 @@ export function planCheckNotes(plan: ExperimentPlan, references: RefLike[]): Pla
   }
   return notes;
 }
+
+// Findings the server corrects itself; every other finding is for the reader
+// to check (the guards only flag it).
+const FIXED_KINDS = new Set(["budget_total_corrected", "unverified_sources_removed"]);
+
+/** "Fixed" for corrections the checks made, "Check" for findings left to the reader. */
+export function checkLabel(issue: PlanCheckIssue): "Fixed" | "Check" {
+  return FIXED_KINDS.has(issue.kind) ? "Fixed" : "Check";
+}

@@ -45,6 +45,8 @@ const URL_RE = /\b(?:https?:\/\/|www\.)[^\s"'<>]+/gi;
 // author-year form or a bare year.
 const CITATION_LIKE_RE = /(?:https?:\/\/|www\.|\bdoi\b|10\.\d{4,9}\/|\bpmid\b|\bpmc\d|\bet al\b|\b(?:19|20)\d{2}\b)/i;
 
+const PLACEHOLDER_RE = /^(?:\[?\s*n\s*\]?|n\/?a|none|null|nil|unknown|tbd|-+|\.+|\?+)$/i;
+
 function trimTrailing(s: string): string {
   return s.replace(/[.,;:)\]}>]+$/, "");
 }
@@ -142,6 +144,9 @@ export function referenceLabel(n: number, r: RefLike): string {
 export function verifiedSource(source: string | null | undefined, refs: RefLike[]): string | null {
   const s = (source ?? "").trim();
   if (!s) return null;
+  // Placeholders say nothing: "N" (the small model copies the prompt's
+  // "[N]" literally when there is no reference list), "n/a", "none", "-".
+  if (PLACEHOLDER_RE.test(s)) return null;
   const n = matchReference(s, refs);
   if (n) return referenceLabel(n, refs[n - 1]);
   // A "[N]" that is not a retrieved reference, or anything citation-like.

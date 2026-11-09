@@ -186,7 +186,7 @@ REQUIREMENTS:
 - Materials must include real suppliers (Sigma-Aldrich, Thermo Fisher, Promega, Qiagen, IDT, ATCC, Addgene). Catalog numbers MUST be ones you are confident exist on the supplier's site — if you are uncertain, set catalog_number to "Custom" or omit it. Do NOT fabricate plausible-looking SKUs. Sigma SKUs follow patterns like T9531, PHR1084-1G; Thermo Fisher uses 7–9 digit numbers (11965092) or letter+digits (A3160401); IDT Alt-R reagents are 1081xxx; ATCC uses CCL-2, CRL-3216, HTB-22.
 - Budget MUST be anchored to the REFERENCE COST CATALOG below — do not invent prices that are wildly off (>20%).
 - Budget total MUST equal the sum of line items, and line items must roughly equal materials subtotal + labour + equipment + overhead.
-- Protocol step \`source\`: either \`[N]\` for an entry of the KNOWN RELATED WORK list or a short plain label such as "manufacturer's instructions". NEVER write a URL, DOI, PMID or paper title that is not in that list; when there is no list, use only plain labels. Unlisted sources are removed before the plan is shown.
+- Protocol step \`source\` (optional): when a step follows an entry of the KNOWN RELATED WORK list, its number in brackets, e.g. [1]; otherwise a short plain label such as "manufacturer's instructions", or leave it out. NEVER write a URL, DOI, PMID or paper title that is not in that list. Unlisted sources are removed before the plan is shown.
 - CITATIONS: Use ONLY the canonical format \`[N]\` (or \`(see [N, M])\` for multiples). N must be a 1-based index into the KNOWN RELATED WORK list. Never invent reference numbers; never use prose forms like "(ref. 1)" or "(see reference 1)".
 - Timeline must be phased with explicit dependencies.
 - The 'validation' section gives the qualitative approach.

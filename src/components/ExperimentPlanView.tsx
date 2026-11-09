@@ -20,7 +20,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import type { ExperimentPlan, LiteratureQC } from "@/lib/samples";
 import { exportPlanToPdf } from "@/lib/exportPdf";
-import { budgetTotal, checkBudget, planCheckNotes, verifiedSource } from "@/lib/planIntegrity";
+import { budgetTotal, checkBudget, checkLabel, planCheckNotes, verifiedSource } from "@/lib/planIntegrity";
 import { SectionFeedback, type FeedbackSection } from "@/components/SectionFeedback";
 import { Sparkles } from "lucide-react";
 import {
@@ -400,9 +400,9 @@ export const ExperimentPlanView = ({
             {checkNotes.map((n, i) => (
               <li key={i} className="flex items-start gap-2 text-sm">
                 <span
-                  className={`mt-0.5 shrink-0 font-mono text-[10px] uppercase tracking-wider ${n.severity === "high" ? "text-destructive" : "text-accent"}`}
+                  className={`mt-0.5 shrink-0 font-mono text-[10px] uppercase tracking-wider ${checkLabel(n) === "Check" ? "text-destructive" : "text-accent"}`}
                 >
-                  {n.severity === "high" ? "Check" : "Fixed"}
+                  {checkLabel(n)}
                 </span>
                 <span className="text-foreground/85">{n.detail}</span>
               </li>

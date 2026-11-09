@@ -515,8 +515,17 @@ serve(async (req) => {
     let cached: { id: string; qc: unknown; plan: unknown; critique: unknown } | null = null;
     if (cacheRow && typeof cacheRow.hypothesis === "string" && await hashHypothesis(cacheRow.hypothesis) === hHash) {
       const refs = ((cacheRow.qc as { references?: Reference[] } | null)?.references) ?? [];
-      const { plan: checked } = verifyPlan(cacheRow.plan, { hypothesis, references: refs });
-      cached = { id: cacheRow.id, qc: cacheRow.qc, plan: checked, critique: cacheRow.critique };
+      const { plan: checked, verification } = verifyPlan(cacheRow.plan, { hypothesis, references: refs });
+      if (verification.issues.some((i) => i.severity === "high")) {
+        // A plan the guards flag (materials that do not fit the hypothesis)
+        // is not worth an instant replay: retire it as the cache entry (the
+        // run itself stays) so this request generates a fresh plan and that
+        // one becomes the cache entry.
+        await supabase.from("runs").update({ hypothesis_hash: null }).eq("id", cacheRow.id);
+        console.log(JSON.stringify({ step: "cache_entry_retired", id: cacheRow.id, issues: verification.issues.map((i) => i.kind) }));
+      } else {
+        cached = { id: cacheRow.id, qc: cacheRow.qc, plan: checked, critique: cacheRow.critique };
+      }
     } else if (cacheRow) {
       console.warn(JSON.stringify({ step: "cache_entry_rejected", id: cacheRow.id, reason: "hash does not match its hypothesis" }));
     }

@@ -3,7 +3,7 @@
 // and consistent typography — unlike `window.print()` which depended on screen CSS.
 import { jsPDF } from "jspdf";
 import type { ExperimentPlan, LiteratureQC } from "@/lib/samples";
-import { budgetTotal, planCheckNotes, verifiedSource } from "@/lib/planIntegrity";
+import { budgetTotal, checkLabel, planCheckNotes, verifiedSource } from "@/lib/planIntegrity";
 
 const PAGE = { w: 210, h: 297 }; // A4 mm
 const M = 18;                    // margin
@@ -227,8 +227,9 @@ export function exportPlanToPdf(
     doc.text("AUTOMATED CHECKS", M, ctx.y);
     ctx.y += 5;
     for (const c of checks) {
-      const lines = doc.splitTextToSize(`${c.severity === "high" ? "Check" : "Fixed"}: ${c.detail}`, COL);
-      doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(c.severity === "high" ? 150 : 80);
+      const label = checkLabel(c);
+      const lines = doc.splitTextToSize(`${label}: ${c.detail}`, COL);
+      doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(label === "Check" ? 150 : 80);
       for (const line of lines) {
         if (ctx.y > PAGE.h - M - 14) break;
         doc.text(line, M, ctx.y);

@@ -4,7 +4,7 @@ import {
 } from "./planIntegrity.ts";
 import {
   catalogCopies, filterRelevantRules, keyTerms, parseRefinementConstraints, planDigest,
-  scrubCandidateRefs, timelineWeeks, verifyPlan,
+  scrubCandidateRefs, timelineWeeks, verificationIssueLines, verifyPlan,
 } from "./planGuards.ts";
 import { costCatalogPrompt, relevantCatalogGroups } from "./costCatalog.ts";
 import { constantTimeEqual } from "./callerAuth.ts";
@@ -42,6 +42,8 @@ Deno.test("sources: out-of-range markers, author-year and DOIs not retrieved are
   assertEquals(verifiedSource("Bio-protocol 2019", REFS), null);
   assertEquals(verifiedSource("10.1101/2020.01.09.925616", REFS), null);
   assertEquals(verifiedSource("Manufacturer's instructions", REFS), "Manufacturer's instructions");
+  // run 633e1d4f (0 references): the small model wrote "N" for every step
+  for (const junk of ["N", "[N]", "n/a", "None", "-"]) assertEquals(verifiedSource(junk, []), null);
 });
 
 Deno.test("sources: links inside step descriptions become [N] or are removed", () => {
@@ -69,6 +71,9 @@ Deno.test("budget: total is reset to the sum of the line items", () => {
   };
   const { budget: fixed, check } = reconcileBudget(budget);
   assertEquals(fixed.total_usd, 12133);
+  const v = verifyPlan({ budget }, { hypothesis: NR, references: [] }).verification;
+  assertEquals(v.issues.map((i) => i.kind), ["budget_total_corrected"]);
+  assertEquals(verificationIssueLines(v), [], "already fixed: not a reviewer concern");
   assertEquals(check, { line_item_sum: 12133, stated_total: 10233, mismatch: true });
   assertEquals(checkBudget({ line_items: [{ amount_usd: 2170 }], total_usd: 2170 })?.mismatch, false);
   assertEquals(checkBudget({ line_items: [{ amount_usd: "1,000" }], total_usd: "1000" })?.mismatch, false);
@@ -99,6 +104,8 @@ Deno.test("materials copied from the PCR catalog are flagged for an NAD+ hypothe
   const kinds = verification.issues.map((i) => i.kind);
   assert(kinds.includes("catalog_items_copied"));
   assert(kinds.includes("materials_off_topic"));
+  // the reviewer gets open findings, high severity first
+  assert(verificationIssueLines(verification)[0].startsWith("- No material mentions"));
 });
 
 Deno.test("materials that name the compound and cell line pass", () => {
