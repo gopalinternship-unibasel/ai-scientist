@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { lovable } from "@/integrations/lovable";
+import { googleSignInAvailable } from "@/lib/authOptions";
 
 const Auth = () => {
   const { user, loading } = useAuth();
@@ -120,22 +121,28 @@ const Auth = () => {
             run quota, and pick up where you left off across devices.
           </p>
 
-          <Button
-            onClick={onGoogle}
-            disabled={busy}
-            size="lg"
-            className="mt-8 w-full gap-3"
-          >
-            <GoogleIcon /> Continue with Google
-          </Button>
+          {googleSignInAvailable() ? (
+            <>
+              <Button
+                onClick={onGoogle}
+                disabled={busy}
+                size="lg"
+                className="mt-8 w-full gap-3"
+              >
+                <GoogleIcon /> Continue with Google
+              </Button>
 
-          <div className="my-6 flex items-center gap-3">
-            <div className="h-px flex-1 bg-rule" />
-            <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-              or
-            </span>
-            <div className="h-px flex-1 bg-rule" />
-          </div>
+              <div className="my-6 flex items-center gap-3">
+                <div className="h-px flex-1 bg-rule" />
+                <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+                  or
+                </span>
+                <div className="h-px flex-1 bg-rule" />
+              </div>
+            </>
+          ) : (
+            <div className="mt-8" />
+          )}
 
           <Tabs defaultValue="signin">
             <TabsList className="grid w-full grid-cols-2">
