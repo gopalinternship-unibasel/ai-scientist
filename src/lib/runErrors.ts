@@ -3,10 +3,10 @@
 // since we can't share TS code across the Vite/Deno boundary.
 export type ErrorKind =
   | "TIMEOUT" | "RATE_LIMIT" | "CREDITS"
-  | "PARSE" | "UPSTREAM" | "POLICY" | "INTERNAL";
+  | "PARSE" | "UPSTREAM" | "POLICY" | "VALIDATION" | "INTERNAL";
 
 const KNOWN: ErrorKind[] = [
-  "TIMEOUT", "RATE_LIMIT", "CREDITS", "PARSE", "UPSTREAM", "POLICY", "INTERNAL",
+  "TIMEOUT", "RATE_LIMIT", "CREDITS", "PARSE", "UPSTREAM", "POLICY", "VALIDATION", "INTERNAL",
 ];
 
 export interface ParsedError {
@@ -44,11 +44,13 @@ export function hintForKind(kind: ErrorKind): string {
     case "PARSE": return "The model returned malformed output. A retry usually fixes this.";
     case "UPSTREAM": return "The AI provider was unavailable. We'll try a backup model on retry.";
     case "POLICY": return "Try rewording the hypothesis without trigger terms before retrying.";
+    case "VALIDATION": return "Rewrite it as one testable hypothesis: an intervention, the system it acts on, a measurable outcome and a comparison, then start a new experiment.";
     default: return "Please retry. If it keeps failing, reword the hypothesis.";
   }
 }
 
 /** Whether a Retry button makes sense for this kind. */
 export function isRetryable(kind: ErrorKind): boolean {
-  return kind !== "CREDITS";
+  // The same input gets the same verdict from the hypothesis gate.
+  return kind !== "CREDITS" && kind !== "VALIDATION";
 }

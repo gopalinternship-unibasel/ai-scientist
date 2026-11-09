@@ -596,9 +596,11 @@ serve(async (req) => {
             const verdict = await gateHypothesis(hypothesis, AI_API_KEY);
             if (!verdict.ok) {
               const msg = verdict.reason ?? "This input doesn't look like a testable hypothesis.";
+              // The SSE stream is already closed here, so the stored error
+              // is all the run page can show: keep the gate's suggestion.
               await supabase.from("runs").update({
                 status: "failed",
-                error: encodeError("INTERNAL", msg),
+                error: encodeError("VALIDATION", verdict.suggestion ? `${msg} Suggestion: ${verdict.suggestion}` : msg),
               }).eq("id", runId);
               send("error", { message: msg, kind: "VALIDATION", suggestion: verdict.suggestion });
               stopHeartbeat();

@@ -88,6 +88,7 @@ export type ErrorKind =
   | "PARSE"          // model output couldn't be parsed
   | "UPSTREAM"       // 5xx or other upstream failure
   | "POLICY"         // 400 from provider citing content policy
+  | "VALIDATION"     // input rejected by a guard (e.g. the hypothesis gate)
   | "INTERNAL";      // anything else
 
 export function classifyHttpError(status: number, body?: string): ErrorKind {
