@@ -17,7 +17,9 @@ vi.mock("@/lib/owner", () => ({ getOwnerToken: () => "owner-token" }));
 const RunStub = () => <div>run page {useParams().id}</div>;
 
 describe("RefineDialog", () => {
-  beforeEach(() => startRunStream.mockReset());
+  // Braces matter: a function returned from beforeEach is run as a cleanup
+  // hook, and mockReset() returns the mock itself.
+  beforeEach(() => { startRunStream.mockReset(); });
 
   it("navigates to the new version as soon as the server creates it", async () => {
     startRunStream.mockImplementation(async ({ onEvent }: { onEvent: (e: RunStreamEvent) => void }) => {
