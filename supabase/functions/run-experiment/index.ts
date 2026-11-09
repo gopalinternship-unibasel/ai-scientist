@@ -24,6 +24,7 @@ import { fetchHouseRules } from "../_shared/houseRules.ts";
 import { planSchema, buildPlannerSystemPrompt, buildPlannerUserMessage } from "../_shared/plannerCore.ts";
 import { aiApiKey, contentAsJson, extractToolArgs, promptChars } from "../_shared/aiProvider.ts";
 import { tryParsePartial } from "../_shared/partialJson.ts";
+import { hashForNewRun, markRunDone } from "../_shared/runPersistence.ts";
 
 /**
  * Resolve the caller's IP for rate-limiting in a way that resists header
@@ -490,7 +491,9 @@ serve(async (req) => {
       hypothesis,
       owner_token: ownerToken,
       owner_user_id: userId,
-      hypothesis_hash: hHash as string | null,
+      // A refinement repeats its parent's hypothesis; it is not the cache
+      // entry for it (see _shared/runPersistence.ts).
+      hypothesis_hash: hashForNewRun(hHash, isRefinement),
       status: (cached ? "done" : "qc") as "done" | "qc",
       qc: cached?.qc ?? (isRefinement ? parentRun?.qc ?? null : null),
       plan: cached?.plan ?? null,
@@ -942,9 +945,10 @@ serve(async (req) => {
           const normalizedDomain = planDomainStrict
             ? await resolveDomain(AI_API_KEY, planDomainStrict, domainGuess, hypothesis, (planObj as { summary?: string })?.summary)
             : domainGuess;
-          await supabase.from("runs").update({
-            plan: planObj, status: "done", domain: normalizedDomain,
-          }).eq("id", runId);
+          const saved = await markRunDone(supabase, runId!, { plan: planObj, domain: normalizedDomain });
+          if (saved.droppedHash) {
+            console.log(JSON.stringify({ run_id: runId, step: "done_without_hash" }));
+          }
           send("plan", planObj);
           send("done", { id: runId });
           stopHeartbeat();
