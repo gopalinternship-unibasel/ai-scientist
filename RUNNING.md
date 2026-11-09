@@ -272,6 +272,15 @@ which still points at the deleted hosted project.
   `-Watch`, `supabase stop` and a Docker restart all kill the background
   pipeline; those runs stay in `qc`/`plan` until the cleanup job marks them
   failed (within 25 minutes), and their owner gets a Retry button.
+- **Literature APIs are best-effort.** On 9 Nov 2026 Semantic Scholar
+  answered 429 to every anonymous request (a free key fixes that, see
+  below) and OpenAlex rate-limited anonymous search for minutes at a time
+  ("temporarily rate-limited while the search cluster is under elevated
+  load"), so some runs used PubMed alone. Each source has a 2.5-4.5 s
+  budget; a source that fails just contributes no papers. For textbook
+  techniques (PCR, Western blot, ELISA, ...) the canonical-technique rule
+  marks the hypothesis `exact_match` and cites the top methods papers even
+  when the hypothesis only mentions the technique in passing.
 - **Live SKU check covers Sigma-Aldrich only**, through PubChem (Sigma's
   own search endpoint no longer accepts plain requests). A catalog number
   PubChem does not know (antibodies, kits, cell lines) is not flagged. Other
