@@ -188,7 +188,7 @@ if (Test-PidAlive $fsPid) {
     if ((Test-Path $fsLog) -and (Select-String -Path $fsLog -Pattern 'Serving functions' -Quiet)) { $served = $true; break }
     if ($p.HasExited) { break }
   }
-  if (-not $served) { Write-Warn 'Edge functions did not report "Serving functions" within 180 s; see .local-logsunctions-serve*.log' }
+  if (-not $served) { Write-Warn 'Edge functions did not report "Serving functions" within 180 s; see .local-logs\functions-serve*.log' }
 }
 
 # --- 9. frontend --------------------------------------------------------------------
