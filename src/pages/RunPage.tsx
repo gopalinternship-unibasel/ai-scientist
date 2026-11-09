@@ -63,7 +63,7 @@ const STALL_THRESHOLD_MS = 150_000;
 
 const RunPage = () => {
   const { id } = useParams<{ id: string }>();
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const shareToken = searchParams.get("t");
@@ -89,7 +89,11 @@ const RunPage = () => {
   }, [signedIn, shareToken]);
 
   useEffect(() => {
-    if (!id) return;
+    // Wait for the stored session: before it is restored (slow when the
+    // access token has to be refreshed) the first read went out with the
+    // anon key, RLS hid the owner's run and "Run not found" stuck even after
+    // the session arrived (seen in the round-2 fix check, 9 Nov 2026).
+    if (!id || authLoading) return;
     let active = true;
 
     untrackRun(id);
@@ -102,6 +106,7 @@ const RunPage = () => {
         .maybeSingle();
       if (!active) return;
       if (error || !data) { setNotFound(true); return; }
+      setNotFound(false);
       const r = data as unknown as Run;
       setRun(r);
 
@@ -155,7 +160,7 @@ const RunPage = () => {
       if (channel) supabase.removeChannel(channel);
       if (pollTimer) clearInterval(pollTimer);
     };
-  }, [id, client, user, shareToken]);
+  }, [id, client, user, shareToken, authLoading]);
 
   // Stop polling once we reach a terminal state (done/failed) to save requests.
   // We do this by tracking the run status and clearing the poll in a separate effect.
@@ -418,7 +423,7 @@ const RunPage = () => {
             <div className="space-y-6">
               {run.qc && (
                 <ErrorBoundary label="the literature review">
-                  <LiteratureQCCard qc={run.qc} />
+                  <LiteratureQCCard qc={run.qc} hypothesis={run.hypothesis} />
                 </ErrorBoundary>
               )}
               {inFlight && !run.qc && <GenerationProgress stage="qc" refinement={refinementCtx} progress={run.progress} />}
