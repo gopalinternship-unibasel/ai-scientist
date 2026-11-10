@@ -21,6 +21,17 @@
 // catalog number. Such a number is now "not_found": not proof that it is
 // wrong (Sigma does not deposit antibodies, kits or cell lines in PubChem),
 // so the plan marks it unverified instead of removing it.
+//
+// "Verified" needs more than a shared word. The first version of that status
+// (10 Nov 2026) called a number confirmed when the declared name and the
+// supplier's name shared one word of four letters, or when the declared name
+// was only an acronym: "Sodium butyrate" with the number of sodium chloride
+// and "BSA" with the number of DMSO both came out verified. The names must
+// now agree (nameAgreement), by the supplier's product name or by one of the
+// names PubChem lists for that compound ("Metformin" for Sigma's
+// "1,1-Dimethylbiguanide hydrochloride"). A number found under a name that
+// only partly fits is "unconfirmed": the plan shows it as unverified with
+// the supplier's name next to it.
 
 interface Material {
   name?: string;
@@ -97,34 +108,204 @@ export async function lookupSigmaSku(
   return { status: "not_found" };
 }
 
+// --- do two names mean the same product? ---------------------------------------
+
+// Words that describe the form or grade of a product, not what it is.
+const DESCRIPTORS = new Set([
+  "solution", "stock", "powder", "grade", "reagent", "reagentplus", "bioreagent", "bioxtra", "bioultra",
+  "sterile", "filtered", "anhydrous", "hydrate", "monohydrate", "dihydrate", "trihydrate", "tetrahydrate",
+  "pentahydrate", "hexahydrate", "heptahydrate", "hydrochloride", "monohydrochloride", "dihydrochloride",
+  "hcl", "salt", "free", "base", "purity", "pure", "purified", "standard", "analytical", "molecular",
+  "biology", "tested", "suitable", "for", "the", "and", "with", "from", "in", "of", "an", "high", "low",
+  "liquid", "solid", "lyophilized", "lyophilised", "crystalline", "crystals", "working", "concentrate",
+  "concentrated", "culture", "cell", "acs", "usp", "hplc", "gc", "ultrapure", "certified", "plant",
+  "insect", "vetec", "sigmaultra", "acid", "tm", "alpha", "beta", "gamma", "delta", "dl", "cis", "trans",
+  "aqueous", "buffered", "ready", "use", "to", "by", "at", "approx", "ca",
+]);
+// Ions that many unrelated products share: "sodium" alone does not relate two names.
+const COMMON_IONS = new Set([
+  "sodium", "potassium", "calcium", "magnesium", "lithium", "ammonium", "zinc", "iron", "copper", "disodium",
+  "trisodium", "dipotassium", "chloride", "bromide", "iodide", "fluoride", "sulfic", "phosphic", "nitric",
+  "carbonic", "bicarbonic", "hydroxide", "oxide", "monobasic", "dibasic", "tribasic",
+]);
+
+/** Plural stem, and the salt name as its acid ("palmitate" and "palmitic" are one compound family). */
+function canonWord(w: string): string {
+  let t = w.length > 4 && w.endsWith("s") && !w.endsWith("ss") ? w.slice(0, -1) : w;
+  if (t.length > 5 && t.endsWith("ate")) t = `${t.slice(0, -3)}ic`;
+  return t;
+}
+
+/** The words of a product name that say what it is (amounts, grades and forms dropped). */
+export function productWords(name: string): Set<string> {
+  const cleaned = (name ?? "").normalize("NFKC").toLowerCase()
+    .replace(/[µμ]/g, "u")
+    .replace(/[<>=≥≤~]*\s*\d+(?:[.,]\d+)?\s*%/g, " ")
+    .replace(/\b\d+(?:[.,]\d+)?\s*(?:x|mg|g|kg|ug|ng|ml|l|ul|mm|um|nm|pm|m|u|iu|units?|vials?|pack|pk|ea)\b/g, " ");
+  const out = new Set<string>();
+  for (const raw of cleaned.split(/[^a-z0-9]+/)) {
+    // One character says nothing ("O" of Oil Red O, "X" of X-100, the "1" of 1,1-dimethyl...);
+    // a number of two digits or more does ("Tween 20" is not "Tween 80").
+    if (raw.length < 2 || DESCRIPTORS.has(raw)) continue;
+    const w = canonWord(raw);
+    if (!DESCRIPTORS.has(w)) out.add(w);
+  }
+  return out;
+}
+
+function jaccard(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) return 0;
+  let both = 0;
+  for (const w of a) if (b.has(w)) both++;
+  return both / (a.size + b.size - both);
+}
+
+/** A name's readings: all of it, the part before the first comma, and each bracketed alternative. */
+function nameReadings(name: string): Set<string>[] {
+  const brackets = [...(name ?? "").matchAll(/\(([^()]*)\)/g)].map((m) => m[1]);
+  const outside = (name ?? "").replace(/\([^()]*\)/g, " ");
+  const seen = new Set<string>();
+  const out: Set<string>[] = [];
+  for (const part of [outside, outside.split(",")[0], ...brackets]) {
+    const words = productWords(part);
+    const key = [...words].sort().join(" ");
+    if (words.size > 0 && !seen.has(key)) {
+      seen.add(key);
+      out.push(words);
+    }
+  }
+  return out;
+}
+
+/** Share of words two names must have in common to be the same product (two of three). */
+export const SAME_PRODUCT_SHARE = 0.66;
+
+export type NameAgreement = "same" | "related" | "different";
+
 /**
- * True when the declared name and the supplier's product name share at least
- * one substantive word, or when the declared name has no word we can compare
- * (e.g. only an acronym such as "DMSO").
+ * Whether a material's declared name and the names a catalogue gives a
+ * number are the same product:
+ *  - "same": one reading of the declared name and one catalogue name share
+ *    at least two thirds of their words ("Sodium butyrate" and "Sodium
+ *    butyrate, >=98.5% (GC)"; "DMSO" and the PubChem name "DMSO");
+ *  - "related": not the same, but they share a word that says something
+ *    ("Glucose" and "Glucose oxidase from Aspergillus niger");
+ *  - "different": nothing but form words or common ions in common ("Sodium
+ *    butyrate" and "Sodium chloride"; "BSA" and "Dimethyl sulfoxide").
+ * `matched` is the catalogue name that agreed.
+ */
+export function nameAgreement(declared: string, catalogueNames: string[]): { agreement: NameAgreement; matched?: string } {
+  const mine = nameReadings(declared);
+  let related = false;
+  for (const theirs of catalogueNames) {
+    for (const t of nameReadings(theirs)) {
+      for (const m of mine) {
+        if (jaccard(m, t) >= SAME_PRODUCT_SHARE) return { agreement: "same", matched: theirs };
+        if (related) continue;
+        for (const w of m) {
+          if (t.has(w) && !COMMON_IONS.has(w) && (w.length >= 4 || /\d/.test(w))) {
+            related = true;
+            break;
+          }
+        }
+      }
+    }
+  }
+  return { agreement: related ? "related" : "different" };
+}
+
+/**
+ * True unless the two names have nothing in common (for callers that only
+ * ask "is this clearly another product?"). A name without a comparable word
+ * (form words only) is not called different.
  */
 export function nameLooksRelated(declared: string, canonical: string): boolean {
-  const words = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().split(/\s+/).filter(Boolean);
-  // Substantive words of the declared name: 4+ letters and not an acronym
-  // written in capitals in the original text.
-  const acronyms = new Set((declared.match(/\b[A-Z0-9]{2,6}\b/g) ?? []).map((a) => a.toLowerCase()));
-  const d = words(declared).filter((w) => w.length >= 4 && !acronyms.has(w));
-  const c = new Set(words(canonical));
-  if (c.size === 0 || d.length === 0) return true; // nothing to compare → don't flag
-  return d.some((w) => c.has(w));
+  if (nameReadings(declared).length === 0 || nameReadings(canonical).length === 0) return true;
+  return nameAgreement(declared, [canonical]).agreement !== "different";
+}
+
+const PUBCHEM_COMPOUND = "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid";
+/** How many of a compound's PubChem names are compared (PubChem lists the most used first). */
+const MAX_SYNONYMS = 250;
+
+/**
+ * The names PubChem lists for the compound behind a Sigma-Aldrich source ID.
+ * An empty list means the product is not a single compound (no CID); null
+ * means the question could not be answered (network, throttling).
+ */
+export async function compoundNames(sourceId: string, fetchFn: FetchFn = fetch): Promise<string[] | null> {
+  try {
+    const res = await fetchFn(`${PUBCHEM}/${encodeURIComponent(sourceId)}/cids/JSON`, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    if (res.status === 400 || res.status === 404) {
+      try { await res.body?.cancel(); } catch { /* noop */ }
+      return [];
+    }
+    if (!res.ok) return null;
+    const j = await res.json().catch(() => null);
+    const cid = j?.InformationList?.Information?.[0]?.CID?.[0];
+    if (!Number.isInteger(cid)) return [];
+    const syn = await fetchFn(`${PUBCHEM_COMPOUND}/${cid}/synonyms/JSON`, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    if (!syn.ok) {
+      try { await syn.body?.cancel(); } catch { /* noop */ }
+      return null;
+    }
+    const names = (await syn.json().catch(() => null))?.InformationList?.Information?.[0]?.Synonym;
+    if (!Array.isArray(names)) return null;
+    return names.filter((n: unknown): n is string => typeof n === "string" && /[a-z]{3}/i.test(n)).slice(0, MAX_SYNONYMS);
+  } catch {
+    return null;
+  }
 }
 
 /** One live lookup result, for planContentChecks.checkCatalogNumbers. */
 export interface LiveSkuResult {
   material_index: number;
   catalog_number: string;
-  status: "match" | "mismatch" | "not_found" | "unknown";
-  /** For a mismatch: what Sigma-Aldrich calls the product. */
+  /**
+   * match: the catalogue lists the number as this product. mismatch: as
+   * another product. unconfirmed: found, but the names only partly fit (or
+   * the compound's other names could not be fetched). not_found: PubChem has
+   * no such Sigma-Aldrich number. unknown: the lookup failed.
+   */
+  status: "match" | "mismatch" | "unconfirmed" | "not_found" | "unknown";
+  /** For a mismatch or an unconfirmed number: what Sigma-Aldrich calls the product. */
   supplier_hint?: string;
-  /** For a match: the PubChem source ID. */
+  /** For a match: the PubChem source ID (and the compound name that agreed, when it was not the product name). */
   source?: string;
 }
 
 const SIGMA_SUPPLIER = /sigma|millipore|aldrich|supelco|merck|fluka/;
+
+/** Compare one found number with the material's name; the compound's other names are fetched only when needed. */
+async function judgeFound(
+  declared: string,
+  found: { name: string; source_id: string },
+  fetchFn: FetchFn,
+): Promise<Pick<LiveSkuResult, "status" | "supplier_hint" | "source">> {
+  const listed = `Sigma-Aldrich lists this SKU as "${found.name}".`;
+  // A name made only of form words ("Stock solution") cannot be compared.
+  if (productWords(declared).size === 0) return { status: "unconfirmed", supplier_hint: listed };
+  const byName = nameAgreement(declared, [found.name]);
+  if (byName.agreement === "same") return { status: "match", source: found.source_id };
+  const names = await compoundNames(found.source_id, fetchFn);
+  if (names === null) {
+    // Without the compound's other names, "Metformin" for Sigma's
+    // "1,1-Dimethylbiguanide hydrochloride" cannot be told from a wrong number.
+    return { status: "unconfirmed", supplier_hint: listed };
+  }
+  const bySynonym = names.length > 0 ? nameAgreement(declared, names) : byName;
+  if (bySynonym.agreement === "same") {
+    return { status: "match", source: `${found.source_id}; PubChem also names this compound "${bySynonym.matched}"` };
+  }
+  const related = byName.agreement === "related" || bySynonym.agreement === "related";
+  return related ? { status: "unconfirmed", supplier_hint: listed } : { status: "mismatch", supplier_hint: listed };
+}
 
 /**
  * Look up the catalog numbers of up to TOP_N Sigma-Aldrich / Merck
@@ -140,39 +321,38 @@ export async function lookupMaterialsLive(
   for (let i = 0; i < materials.length; i++) {
     const m = materials[i];
     const supplier = (m?.supplier ?? "").toLowerCase();
-    const cat = (m?.catalog_number ?? "").trim();
+    const cat = String(m?.catalog_number ?? "").trim();
     if (!cat || /^custom$/i.test(cat)) continue;
     if (!SIGMA_SUPPLIER.test(supplier)) continue;
     targets.push({ idx: i, m });
     if (targets.length >= TOP_N) break;
   }
-  const results: SkuLookup[] = new Array(targets.length);
+  const results: LiveSkuResult[] = new Array(targets.length);
   let next = 0;
   const worker = async () => {
     while (next < targets.length) {
       const k = next++;
-      results[k] = await lookupSigmaSku(targets[k].m.catalog_number!.trim(), targets[k].m.supplier ?? "", fetchFn)
-        .catch(() => ({ status: "unknown" as const }));
+      const { idx, m } = targets[k];
+      const cat = String(m.catalog_number ?? "").trim();
+      const base = { material_index: idx, catalog_number: cat };
+      try {
+        const r = await lookupSigmaSku(cat, m.supplier ?? "", fetchFn);
+        results[k] = r.status === "found"
+          ? { ...base, ...(await judgeFound(String(m.name ?? ""), r, fetchFn)) }
+          : { ...base, status: r.status };
+        console.log(JSON.stringify({ step: "sku_verify", catalog_number: cat, status: results[k].status, ...(r.status === "found" ? { pubchem: r.source_id } : {}) }));
+      } catch {
+        results[k] = { ...base, status: "unknown" };
+      }
     }
   };
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, targets.length) }, worker));
-
-  return targets.map(({ idx, m }, k) => {
-    const r = results[k];
-    const cat = m.catalog_number!.trim();
-    console.log(JSON.stringify({ step: "sku_verify", catalog_number: cat, status: r.status, ...(r.status === "found" ? { pubchem: r.source_id } : {}) }));
-    if (r.status === "found") {
-      return nameLooksRelated(m.name ?? "", r.name)
-        ? { material_index: idx, catalog_number: cat, status: "match" as const, source: r.source_id }
-        : { material_index: idx, catalog_number: cat, status: "mismatch" as const, supplier_hint: `Sigma-Aldrich lists this SKU as "${r.name}".` };
-    }
-    return { material_index: idx, catalog_number: cat, status: r.status };
-  });
+  return results;
 }
 
 /**
- * The mismatches only (a SKU that resolves to a product whose name looks
- * unrelated to the declared one), in the older issue shape.
+ * The mismatches only (a SKU that resolves to another product), in the
+ * older issue shape.
  */
 export async function verifyMaterialsLive(
   materials: Material[] | undefined,
