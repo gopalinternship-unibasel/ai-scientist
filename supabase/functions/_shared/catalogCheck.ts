@@ -206,3 +206,112 @@ export function findCatalogIssues(
   }
   return out;
 }
+
+// --- ATCC cell lines -----------------------------------------------------------
+//
+// ATCC numbers of common cell lines. QA round 3 (run 92185b64): the default
+// local model gave Caco-2 cells "ATCC CCL-22" (Caco-2 is HTB-37), and no
+// check knew better. A material that names one of these lines gets this
+// number: a wrong one is corrected, a missing one filled in, and the number is
+// shown as verified. Each pair was checked on 10 Nov 2026 with a PubMed
+// Central search for the number together with the line's name: 838-8,704
+// full-text papers per pair, against 33 for the QA's wrong "CCL-22" with
+// Caco-2 (script check-atcc-pubmed.py in _e2e/ai-research-assistant-fix/round4/
+// on Gopal's PC).
+export interface CellLineEntry {
+  /** ATCC catalogue number. */
+  atcc: string;
+  /** Usual name. */
+  label: string;
+  /** Spellings, compared with letters and digits only ("SH-SY5Y" = "shsy5y"). */
+  aliases: string[];
+}
+
+export const ATCC_CELL_LINES: CellLineEntry[] = [
+  { atcc: "HTB-37", label: "Caco-2", aliases: ["caco2"] },
+  { atcc: "HB-8065", label: "Hep G2", aliases: ["hepg2"] },
+  { atcc: "CRL-2266", label: "SH-SY5Y", aliases: ["shsy5y"] },
+  { atcc: "CCL-2", label: "HeLa", aliases: ["hela"] },
+  { atcc: "CRL-1573", label: "HEK-293", aliases: ["hek293", "293"] },
+  { atcc: "CRL-3216", label: "293T (HEK293T)", aliases: ["hek293t", "293t"] },
+  { atcc: "HTB-22", label: "MCF7", aliases: ["mcf7"] },
+  { atcc: "CCL-185", label: "A549", aliases: ["a549"] },
+  { atcc: "CCL-247", label: "HCT 116", aliases: ["hct116"] },
+  { atcc: "HTB-38", label: "HT-29", aliases: ["ht29"] },
+  { atcc: "HTB-26", label: "MDA-MB-231", aliases: ["mdamb231"] },
+  { atcc: "TIB-152", label: "Jurkat, Clone E6-1", aliases: ["jurkat"] },
+  { atcc: "TIB-71", label: "RAW 264.7", aliases: ["raw2647"] },
+  { atcc: "TIB-202", label: "THP-1", aliases: ["thp1"] },
+  { atcc: "CRL-1435", label: "PC-3", aliases: ["pc3"] },
+  { atcc: "CRL-1740", label: "LNCaP clone FGC", aliases: ["lncap"] },
+  { atcc: "CCL-81", label: "Vero", aliases: ["vero"] },
+  { atcc: "CCL-61", label: "CHO-K1", aliases: ["chok1"] },
+  { atcc: "CRL-1658", label: "NIH/3T3", aliases: ["nih3t3"] },
+  { atcc: "CRL-1772", label: "C2C12", aliases: ["c2c12"] },
+  { atcc: "CL-173", label: "3T3-L1", aliases: ["3t3l1"] },
+  { atcc: "HTB-96", label: "U-2 OS", aliases: ["u2os"] },
+  { atcc: "HTB-14", label: "U-87 MG", aliases: ["u87mg", "u87"] },
+  { atcc: "CCL-243", label: "K-562", aliases: ["k562"] },
+  { atcc: "CCL-240", label: "HL-60", aliases: ["hl60"] },
+];
+
+/** Words of a name as letters-and-digits keys, plus adjacent pairs ("HEK 293T" -> "hek293t"). */
+function nameKeys(name: string): Set<string> {
+  const words = (name ?? "").toLowerCase().split(/[\s,;:()[\]/]+/).map((w) => w.replace(/[^a-z0-9]/g, "")).filter(Boolean);
+  const keys = new Set(words);
+  for (let i = 0; i + 1 < words.length; i++) keys.add(words[i] + words[i + 1]);
+  for (let i = 0; i + 2 < words.length; i++) keys.add(words[i] + words[i + 1] + words[i + 2]);
+  return keys;
+}
+
+/** The ATCC cell line a material name refers to, if it is in ATCC_CELL_LINES. */
+export function cellLineIn(name: string | undefined): CellLineEntry | null {
+  const keys = nameKeys(name ?? "");
+  // Longest alias first: "HEK293T" is 293T, not HEK-293.
+  let best: CellLineEntry | null = null;
+  let bestLen = 0;
+  for (const e of ATCC_CELL_LINES) {
+    for (const a of e.aliases) {
+      if (a.length > bestLen && keys.has(a) && (a.length >= 4 || /cell|line|atcc/i.test(name ?? ""))) {
+        best = e;
+        bestLen = a.length;
+      }
+    }
+  }
+  return best;
+}
+
+/** Whether a catalog number has ATCC's letters-dash-digits shape. */
+export function atccShaped(cat: string): boolean {
+  return /^[A-Z]{2,4}-\d{1,5}$/i.test((cat ?? "").trim());
+}
+
+/**
+ * Catalog numbers that look made up: a letter or two and a round number
+ * (QA round 3, run 92185b64: Sigma "S1000", Thermo "A1000", "T1000",
+ * "E1000"), a repeated digit ("A1111"), a counting sequence ("123456"), or a
+ * placeholder word. ATCC-shaped numbers are left to the cell-line list.
+ */
+export function looksLikePlaceholder(cat: string | undefined): boolean {
+  const raw = (cat ?? "").trim();
+  if (!raw) return false;
+  if (/^(?:x+|tbd|n\/?a|none|unknown|various|see notes?|placeholder|catalog(?:ue)? number)$/i.test(raw)) return true;
+  if (atccShaped(raw)) return false;
+  const t = raw.toUpperCase().replace(/[\s-]/g, "");
+  return /^[A-Z]{0,3}[1-9]0{3,}$/.test(t)
+    || /^[A-Z]{0,3}(\d)\1{3,}$/.test(t)
+    || /^[A-Z]{0,3}(?:1234|12345|123456|1234567|12345678|123456789)$/.test(t);
+}
+
+/**
+ * A catalog number the local dictionary knows as THIS product (the number
+ * is listed and the material's name matches its expected words).
+ */
+export function dictionaryConfirms(cat: string | undefined, name: string | undefined): string | null {
+  const c = (cat ?? "").toString().trim();
+  const entry = CATALOG[c] ?? CATALOG[c.toUpperCase()];
+  if (!entry) return null;
+  const lower = (name ?? "").toLowerCase();
+  if (entry.mismatches?.some((m) => lower.includes(m.toLowerCase()))) return null;
+  return entry.expects.some((e) => lower.includes(e.toLowerCase())) ? entry.name : null;
+}

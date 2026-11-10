@@ -21,9 +21,10 @@ import { CATALOG_GROUPS, relevantCatalogGroups } from "./costCatalog.ts";
 import { checkTimelineConsistency, parseDurationToHours } from "./timelineCheck.ts";
 import { anchorConcepts, hypothesisConcepts, mentions, textWords } from "./hypothesisTerms.ts";
 import {
-  doseIssues, type LiveSkuFinding, materialListSteps, type MaterialWithCatalog, removeWrongCatalogNumbers,
-  unlikelySuppliers,
+  checkCatalogNumbers, compartmentMismatch, dilutionIssues, doseIssues, type LiveSkuFinding, materialListSteps,
+  type MaterialWithCatalog, missingMaterials, readoutMissing, stepDurationIssues, unlikelySuppliers,
 } from "./planContentChecks.ts";
+import { PIPELINE_VERSION } from "./pipelineVersion.ts";
 
 export interface PlanIssue {
   kind:
@@ -34,10 +35,19 @@ export interface PlanIssue {
     | "materials_unpriced"
     | "catalog_items_copied"
     | "catalog_numbers_removed"
+    | "catalog_numbers_corrected"
+    | "catalog_numbers_unverified"
     | "supplier_unlikely"
+    | "materials_missing"
+    | "materials_incomplete"
     | "dose_changed"
+    | "dilution_inconsistent"
+    | "readout_missing"
+    | "readout_compartment"
     | "protocol_steps_not_actions"
     | "protocol_exceeds_timeline"
+    | "step_durations_inconsistent"
+    | "budget_cap_not_met"
     | "refinement_budget_not_met"
     | "refinement_timeline_not_met"
     | "unverified_sources_removed";
@@ -48,10 +58,14 @@ export interface PlanIssue {
 /** Findings the guards corrected themselves (shown as "Fixed", not sent to the reviewer). */
 export const FIXED_KINDS = new Set<PlanIssue["kind"]>([
   "budget_total_corrected", "unverified_sources_removed", "materials_line_corrected", "catalog_numbers_removed",
+  "catalog_numbers_corrected",
 ]);
 
 export interface PlanVerification {
-  version: 1;
+  /** 1: QA rounds 1-2; 2: QA round 3 (catalog status, readout, missing materials, dilutions). */
+  version: 1 | 2;
+  /** The pipeline that checked the plan (pipelineVersion.ts). */
+  pipeline_version?: number;
   sources: SourceReport;
   budget: { stated_total: number | null; line_item_sum: number; corrected: boolean } | null;
   refinement?: RefinementConstraints;
@@ -71,6 +85,10 @@ export interface PlanVerification {
 export const REPAIR_KINDS = new Set<PlanIssue["kind"]>([
   "refinement_budget_not_met", "refinement_timeline_not_met", "materials_off_topic",
   "dose_changed", "protocol_steps_not_actions",
+  // QA round 3: the compound, cell line or readout reagent missing from the
+  // materials, no step for the hypothesis' readout, a budget cap stated in
+  // the hypothesis.
+  "materials_missing", "readout_missing", "budget_cap_not_met",
 ]);
 
 export function repairableIssues(v: PlanVerification): PlanIssue[] {
@@ -285,6 +303,26 @@ export function parseRefinementConstraints(
   return out;
 }
 
+/**
+ * A budget cap the hypothesis itself states ("with a total budget under
+ * $5,000", "for under $2,000 in total"). Only explicit budget wording
+ * counts: "reduces the cost to under $5 per test" is the outcome, not a cap.
+ */
+export function hypothesisBudgetCap(hypothesis: string | null | undefined): number | undefined {
+  const s = (hypothesis ?? "").toLowerCase();
+  const amount = String.raw`(?:us\s*)?\$\s*(\d[\d,]*(?:\.\d+)?)\s*(k|thousand|m|million)?\b(?!\s*(?:per|each|a|an)\b)`;
+  const m = s.match(new RegExp(String.raw`\bbudget\s+(?:of\s+)?(?:(?:under|below|less than|at most|no more than|not exceeding|of at most|up to|within|capped at|limited to)\s+)?${amount}`))
+    ?? s.match(new RegExp(String.raw`\b(?:under|below|less than|at most|no more than|within)\s+${amount}\s+(?:in\s+)?(?:total|overall)\b`));
+  if (!m) return undefined;
+  return money(m[1], m[2]) ?? undefined;
+}
+
+/** "Materials $2,030, Labour $1,000, Overhead $1,000": the line items, for findings about the total. */
+function lineItemSummary(budget: BudgetShape | undefined): string {
+  const items = (budget?.line_items ?? []).filter((li) => Number(li?.amount_usd) > 0 && !/^\s*total\b/i.test(li?.category ?? ""));
+  return items.map((li) => `${li.category ?? "item"} ${usd(Number(li.amount_usd))}`).join(", ");
+}
+
 /** Sum of the timeline phase durations, in weeks (0 when nothing parses). */
 export function timelineWeeks(timeline: { duration?: string }[] | undefined): number {
   if (!Array.isArray(timeline)) return 0;
@@ -335,6 +373,13 @@ const ITEM_FILLER = new Set([
 
 function usd(n: number): string {
   return `$${Math.round(n).toLocaleString("en-US")}`;
+}
+
+function fmtHours(h: number): string {
+  if (h >= 168) return `${Math.round((h / 168) * 10) / 10} weeks`;
+  if (h >= 72) return `${Math.round((h / 24) * 10) / 10} days`;
+  if (h >= 1) return `${Math.round(h * 10) / 10} h`;
+  return `${Math.round(h * 60)} min`;
 }
 
 interface BudgetShape {
@@ -407,16 +452,32 @@ export function verifyPlan(
     });
   }
 
-  // 2) Catalog numbers that belong to another product (or break the
-  //    supplier's format) are removed before anyone can order them.
+  // 2) Catalog numbers: wrong ones (another product, the wrong format, a
+  //    placeholder) are removed before anyone can order them, a listed ATCC
+  //    cell line gets ATCC's number, and every other number is marked
+  //    verified or unverified (planContentChecks.checkCatalogNumbers).
   if (Array.isArray(plan.materials)) {
-    const { materials: cleaned, removed } = removeWrongCatalogNumbers(plan.materials, ctx.liveSku ?? []);
-    plan.materials = cleaned;
-    if (removed.length > 0) {
+    const cat = checkCatalogNumbers(plan.materials, ctx.liveSku ?? []);
+    plan.materials = cat.materials;
+    if (cat.removed.length > 0) {
       issues.push({
         kind: "catalog_numbers_removed",
         severity: "medium",
-        detail: `${removed.length} catalog number(s) were removed because they belong to another product or do not fit the supplier's format: ${removed.slice(0, 4).map((r) => `${r.catalog_number} for ${r.name} (${r.why})`).join("; ")}.`,
+        detail: `${cat.removed.length} catalog number(s) were removed because they belong to another product, do not fit the supplier's format or look made up: ${cat.removed.slice(0, 4).map((r) => `${r.catalog_number} for ${r.name} (${r.why})`).join("; ")}.`,
+      });
+    }
+    if (cat.corrected.length > 0) {
+      issues.push({
+        kind: "catalog_numbers_corrected",
+        severity: "medium",
+        detail: `${cat.corrected.length} catalog number(s) were set from the app's ATCC cell-line list: ${cat.corrected.slice(0, 4).map((c) => `${c.to} for ${c.name}${c.from ? ` (was ${c.from})` : ""}`).join("; ")}.`,
+      });
+    }
+    if (cat.unverified.length > 0) {
+      issues.push({
+        kind: "catalog_numbers_unverified",
+        severity: "medium",
+        detail: `${cat.unverified.length} catalog number(s) could not be confirmed in a supplier catalogue and are marked unverified; check them before ordering: ${cat.unverified.slice(0, 4).map((u) => `${u.catalog_number} for ${u.name} (${u.why})`).join("; ")}.`,
       });
     }
   }
@@ -510,7 +571,49 @@ export function verifyPlan(
     issues.push({
       kind: "dose_changed",
       severity: "high",
-      detail: `The hypothesis tests ${d.substance} at ${d.hypothesis}; the protocol uses ${d.plan.join(", ")}.`,
+      detail: `The hypothesis tests ${d.label ?? d.substance} at ${d.hypothesis}; the protocol uses ${d.plan.join(", ")}.`,
+    });
+  }
+  const dil = dilutionIssues(plan.protocol);
+  if (dil.length > 0) {
+    issues.push({
+      kind: "dilution_inconsistent",
+      severity: "medium",
+      detail: `Dilution arithmetic does not give the stated concentration: ${dil.slice(0, 3).map((d) => `step ${d.step}, ${d.dilution} gives about ${d.computed}, not ${d.stated}`).join("; ")}.`,
+    });
+  }
+  const readout = readoutMissing(ctx.hypothesis, plan.protocol);
+  if (readout) {
+    issues.push({
+      kind: "readout_missing",
+      severity: "high",
+      detail: `The hypothesis is measured by ${readout.phrase}, but no protocol step does that measurement.`,
+    });
+  }
+  const compartment = compartmentMismatch(ctx.hypothesis, plan.protocol);
+  if (compartment) issues.push({ kind: "readout_compartment", severity: "medium", detail: compartment });
+  if (materials.length > 0) {
+    const missing = missingMaterials(ctx.hypothesis, plan.protocol, materials);
+    if (missing.required.length > 0) {
+      issues.push({
+        kind: "materials_missing",
+        severity: "high",
+        detail: `The protocol uses ${missing.required.join(", ")}, but the materials table does not list ${missing.required.length === 1 ? "it" : "them"}${missing.other.length ? ` (nor ${missing.other.slice(0, 5).join(", ")})` : ""}.`,
+      });
+    } else if (missing.other.length > 0) {
+      issues.push({
+        kind: "materials_incomplete",
+        severity: "medium",
+        detail: `The protocol uses ${missing.other.slice(0, 6).join(", ")}, which the materials table does not list or price.`,
+      });
+    }
+  }
+  const stepDur = stepDurationIssues(plan.protocol, parseDurationToHours);
+  if (stepDur) {
+    issues.push({
+      kind: "step_durations_inconsistent",
+      severity: "medium",
+      detail: `Step${stepDur.steps.length === 1 ? "" : "s"} ${stepDur.steps.join(", ")} ${stepDur.steps.length === 1 ? "has" : "have"} a duration of "${stepDur.duration}", far longer than the ${fmtHours(stepDur.text_hours)} of work ${stepDur.steps.length === 1 ? "its" : "their"} text describes.`,
     });
   }
   const timelineIssue = checkTimelineConsistency(plan.protocol, plan.timeline);
@@ -518,26 +621,46 @@ export function verifyPlan(
     issues.push({ kind: "protocol_exceeds_timeline", severity: "medium", detail: timelineIssue.detail });
   }
 
-  // 6) Refinement limits.
+  // 6) Limits: a budget cap the hypothesis states, and the refinement's limits.
+  const total = Number(plan.budget?.total_usd) || 0;
+  const overBy = (cap: number) => `this plan totals ${usd(total)}${lineItemSummary(plan.budget) ? ` (${lineItemSummary(plan.budget)})` : ""}, ${usd(total - cap)} over`;
+  const hypCap = hypothesisBudgetCap(ctx.hypothesis);
+  if (hypCap !== undefined && plan.budget && total > hypCap * 1.01) {
+    issues.push({
+      kind: "budget_cap_not_met",
+      severity: "high",
+      detail: `The hypothesis sets a budget of at most ${usd(hypCap)}; ${overBy(hypCap)}.`,
+    });
+  }
   const parentTotal = Number((ctx.parentPlan as PlanShape | undefined)?.budget?.total_usd) || undefined;
   const constraints = parseRefinementConstraints(ctx.refinementInstruction, parentTotal);
   if (constraints.max_budget_usd !== undefined && plan.budget) {
-    const total = Number(plan.budget.total_usd) || 0;
     if (total > constraints.max_budget_usd * 1.01) {
       issues.push({
         kind: "refinement_budget_not_met",
         severity: "high",
-        detail: `The refinement asked for a budget of at most ${usd(constraints.max_budget_usd)}; this plan totals ${usd(total)}.`,
+        detail: `The refinement asked for a budget of at most ${usd(constraints.max_budget_usd)}; ${overBy(constraints.max_budget_usd)}.`,
       });
     }
   }
   if (constraints.max_timeline_weeks !== undefined) {
     const weeks = timelineWeeks(plan.timeline);
+    const stepWeeks = Array.isArray(plan.protocol)
+      ? Math.round((plan.protocol.reduce((s, p) => s + parseDurationToHours(p?.duration), 0) / 168) * 10) / 10
+      : 0;
     if (weeks > constraints.max_timeline_weeks * 1.05) {
       issues.push({
         kind: "refinement_timeline_not_met",
         severity: "high",
         detail: `The refinement asked for a timeline of at most ${constraints.max_timeline_weeks} weeks; the phases add up to ${weeks} weeks.`,
+      });
+    } else if (stepWeeks > constraints.max_timeline_weeks * 1.5) {
+      // Run 69a412a9 (QA round 3): phases of 1 + 1 weeks, but five protocol
+      // steps of "2 weeks" each.
+      issues.push({
+        kind: "refinement_timeline_not_met",
+        severity: "high",
+        detail: `The refinement asked for a timeline of at most ${constraints.max_timeline_weeks} weeks; the phases fit, but the protocol step durations add up to ${stepWeeks} weeks.`,
       });
     }
   }
@@ -554,7 +677,8 @@ export function verifyPlan(
     : report;
 
   const verification: PlanVerification = {
-    version: 1,
+    version: 2,
+    pipeline_version: PIPELINE_VERSION,
     sources,
     budget: budgetOut,
     ...(Object.keys(constraints).length ? { refinement: constraints } : {}),

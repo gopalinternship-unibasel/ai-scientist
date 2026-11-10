@@ -115,16 +115,18 @@ Deno.test("steps: v2 (b4665175) steps that only list materials are flagged; run 
 
 // --- catalog numbers -------------------------------------------------------------------------
 
-Deno.test("catalog: prompt-example SKUs on the wrong product are removed (T9531 metformin, CRL-3216 HepG2)", () => {
+Deno.test("catalog: prompt-example SKUs on the wrong product are removed (T9531 metformin) or corrected (CRL-3216 HepG2)", () => {
   const materials: { name: string; supplier: string; catalog_number?: string; total_cost_usd: number; notes?: string }[] = [
     { name: "HepG2 cells", supplier: "ATCC", catalog_number: "CRL-3216", total_cost_usd: 580 },
     { name: "Metformin, 10 mM (100 mL)", supplier: "Sigma-Aldrich", catalog_number: "T9531", total_cost_usd: 100 },
     { name: "DMEM (500 mL)", supplier: "Thermo Fisher", catalog_number: "11965092", total_cost_usd: 35 },
   ];
   const { materials: out, removed } = removeWrongCatalogNumbers(materials);
-  assertEquals(removed.map((r) => r.catalog_number), ["CRL-3216", "T9531"]);
-  assertEquals(out[0].catalog_number, undefined);
-  assert(out[0].notes?.includes("CRL-3216 removed"));
+  assertEquals(removed.map((r) => r.catalog_number), ["T9531"]);
+  // Since QA round 3 a cell line from the ATCC list gets ATCC's number
+  // instead of losing the wrong one (CRL-3216 is HEK293T; HepG2 is HB-8065).
+  assertEquals(out[0].catalog_number, "HB-8065");
+  assert(out[0].notes?.includes("CRL-3216 replaced by HB-8065"), out[0].notes);
   assertEquals(out[2].catalog_number, "11965092", "a correct number stays");
 
   const v = verifyPlan({ materials }, { hypothesis: METFORMIN, references: [] });

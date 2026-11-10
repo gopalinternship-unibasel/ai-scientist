@@ -9,13 +9,18 @@
 // substances whose source ID is "<product number>_<brand>" (for example
 // T0167_SIGMA = "D-(+)-Trehalose dihydrate ... BioReagent").
 //
-// Strict budget: at most TOP_N reagents are checked, in parallel, each with a
-// few short sequential requests (one per brand suffix). Any failure (network,
-// throttling, unexpected JSON) returns "unknown" rather than a false
-// positive. A catalog number PubChem does not know is also "unknown": Sigma
-// does not deposit antibodies, kits or cell lines there, so absence proves
-// nothing. Only a SKU that resolves to a clearly different product is
-// reported.
+// Strict budget: at most TOP_N reagents are checked, two at a time (PubChem
+// allows 5 requests a second), each with a few short sequential requests
+// (one per brand suffix). Any failure (network, throttling, unexpected JSON)
+// returns "unknown" rather than a false positive.
+//
+// Every result is reported (lookupMaterialsLive). Until QA round 3 only a
+// SKU that resolved to a clearly different product was reported, and a
+// number PubChem does not know was silently accepted, so an invented
+// "Sigma S1000" for sodium butyrate (run 92185b64) was shown as a real
+// catalog number. Such a number is now "not_found": not proof that it is
+// wrong (Sigma does not deposit antibodies, kits or cell lines in PubChem),
+// so the plan marks it unverified instead of removing it.
 
 interface Material {
   name?: string;
@@ -37,7 +42,8 @@ export type SkuLookup =
   | { status: "unknown" };
 
 const TIMEOUT_MS = 5000;
-const TOP_N = 3;
+const TOP_N = 8;
+const CONCURRENCY = 2;
 const PUBCHEM = "https://pubchem.ncbi.nlm.nih.gov/rest/pug/substance/sourceid/Sigma-Aldrich";
 // Brand suffixes Sigma-Aldrich uses for its PubChem source IDs.
 const BRANDS = ["SIGMA", "SIAL", "ALDRICH", "SUPELCO", "FLUKA"];
@@ -107,17 +113,28 @@ export function nameLooksRelated(declared: string, canonical: string): boolean {
   return d.some((w) => c.has(w));
 }
 
+/** One live lookup result, for planContentChecks.checkCatalogNumbers. */
+export interface LiveSkuResult {
+  material_index: number;
+  catalog_number: string;
+  status: "match" | "mismatch" | "not_found" | "unknown";
+  /** For a mismatch: what Sigma-Aldrich calls the product. */
+  supplier_hint?: string;
+  /** For a match: the PubChem source ID. */
+  source?: string;
+}
+
+const SIGMA_SUPPLIER = /sigma|millipore|aldrich|supelco|merck|fluka/;
+
 /**
- * Verify up to TOP_N Sigma-Aldrich / Merck materials. Other suppliers are
- * skipped (no public unauthenticated catalogue). Returns issues only for SKUs
- * that resolve to a product whose name looks unrelated to the declared one.
- *
- * Designed to NEVER block: any error returns no issue for that material.
+ * Look up the catalog numbers of up to TOP_N Sigma-Aldrich / Merck
+ * materials (other suppliers have no public unauthenticated catalogue).
+ * Designed to never block: a failed lookup is "unknown".
  */
-export async function verifyMaterialsLive(
+export async function lookupMaterialsLive(
   materials: Material[] | undefined,
   fetchFn: FetchFn = fetch,
-): Promise<SkuIssue[]> {
+): Promise<LiveSkuResult[]> {
   if (!Array.isArray(materials)) return [];
   const targets: Array<{ idx: number; m: Material }> = [];
   for (let i = 0; i < materials.length; i++) {
@@ -125,31 +142,48 @@ export async function verifyMaterialsLive(
     const supplier = (m?.supplier ?? "").toLowerCase();
     const cat = (m?.catalog_number ?? "").trim();
     if (!cat || /^custom$/i.test(cat)) continue;
-    if (!/sigma|millipore|aldrich|supelco|merck|fluka/.test(supplier)) continue;
+    if (!SIGMA_SUPPLIER.test(supplier)) continue;
     targets.push({ idx: i, m });
     if (targets.length >= TOP_N) break;
   }
-  if (targets.length === 0) return [];
+  const results: SkuLookup[] = new Array(targets.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < targets.length) {
+      const k = next++;
+      results[k] = await lookupSigmaSku(targets[k].m.catalog_number!.trim(), targets[k].m.supplier ?? "", fetchFn)
+        .catch(() => ({ status: "unknown" as const }));
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, targets.length) }, worker));
 
-  const results = await Promise.all(
-    targets.map((t) => lookupSigmaSku(t.m.catalog_number!.trim(), t.m.supplier ?? "", fetchFn)),
-  );
-  const issues: SkuIssue[] = [];
-  for (let k = 0; k < targets.length; k++) {
-    const { idx, m } = targets[k];
+  return targets.map(({ idx, m }, k) => {
     const r = results[k];
     const cat = m.catalog_number!.trim();
-    const declared = m.name ?? "";
     console.log(JSON.stringify({ step: "sku_verify", catalog_number: cat, status: r.status, ...(r.status === "found" ? { pubchem: r.source_id } : {}) }));
-    if (r.status === "found" && !nameLooksRelated(declared, r.name)) {
-      issues.push({
-        material_index: idx,
-        catalog_number: cat,
-        declared_name: declared,
-        reason: "name_mismatch_on_supplier",
-        supplier_hint: `Sigma-Aldrich lists this SKU as "${r.name}".`,
-      });
+    if (r.status === "found") {
+      return nameLooksRelated(m.name ?? "", r.name)
+        ? { material_index: idx, catalog_number: cat, status: "match" as const, source: r.source_id }
+        : { material_index: idx, catalog_number: cat, status: "mismatch" as const, supplier_hint: `Sigma-Aldrich lists this SKU as "${r.name}".` };
     }
-  }
-  return issues;
+    return { material_index: idx, catalog_number: cat, status: r.status };
+  });
+}
+
+/**
+ * The mismatches only (a SKU that resolves to a product whose name looks
+ * unrelated to the declared one), in the older issue shape.
+ */
+export async function verifyMaterialsLive(
+  materials: Material[] | undefined,
+  fetchFn: FetchFn = fetch,
+): Promise<SkuIssue[]> {
+  const all = await lookupMaterialsLive(materials, fetchFn);
+  return all.filter((r) => r.status === "mismatch").map((r) => ({
+    material_index: r.material_index,
+    catalog_number: r.catalog_number,
+    declared_name: materials?.[r.material_index]?.name ?? "",
+    reason: "name_mismatch_on_supplier" as const,
+    supplier_hint: r.supplier_hint,
+  }));
 }
