@@ -13,7 +13,12 @@
 //   3      QA round 3 fixes (10 Nov 2026): catalog numbers verified or
 //          marked unverified, readout / missing-materials / dilution checks,
 //          embedding relevance filter for related work.
-export const PIPELINE_VERSION = 3;
+//   4      Review of those fixes (10 Nov 2026, evening): "verified" needs
+//          the catalogue's name to agree with the material (version 3
+//          verified "Sodium butyrate" with sodium chloride's number),
+//          sub-lines keep their own ATCC numbers, lengths are no longer read
+//          as doses, dose series and dilution sources are read correctly.
+export const PIPELINE_VERSION = 4;
 
 /**
  * Plan-cache key of a hypothesis: SHA-256 of the normalised text and the

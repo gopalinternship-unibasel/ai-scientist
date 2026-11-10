@@ -282,22 +282,35 @@ export function parseRefinementConstraints(
     if (p > 0 && p < 100) out.max_budget_usd = Math.round(parentTotal * (1 - p / 100));
   }
   if (out.max_budget_usd === undefined && /\b(?:budget|cost|costs|spend|spending|price|usd|dollars?)\b|\$/.test(s)) {
-    const cap = s.match(/(?:under|below|less than|at most|max(?:imum)?(?: of)?|no more than|not exceed(?:ing)?|within|cap(?:ped)?(?: at)?|limit(?:ed)? to|<=?|≤|down to|reduce(?:d)? to|cut to|lower(?:ed)? to|bring (?:it )?to|to)\s*(?:a\s+)?(?:total\s+(?:of\s+)?)?(?:us\s*)?\$?\s*(\d[\d,]*(?:\.\d+)?)\s*(k|thousand|m|million)?\b/);
+    const cap = s.match(/(?:under|below|less than|at most|max(?:imum)?(?: of)?|no more than|not exceed(?:ing)?|within|cap(?:ped)?(?: at)?|limit(?:ed)? to|<=?|≤|down to|reduce(?:d)? to|cut to|lower(?:ed)? to|bring (?:it )?to|to)\s*(?:a\s+)?(?:total\s+(?:of\s+)?)?(?:us\s*)?(\$)?\s*(\d[\d,]*(?:\.\d+)?)\s*(k|thousand|m|million)?\b\s*(usd|dollars?)?/);
     if (cap) {
-      const v = money(cap[1], cap[2]);
-      // "to 8 weeks" must not read as a budget: require a currency hint near the number.
-      const near = s.slice(Math.max(0, (cap.index ?? 0) - 40), (cap.index ?? 0) + cap[0].length + 12);
-      if (v && /\$|usd|dollar|budget|cost|spend/.test(near) && !/^\s*(?:weeks?|months?|days?)/.test(s.slice((cap.index ?? 0) + cap[0].length))) {
-        out.max_budget_usd = v;
-      }
+      const v = money(cap[2], cap[3]);
+      const at = cap.index ?? 0;
+      const after = s.slice(at + cap[0].length);
+      // An amount of money: "$3,000", "3000 usd", or a plain number of at least
+      // 100 next to a budget word ("reduce the budget to 3000"). "Keep the
+      // budget but raise n to 12 per group" is not a $12 cap, and "to 8 weeks"
+      // is a duration.
+      const marked = !!cap[1] || !!cap[4];
+      const near = s.slice(Math.max(0, at - 30), at + cap[0].length + 12);
+      const plain = (v ?? 0) >= 100 && /budget|cost|spend/.test(near)
+        && !/^\s*(?:weeks?|months?|days?|hours?|h\b|min|%|percent|cells?|samples?|mice|rats|animals|wells?|replicates?|per\b|fold|[uµμ]?[lm]\b|m[lmg]\b|n[mg]\b)/.test(after);
+      if (v && (marked || plain)) out.max_budget_usd = v;
     }
   }
   if (/\b(?:timeline|schedule|duration|weeks?|months?|days?|finish|complete|shorten|faster)\b/.test(s)) {
     const t = s.match(/(?:to|within|under|in|at most|no more than|max(?:imum)?(?: of)?|less than|shorter than|limit(?:ed)? to|fit (?:into|in))\s*(\d+(?:\.\d+)?)\s*(days?|weeks?|wks?|months?|years?)\b/);
     if (t) {
+      // A cap on the whole plan, not a change to one part of it: "Extend the
+      // treatment to 2 weeks" and "Shorten the staining to 2 days" say
+      // nothing about the timeline's total.
+      const clause = s.slice(0, t.index ?? 0).split(/[.;]/).pop() ?? "";
+      const whole = /\b(?:timeline|schedule|project|study|overall|whole|entire|experiment|plan|total|everything|all)\b/.test(clause);
+      const lengthens = /\b(?:extend\w*|lengthen\w*|prolong\w*|increas\w*|at least|minimum|no less than)\b/.test(clause);
+      const partOnly = /\b(?:treatment|incubation|exposure|differentiation|culture|staining|step|phase|washout|recovery|fasting|dosing|stimulation|induction|challenge|starvation|pre-?treatment|follow-?up)\b/.test(clause);
       const unit = t[2].replace(/s$/, "");
       const w = Number(t[1]) * (WEEKS_PER_UNIT[unit] ?? 0);
-      if (w > 0) out.max_timeline_weeks = Math.round(w * 100) / 100;
+      if (w > 0 && !lengthens && (whole || !partOnly)) out.max_timeline_weeks = Math.round(w * 100) / 100;
     }
   }
   return out;
@@ -312,7 +325,9 @@ export function hypothesisBudgetCap(hypothesis: string | null | undefined): numb
   const s = (hypothesis ?? "").toLowerCase();
   const amount = String.raw`(?:us\s*)?\$\s*(\d[\d,]*(?:\.\d+)?)\s*(k|thousand|m|million)?\b(?!\s*(?:per|each|a|an)\b)`;
   const m = s.match(new RegExp(String.raw`\bbudget\s+(?:of\s+)?(?:(?:under|below|less than|at most|no more than|not exceeding|of at most|up to|within|capped at|limited to)\s+)?${amount}`))
-    ?? s.match(new RegExp(String.raw`\b(?:under|below|less than|at most|no more than|within)\s+${amount}\s+(?:in\s+)?(?:total|overall)\b`));
+    ?? s.match(new RegExp(String.raw`\b(?:under|below|less than|at most|no more than|within)\s+${amount}\s+(?:in\s+)?(?:total|overall)\b`))
+    // "on a $5,000 budget", "with a total budget of ..." is the first form
+    ?? s.match(new RegExp(String.raw`${amount}\s+(?:total\s+|overall\s+)?budget\b`));
   if (!m) return undefined;
   return money(m[1], m[2]) ?? undefined;
 }
@@ -435,10 +450,21 @@ export function verifyPlan(
     parentPlan?: unknown;
     /** Live supplier-catalog findings for this plan's materials (skuVerify.ts), when they were looked up. */
     liveSku?: LiveSkuFinding[];
+    /**
+     * True for a plan as the model just wrote it. Its `verification` and the
+     * catalog status of its materials are then ignored: only this function
+     * writes them, and a model that adds "catalog_status": "verified" to its
+     * own invented number must not be believed. Leave it out for a plan this
+     * pipeline checked before (a cached copy): the notes of that check carry over.
+     */
+    fresh?: boolean;
   },
 ): { plan: PlanShape; verification: PlanVerification } {
   const plan: PlanShape = input && typeof input === "object" ? { ...(input as PlanShape) } : {};
-  const prev = plan.verification && typeof plan.verification === "object" ? plan.verification : undefined;
+  if (ctx.fresh) delete plan.verification;
+  const prev = plan.verification && typeof plan.verification === "object" && Array.isArray(plan.verification.issues)
+    ? plan.verification
+    : undefined;
   const issues: PlanIssue[] = [];
 
   // 1) Protocol sources: only retrieved references (or a plain label) survive.
@@ -457,7 +483,7 @@ export function verifyPlan(
   //    cell line gets ATCC's number, and every other number is marked
   //    verified or unverified (planContentChecks.checkCatalogNumbers).
   if (Array.isArray(plan.materials)) {
-    const cat = checkCatalogNumbers(plan.materials, ctx.liveSku ?? []);
+    const cat = checkCatalogNumbers(plan.materials, ctx.liveSku ?? [], { keepEarlier: !!prev });
     plan.materials = cat.materials;
     if (cat.removed.length > 0) {
       issues.push({

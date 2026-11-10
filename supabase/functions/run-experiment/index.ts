@@ -21,7 +21,7 @@ import { calibrateNovelty, ON_TOPIC } from "../_shared/noveltyVerdict.ts";
 import { cleanCritique } from "../_shared/critiqueGuards.ts";
 import { classifyNovelty } from "../_shared/noveltyClassifier.ts";
 import { type ChainRow, loadChain, nextVersion as nextChainVersion } from "../_shared/versionChain.ts";
-import { hypothesisCacheKey, PIPELINE_VERSION } from "../_shared/pipelineVersion.ts";
+import { hypothesisCacheKey, madeByOlderPipeline, PIPELINE_VERSION } from "../_shared/pipelineVersion.ts";
 import { filterByEmbedding } from "../_shared/embeddingRelevance.ts";
 import { checkTimelineConsistency } from "../_shared/timelineCheck.ts";
 import { lookupMaterialsLive, type SkuIssue } from "../_shared/skuVerify.ts";
@@ -431,6 +431,12 @@ serve(async (req) => {
       );
       nextVersion = nextChainVersion(chain);
     }
+    // A refinement repeats its parent's literature check, unless an older
+    // pipeline made that check: its verdict and references were not held to
+    // the current rules (the NMN run of QA round 3 cited a hydrogenase paper
+    // as a protocol source), so such a refinement searches again.
+    const reuseParentQc = isRefinement && !!parentRun?.qc
+      && !madeByOlderPipeline(parentRun.qc as { pipeline_version?: unknown });
 
     // Cache: skip cache lookup for refinements (they should always re-generate).
     const hHash = await hashHypothesis(hypothesis);
@@ -515,7 +521,7 @@ serve(async (req) => {
       // entry for it (see _shared/runPersistence.ts).
       hypothesis_hash: hashForNewRun(hHash, isRefinement),
       status: (cached ? "done" : "qc") as "done" | "qc",
-      qc: cached?.qc ?? (isRefinement ? parentRun?.qc ?? null : null),
+      qc: cached?.qc ?? (reuseParentQc ? parentRun?.qc ?? null : null),
       plan: cached?.plan ?? null,
       critique: cached?.critique ?? null,
       parent_run_id: isRefinement ? parentRunId : null,
@@ -648,7 +654,7 @@ serve(async (req) => {
             /** How unrelated candidates were dropped before classification. */
             related_filter?: Record<string, unknown>;
           };
-          if (isRefinement && parentRun?.qc) {
+          if (reuseParentQc && parentRun?.qc) {
             qc = parentRun.qc as typeof qc;
             references = qc.references ?? [];
             send("qc", qc);
@@ -1034,7 +1040,7 @@ serve(async (req) => {
             return await lookupMaterialsLive(mats).catch(() => []);
           };
           const guardCtx = { hypothesis, references, refinementInstruction, parentPlan: parentRun?.plan };
-          let { plan: planObj, verification } = verifyPlan(rawPlan, { ...guardCtx, liveSku: await liveSkuFor(rawPlan) });
+          let { plan: planObj, verification } = verifyPlan(rawPlan, { ...guardCtx, fresh: true, liveSku: await liveSkuFor(rawPlan) });
           if (verification.issues.length > 0) {
             console.log(JSON.stringify({ run_id: runId, step: "plan_guards", issues: verification.issues.map((i) => i.kind) }));
           }
@@ -1051,7 +1057,7 @@ serve(async (req) => {
             if (second && typeof second === "object") {
               const s = second as { protocol?: { description?: string }[] };
               if (Array.isArray(s.protocol)) s.protocol = sanitizeCitationsWithReport(s.protocol, references.length).steps;
-              secondChecked = verifyPlan(s, { ...guardCtx, liveSku: await liveSkuFor(s) });
+              secondChecked = verifyPlan(s, { ...guardCtx, fresh: true, liveSku: await liveSkuFor(s) });
             }
             ({ plan: planObj, verification } = chooseRepaired({ plan: planObj, verification }, secondChecked));
             console.log(JSON.stringify({ run_id: runId, step: "plan_repair", ...verification.repair }));

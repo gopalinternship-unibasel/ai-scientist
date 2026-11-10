@@ -235,9 +235,10 @@ Deno.test("catalog: a number the live lookup cannot find is unverified, a confir
   const u = issue(v, "catalog_numbers_unverified");
   assertEquals(u?.severity, "medium");
   assert(u?.detail.startsWith("2 catalog number(s) could not be confirmed"), u?.detail);
-  // A cached copy keeps the verification made when it was first checked.
-  const again = checkCatalogNumbers(r.materials);
+  // A cached copy keeps what the lookup found when it was first checked.
+  const again = checkCatalogNumbers(r.materials, [], { keepEarlier: true });
   assertEquals(again.materials[0].catalog_status, "verified");
+  assertEquals(again.materials[1].catalog_check, "not in Sigma-Aldrich's catalogue as deposited in PubChem");
 });
 
 Deno.test("catalog: lookupMaterialsLive reports every Sigma number's status", async () => {

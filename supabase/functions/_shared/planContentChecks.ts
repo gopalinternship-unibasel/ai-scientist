@@ -14,7 +14,7 @@
 //    and were caught only in the reviewer critique.
 // Import-free apart from the local catalog dictionary.
 
-import { atccShaped, cellLineIn, dictionaryConfirms, findCatalogIssues, looksLikePlaceholder } from "./catalogCheck.ts";
+import { atccShaped, cellLineIn, dictionaryConfirms, findCatalogIssues, looksLikePlaceholder, plainCellLineIn } from "./catalogCheck.ts";
 
 // --- doses ------------------------------------------------------------------
 
@@ -69,6 +69,22 @@ const NOT_SUBSTANCE = new Set([
 const COUNTER_ION = new Set(["sodium", "potassium", "chloride", "hydrochloride", "magnesium", "calcium", "salt", "lithium"]);
 // Words that end the run of substance words after a dose.
 const AFTER_STOP = new Set(["to", "into", "in", "for", "and", "with", "at", "on", "per", "by", "from", "was", "is", "then", "or", "until", "before", "after", "as"]);
+// A molar unit is written with a capital M. With a lower-case m the same
+// letters are a length or a time ("510 nm", "0.22 um filter", "35 mm dish",
+// "2 pm"), which the any-case pattern of QA round 3 first read as doses
+// ("0.22 uM palmitate" from "Filter the palmitate solution (0.22 um)"). A
+// lower-case unit counts only when a substance follows it directly
+// ("10 um metformin") and nothing after it is one of these.
+const LOWER_M_UNIT = /^(?:p|n|m|[uµμΜ])m$/u;
+const LENGTH_NOUNS = new Set([
+  "filter", "filters", "pore", "pores", "membrane", "membranes", "mesh", "dish", "dishes", "plate", "plates",
+  "well", "wells", "section", "sections", "slice", "slices", "thick", "thickness", "diameter", "wavelength",
+  "excitation", "emission", "absorbance", "laser", "light", "bead", "beads", "particle", "particles",
+  "tubing", "needle", "syringe", "coverslip", "coverslips", "glass", "path", "gap", "channel", "channels",
+  "layer", "layers", "film", "cuvette", "column", "spacer", "sieve", "strainer", "insert", "inserts", "tube",
+  "tubes", "tip", "tips", "grid", "aperture", "nozzle", "fiber", "fibre", "lattice", "lattices", "coating",
+  "scaffold", "reader", "using", "use", "long", "wide", "deep", "apart", "daily",
+]);
 
 function unitKey(raw: string): string {
   return raw.replace(/[µμΜ]/g, "u").toLowerCase();
@@ -125,6 +141,10 @@ interface DoseMention extends Dose {
   stock: boolean;
   /** For a dose worked out from a dilution: the dilution ("100 uL of 10 mM into 10 mL"). */
   computed?: string;
+  /** Where the number starts in the sentence (-1 for a number read from a list). */
+  at?: number;
+  /** For the upper end of a range ("1-100 uM"): the lower end, in the base unit. */
+  rangeLow?: number;
 }
 
 /** Split a step into sentences without breaking decimals ("0.5 mM"). */
@@ -132,8 +152,13 @@ function sentences(text: string): string[] {
   return (text ?? "").split(/(?<=[.;!?])\s+(?=[A-Z0-9(])/).filter((x) => x.trim());
 }
 
-/** Concentrations in one sentence, with the words that may name their substance. */
-function doseMentions(sentence: string): DoseMention[] {
+/**
+ * Concentrations in one sentence, with the words that may name their
+ * substance. `series` also reads the numbers of a list or range that share
+ * the unit (protocol text only: in a hypothesis "on day 3, 10 uM metformin"
+ * must not become a 3 uM dose to look for).
+ */
+function doseMentions(sentence: string, opts: { series?: boolean } = {}): DoseMention[] {
   const out: DoseMention[] = [];
   for (const m of sentence.matchAll(DOSE_RE)) {
     const start = m.index ?? 0;
@@ -150,11 +175,29 @@ function doseMentions(sentence: string): DoseMention[] {
     const afterSubj = after.map(substanceWord).find((w) => w) ?? null;
     // Percentages count only with a substance right after them ("by at least 30%" is an effect size).
     if (isPercent && !afterSubj) continue;
+    // "510 nm", "0.22 um filter", "35 mm dishes": lengths, unless a substance follows directly.
+    if (LOWER_M_UNIT.test(m[2]) && (!afterSubj || after.some((w) => LENGTH_NOUNS.has(w)))) continue;
     const subj = afterSubj ?? before.map(substanceWord).find((w) => w) ?? null;
     const stock = /stock/i.test(sentence.slice(end, end + 30)) || /stock\s*(?:solution)?\s*(?:\(|of\s+|at\s+)?$/i.test(head.slice(-25));
     const d = parseDose(m[1], m[2], subj ?? "");
     if (!d) continue;
-    out.push({ ...d, near: [...after, ...before], attached: !!subj, stock });
+    const mention: DoseMention = { ...d, near: [...after, ...before], attached: !!subj, stock, at: start };
+    if (opts.series) {
+      // "0, 1, 10 and 100 uM metformin" tests every listed concentration, and
+      // "1-100 uM" every one in between: the numbers before the unit count too.
+      const list = head.match(/((?:\d+(?:\.\d+)?\s*(?:,\s*(?:and\s+|or\s+)?|and\s+|or\s+|\/\s*|-\s*|–\s*|to\s+))+)$/i)?.[1];
+      if (list) {
+        for (const n of list.matchAll(/\d+(?:\.\d+)?/g)) {
+          const extra = parseDose(n[0], m[2], subj ?? "");
+          if (extra) out.push({ ...mention, ...extra, at: -1 });
+        }
+        if (/(?:-|–|to)\s*$/i.test(list)) {
+          const low = parseDose(list.match(/(\d+(?:\.\d+)?)\s*(?:-|–|to)\s*$/i)?.[1] ?? "", m[2], "");
+          if (low && low.value < d.value) mention.rangeLow = low.value;
+        }
+      }
+    }
+    out.push(mention);
   }
   return out;
 }
@@ -174,6 +217,8 @@ function fmtConc(value: number, dim: Dimension): string {
 interface Dilution extends DoseMention {
   /** The result the sentence states ("to make a 10 uM working solution"), when it does. */
   stated?: Dose;
+  /** Where the concentration being diluted starts in the sentence. */
+  sourceAt?: number;
 }
 
 /** "Add 100 uL of 10 mM NMN stock to 10 mL medium": the final concentration of each dilution in a sentence. */
@@ -200,6 +245,8 @@ function dilutions(sentence: string): Dilution[] {
       near, attached: !!subj, stock: false,
       computed: `${volText(m[1], m[2])} of ${c1.text} into ${m[6] ? "a total of " : ""}${volText(m[7], m[8])}`,
       stated,
+      // Where the diluted concentration is written: it is a stock, whatever the sentence calls it.
+      sourceAt: sentence.indexOf(m[3], (m.index ?? 0) + m[1].length + m[2].length),
     });
   }
   return out;
@@ -218,18 +265,40 @@ function stem(w: string): string {
   return w.length > 4 && w.endsWith("s") && !w.endsWith("ss") ? w.slice(0, -1) : w;
 }
 
+/** Whether `short` can abbreviate `words`: same first letter, and its letters appear in them in order. */
+function abbreviates(short: string, words: string): boolean {
+  const s = short.replace(/[^a-z0-9]/g, "");
+  const w = words.replace(/[^a-z0-9]/g, "");
+  if ((s.match(/[a-z]/g) ?? []).length < 2 || s[0] !== w[0]) return false;
+  let at = 0;
+  for (const ch of s) {
+    at = w.indexOf(ch, at);
+    if (at < 0) return false;
+    at++;
+  }
+  return true;
+}
+
 function keyFor(substance: string, hypothesis: string): SubstanceKey {
   const forms: string[][] = [[substance]];
-  // "nicotinamide mononucleotide (NMN)": the acronym in brackets is another spelling.
+  // "nicotinamide mononucleotide (NMN)": the acronym in brackets is another
+  // spelling. Only when it abbreviates those words: in "2 mM butyrate to
+  // raise resistance (TEER)" the bracket belongs to the resistance.
   const h = norm(hypothesis);
   const i = h.indexOf(substance);
   if (i >= 0) {
     const rest = h.slice(i).match(/^([a-z0-9+-]+(?:\s+[a-z0-9+-]+){0,3}?)\s*\(([a-z0-9+-]{2,10})\)/);
-    if (rest) {
+    if (rest && abbreviates(rest[2], rest[1])) {
       forms.push(rest[1].split(/\s+/));
       forms.push([rest[2]]);
       return { substance, forms, label: `${rest[1]} (${rest[2].toUpperCase()})` };
     }
+    // The name as the hypothesis writes it, for findings: "sodium butyrate",
+    // "nicotinamide riboside" (the dose parser keeps one word of it).
+    const before = h.slice(0, i).match(/([a-z]+)\s+$/)?.[1];
+    const after = h.slice(i + substance.length).match(/^\s+([a-z]+)/)?.[1];
+    const label = `${before && COUNTER_ION.has(before) ? `${before} ` : ""}${substance}${after && /(?:ide|acid)$/.test(after) ? ` ${after}` : ""}`;
+    if (label !== substance) return { substance, forms, label };
   }
   return { substance, forms };
 }
@@ -277,14 +346,18 @@ function planDosesFor(key: SubstanceKey, steps: { title?: string; description?: 
     for (const sent of sentences(`${s?.title ?? ""}. ${s?.description ?? ""}`)) {
       const about = sentenceMentions(sent, key);
       const treatment = TREATMENT_CONTEXT.test(sent) && !ASSAY_CONTEXT.test(sent);
-      for (const d of doseMentions(sent)) {
-        if (d.stock) continue;
+      const diluted = dilutions(sent);
+      // The concentration a dilution starts from is a stock, not the dose:
+      // "Add 100 uL of 10 mM NMN to 10 mL medium" doses about 99 uM.
+      const sources = new Set(diluted.map((d) => d.sourceAt).filter((n) => n !== undefined && n >= 0));
+      for (const d of doseMentions(sent, { series: true })) {
+        if (d.stock || sources.has(d.at)) continue;
         // An unattached dose ("to make a 1 uM working solution", "dilute to
         // 10 uM in DMEM") belongs to the substance the sentence is about.
         const mine = d.attached ? nearMatches(d.near, key) : about && d.dim !== "percent";
         if (mine) out.push({ ...d, treatment });
       }
-      for (const d of dilutions(sent)) {
+      for (const d of diluted) {
         const mine = d.attached ? nearMatches(d.near, key) : about;
         if (mine) out.push({ ...d, treatment });
       }
@@ -314,7 +387,9 @@ export function doseIssues(hypothesis: string, steps: { title?: string; descript
     const treatment = all.filter((v) => v.treatment);
     const seen = treatment.length > 0 ? treatment : all;
     if (seen.length === 0) continue;
-    const matches = seen.some((v) => v.value / d.value <= 1.5 && d.value / v.value <= 1.5);
+    const matches = seen.some((v) => (v.value / d.value <= 1.5 && d.value / v.value <= 1.5)
+      // inside a stated range ("1-100 uM")
+      || (v.rangeLow !== undefined && d.value >= v.rangeLow / 1.5 && d.value <= v.value * 1.5));
     if (!matches) {
       issues.push({
         substance: d.substance,
@@ -427,9 +502,9 @@ export function readoutMissing(hypothesis: string, steps: { title?: string; desc
 // look for (lower case) and the name shown.
 const COMMON_REAGENTS: Array<{ forms: string[][]; label: string }> = [
   { forms: [["bsa"], ["bovine", "serum", "albumin"]], label: "BSA" },
-  { forms: [["dmso"], ["dimethyl", "sulfoxide"]], label: "DMSO" },
-  { forms: [["pbs"]], label: "PBS" },
-  { forms: [["trypsin"]], label: "trypsin" },
+  { forms: [["dmso"], ["dimethyl", "sulfoxide"], ["dimethyl", "sulphoxide"]], label: "DMSO" },
+  { forms: [["pbs"], ["dpbs"], ["phosphate", "buffered", "saline"]], label: "PBS" },
+  { forms: [["trypsin"], ["tryple"]], label: "trypsin" },
   { forms: [["paraformaldehyde"], ["pfa"], ["formalin"], ["formaldehyde"]], label: "fixative (PFA or formalin)" },
   { forms: [["isopropanol"], ["2-propanol"]], label: "isopropanol" },
   { forms: [["triton"]], label: "Triton X-100" },
@@ -443,11 +518,12 @@ const COMMON_REAGENTS: Array<{ forms: string[][]; label: string }> = [
   { forms: [["matrigel"]], label: "Matrigel" },
   { forms: [["collagen"]], label: "collagen" },
   { forms: [["bca"]], label: "BCA protein assay" },
-  { forms: [["edta"]], label: "EDTA" },
-  { forms: [["tris"], ["tris-hcl"]], label: "Tris" },
-  { forms: [["pen", "strep"], ["penicillin"]], label: "penicillin-streptomycin" },
-  { forms: [["fbs"], ["fetal", "bovine"]], label: "FBS" },
-  { forms: [["dmem"]], label: "DMEM" },
+  // Buffers, not their ingredients: a step that spells out a lysis buffer's
+  // recipe (Tris, EDTA, NaCl) is asking for the buffer.
+  { forms: [["ripa"]], label: "RIPA buffer" },
+  { forms: [["pen", "strep"], ["penstrep"], ["penicillin"]], label: "penicillin-streptomycin" },
+  { forms: [["fbs"], ["fcs"], ["fetal", "bovine"], ["foetal", "bovine"], ["fetal", "calf"], ["foetal", "calf"]], label: "FBS" },
+  { forms: [["dmem"], ["dulbecco", "eagle"]], label: "DMEM" },
   { forms: [["rpmi"]], label: "RPMI" },
 ];
 
@@ -455,16 +531,48 @@ function hasForm(words: Set<string>, forms: string[][]): boolean {
   return forms.some((f) => f.every((w) => words.has(w) || words.has(stem(w))));
 }
 
-/** Cell lines the hypothesis is done in: alphanumeric names before "cells", "monolayers", ... ("HepG2 hepatocytes"). */
+const CELL_DESCRIPTOR = "human|murine|mouse|rat|neuroblastoma|hepatoma|carcinoma|adenocarcinoma|hepatocellular|colorectal|colon|epithelial|endothelial|intestinal|breast|liver|lung|kidney|prostate|cervical|cancer|tumou?r|leuka?emia|differentiated|undifferentiated";
+const CELL_NOUN = "cells?|monolayers?|hepatocytes|neurons|myotubes|myoblasts|adipocytes|preadipocytes|macrophages|monocytes|fibroblasts|keratinocytes|cardiomyocytes|spheroids|organoids|line";
+const CELL_LINE_RE = new RegExp(
+  `(?<![A-Za-z0-9-])([A-Za-z0-9][A-Za-z0-9.]*(?:[- ][A-Za-z0-9.]+){0,2})\\s+(?:(?:${CELL_DESCRIPTOR})\\s+){0,3}(?:${CELL_NOUN})\\b`,
+  "g",
+);
+
+/**
+ * Cell lines the hypothesis is done in: names with a capital letter and a
+ * digit before "cells", "monolayers", ... ("HepG2 hepatocytes", "MCF-7
+ * breast cancer cells", "RAW 264.7 macrophages", "3T3-L1 adipocytes").
+ * Lines named without a digit (HeLa, Vero, Jurkat) are not recognised.
+ */
 export function hypothesisCellLines(hypothesis: string): string[] {
   const out: string[] = [];
-  const re = /\b([A-Za-z][A-Za-z0-9]*(?:[- ][A-Za-z0-9]+)?)\s+(?:(?:human|murine|mouse|rat|neuroblastoma|hepatoma|carcinoma|colorectal|epithelial|breast|liver|lung|kidney|cancer|tumou?r|differentiated)\s+)?(?:cells?|monolayers?|hepatocytes|neurons|myotubes|myoblasts|adipocytes|macrophages|fibroblasts|spheroids|organoids|line)\b/g;
-  for (const m of (hypothesis ?? "").matchAll(re)) {
-    // A cell line name has a digit and a capital letter (HepG2, Caco-2, SH-SY5Y, A549).
-    const name = m[1].split(" ").pop() ?? m[1];
-    const full = /\d/.test(name) ? name : m[1];
-    if (!/\d/.test(full) || !/[A-Z]/.test(full)) continue;
-    if (!out.includes(full)) out.push(full);
+  // A hypothesis typed in capitals has no case to tell a name by ("AFTER 24
+  // H CELLS WERE LYSED"): there only lines of the ATCC list count.
+  const allCaps = !/[a-z]/.test(hypothesis ?? "");
+  if (allCaps) {
+    for (const m of (hypothesis ?? "").matchAll(new RegExp(CELL_LINE_RE.source, "gi"))) {
+      for (const token of m[1].split(" ")) {
+        if (/\d/.test(token) && cellLineIn(`${token} cells`) && !out.includes(token)) out.push(token);
+      }
+    }
+    return out;
+  }
+  for (const m of (hypothesis ?? "").matchAll(CELL_LINE_RE)) {
+    // The name is the last word with a digit; a plain word after it is a
+    // descriptor the pattern took along ("MCF-7 breast" before "cancer cells").
+    const tokens = m[1].split(" ");
+    let at = tokens.length - 1;
+    while (at > 0 && !/\d/.test(tokens[at]) && /^[a-z]+$/.test(tokens[at])) at--;
+    const name = tokens[at].replace(/\.$/, "");
+    const prev = at > 0 ? tokens[at - 1] : "";
+    if (!/\d/.test(name)) continue;
+    // "3D spheroids", "H2O2-treated cells", "G1 cells" are not cell lines.
+    if (/^\d+d$/i.test(name) || name.split("-").some((p) => /^[a-z]{4,}$/.test(p))) continue;
+    let full: string | null = null;
+    if (/[A-Z]/.test(name) && name.length >= 3) full = name;
+    // "Hep G2", "HEK 293", "RAW 264.7": the name is the two words together.
+    else if (/^[A-Z][A-Za-z]{1,4}$/.test(prev)) full = `${prev} ${name}`;
+    if (full && !out.includes(full)) out.push(full);
   }
   return out;
 }
@@ -496,12 +604,16 @@ export function missingMaterials(
 
   for (const d of hypothesisDoses(hypothesis)) {
     const key = keyFor(d.substance, hypothesis);
-    if (hasForm(protocol, key.forms) && !hasForm(listed, key.forms)) add(d.substance);
+    if (hasForm(protocol, key.forms) && !hasForm(listed, key.forms)) add(key.label ?? d.substance);
   }
   for (const line of hypothesisCellLines(hypothesis)) {
+    // Any spelling: "SH-SY5Y" / "SHSY5Y", "Hep G2" / "HepG2" (the ATCC list knows the usual ones).
     const k = norm(line);
-    const forms = [[k], [k.replace(/[- ]/g, "")]];
-    if (hasForm(protocol, forms) && !hasForm(listed, forms)) add(line);
+    const forms = [[k.replace(/[- .]/g, "")], k.split(/[- ]/).filter(Boolean)];
+    const entry = cellLineIn(`${line} cells`);
+    const used = hasForm(protocol, forms) || (!!entry && steps.some((s) => cellLineIn(`${s?.title ?? ""} ${s?.description ?? ""}`) === entry));
+    const isListed = hasForm(listed, forms) || (!!entry && materials.some((m) => cellLineIn(m?.name) === entry));
+    if (used && !isListed) add(line);
   }
   const r = hypothesisReadout(hypothesis);
   // A kit is listed when the table names a distinctive word of it ("Enzymatic NAD+ Assay Kit" for "enzymatic cycling assay").
@@ -549,6 +661,8 @@ function textHours(text: string): number {
   return max;
 }
 
+const OPEN_ENDED_STEP = /\b(?:until|every|each\s+(?:day|week)|daily|weekly|twice|per\s+(?:day|week)|confluen\w*|differentiat\w*|acclimat\w*|passag\w*|expand\w*|order\w*|deliver\w*|shipp\w*|lead\s+time|recruit\w*|approv\w*|repeat\w*|replicate\s+experiments?|independent\s+experiments?|time[- ]?points?|time[- ]course|follow[- ]up)\b/i;
+
 export interface StepDurationIssue {
   steps: number[];
   /** The duration column of the first such step ("2 weeks"). */
@@ -572,6 +686,9 @@ export function stepDurationIssues(
   const bad: { step: number; field: number; text: number; duration: string }[] = [];
   steps.forEach((s, i) => {
     const field = parseHours(s?.duration);
+    // A step that runs until something happens, or repeats, states no total:
+    // "Culture until differentiated, changing the medium every 2 days" may well take 3 weeks.
+    if (OPEN_ENDED_STEP.test(s?.description ?? "")) return;
     const text = textHours(s?.description ?? "");
     if (field > 0 && text > 0 && field >= Math.max(text * 4, text + 48)) {
       bad.push({ step: i + 1, field, text, duration: s?.duration ?? "" });
@@ -718,7 +835,8 @@ export interface MaterialWithCatalog {
 export interface LiveSkuFinding {
   material_index: number;
   catalog_number: string;
-  status?: "match" | "mismatch" | "not_found" | "unknown";
+  /** "unconfirmed": found in the catalogue under a name that only partly fits this material. */
+  status?: "match" | "mismatch" | "unconfirmed" | "not_found" | "unknown";
   supplier_hint?: string;
   /** For a match: where it was found (PubChem source ID). */
   source?: string;
@@ -743,8 +861,8 @@ export interface CatalogUnverified {
   why: string;
 }
 
-// A material that names a cell line but is not the cells ("HepG2 lysate", "Caco-2 medium").
-const NOT_CELLS = /medium|media|kit|antibod|lysate|rna|dna|serum|supplement|reagent|buffer|plasmid|vector|conditioned|extract|protein|exosome/i;
+// A material that names a cell line but is not the cells ("HepG2 lysate", "Caco-2 medium", "Caco-2 Transwell plate").
+const NOT_CELLS = /medium|media|kit|antibod|lysate|rna|dna|serum|supplement|reagent|buffer|plasmid|vector|conditioned|extract|protein|exosome|insert|plate|flask|dish|membrane/i;
 
 const NO_NUMBER = /^(?:custom|n\/?a|none|-+|—|tbd|not applicable|on hand|in house|in-house)$/i;
 
@@ -775,26 +893,36 @@ export function removeWrongCatalogNumbers<M extends CatalogInput>(
  * Caco-2 were shown as real because only "found under another name" was
  * acted on):
  *  - removed: wrong product (dictionary or live lookup), wrong format, or a
- *    placeholder-like number;
- *  - corrected: a cell line from the ATCC list with another (or no) number
- *    gets ATCC's number;
+ *    placeholder-like number that no catalogue confirmed;
+ *  - corrected: a plain cell line from the ATCC list (not a sub-line or an
+ *    engineered variant) with another (or no) number gets ATCC's number;
  *  - verified: confirmed by the ATCC list, the local dictionary, or the live
- *    Sigma-Aldrich lookup;
+ *    Sigma-Aldrich lookup (the names must agree, skuVerify.nameAgreement);
  *  - unverified: everything else (not in Sigma-Aldrich's PubChem deposits,
- *    lookup failed, or a supplier without a searchable catalogue). The
- *    materials table shows these as unverified, never as plain numbers.
- * A material already marked verified by an earlier pass keeps that status.
+ *    found there under a name that only partly fits, lookup failed, or a
+ *    supplier without a searchable catalogue). The materials table shows
+ *    these as unverified, never as plain numbers.
+ *
+ * `catalog_status` and `catalog_check` on the input are ignored: a model can
+ * write them too. Only `keepEarlier` (a plan this pipeline checked before,
+ * for example a cached copy that is re-checked without a live lookup) keeps
+ * the status of a number the earlier check looked up.
  */
 export function checkCatalogNumbers<M extends CatalogInput>(
   materials: M[] | undefined,
   live: LiveSkuFinding[] = [],
+  opts: { keepEarlier?: boolean } = {},
 ): { materials: Array<M & CatalogMarks>; removed: CatalogRemoval[]; corrected: CatalogCorrection[]; unverified: CatalogUnverified[]; verified: number } {
   if (!Array.isArray(materials)) return { materials: [], removed: [], corrected: [], unverified: [], verified: 0 };
-  const wrong = new Map<number, string>();
+  // Another product by the dictionary, and numbers outside the supplier's format.
+  const otherProduct = new Map<number, string>();
+  const badFormat = new Map<number, string>();
   for (const i of findCatalogIssues(materials)) {
-    wrong.set(i.material_index, i.reason === "format_mismatch"
-      ? `not in ${materials[i.material_index]?.supplier ?? "the supplier"}'s catalog-number format`
-      : `it is ${i.canonical_name}`);
+    if (i.reason === "format_mismatch") {
+      badFormat.set(i.material_index, `not in ${materials[i.material_index]?.supplier ?? "the supplier"}'s catalog-number format`);
+    } else {
+      otherProduct.set(i.material_index, `it is ${i.canonical_name}`);
+    }
   }
   const liveBy = new Map<number, LiveSkuFinding>();
   for (const s of live) liveBy.set(s.material_index, s);
@@ -807,66 +935,70 @@ export function checkCatalogNumbers<M extends CatalogInput>(
   const out = materials.map((m, i) => {
     const raw = (m?.catalog_number ?? "").toString().trim();
     const cat = NO_NUMBER.test(raw) ? "" : raw;
-    const name = m?.name ?? `material ${i + 1}`;
+    const name = (m?.name ?? "").toString() || `material ${i + 1}`;
     const supplier = supplierName(m);
     const copy: M = { ...m };
     delete copy.catalog_status;
     delete copy.catalog_check;
     if (!cat && raw) delete copy.catalog_number;
-
-    // 1) A cell line ATCC sells: its number comes from the ATCC list.
-    const line = NOT_CELLS.test(name) ? null : cellLineIn(name);
-    if (line && (/\batcc\b/i.test(supplier) || (cat && atccShaped(cat)))) {
-      if (cat.toUpperCase() === line.atcc) {
-        verified++;
-        return { ...copy, catalog_status: "verified", catalog_check: `ATCC's number for ${line.label} (the app's cell-line list)` } as M;
-      }
-      corrected.push({ name, from: cat || null, to: line.atcc, why: `ATCC's number for ${line.label}` });
+    const asVerified = (check: string, extra: Partial<CatalogInput> = {}) => {
       verified++;
-      return {
-        ...copy,
-        catalog_number: line.atcc,
-        catalog_status: "verified",
-        catalog_check: `ATCC's number for ${line.label} (the app's cell-line list)`,
-        notes: `${m?.notes ? `${m.notes} ` : ""}(${cat ? `Catalog number ${cat} replaced by ${line.atcc}` : `Catalog number ${line.atcc} added`} by the automated check: ATCC's number for ${line.label}.)`,
-      } as M;
-    }
-    if (!cat) return copy;
-
-    // 2) Known wrong: remove.
-    const lv = liveBy.get(i);
-    const liveWrong = lv && (lv.status === undefined || lv.status === "mismatch");
-    const why = wrong.get(i)
-      ?? (liveWrong ? (lv!.supplier_hint ? lv!.supplier_hint.replace(/\.$/, "") : "the supplier lists it as another product") : null)
-      ?? (looksLikePlaceholder(cat) ? "it looks like a placeholder, not a catalogue number" : null);
-    if (why) {
+      return { ...copy, ...extra, catalog_status: "verified", catalog_check: check } as M;
+    };
+    const remove = (why: string) => {
       removed.push({ name, catalog_number: cat, why });
       delete copy.catalog_number;
       copy.notes = `${m?.notes ? `${m.notes} ` : ""}(Catalog number ${cat} removed by the automated check: ${why}.)`;
       return copy;
-    }
+    };
 
-    // 3) Confirmed: verified.
+    // 1) A cell line ATCC sells: its number comes from the ATCC list. Only
+    //    the plain line: "Vero E6" (CRL-1586) is not Vero (CCL-81).
+    const line = NOT_CELLS.test(name) ? null : plainCellLineIn(name);
+    if (line && (/\batcc\b/i.test(supplier) || (cat && atccShaped(cat)))) {
+      const check = `ATCC's number for ${line.label} (the app's cell-line list)`;
+      if (cat.toUpperCase() === line.atcc) return asVerified(check);
+      corrected.push({ name, from: cat || null, to: line.atcc, why: `ATCC's number for ${line.label}` });
+      return asVerified(check, {
+        catalog_number: line.atcc,
+        notes: `${m?.notes ? `${m.notes} ` : ""}(${cat ? `Catalog number ${cat} replaced by ${line.atcc}` : `Catalog number ${line.atcc} added`} by the automated check: ATCC's number for ${line.label}.)`,
+      });
+    }
+    if (!cat) return copy;
+
+    // 2) Another product: remove.
+    const lv = liveBy.get(i);
+    const liveWrong = lv && (lv.status === undefined || lv.status === "mismatch");
+    const other = otherProduct.get(i)
+      ?? (liveWrong ? (lv!.supplier_hint ? lv!.supplier_hint.replace(/\.$/, "") : "the supplier lists it as another product") : null);
+    if (other) return remove(other);
+
+    // 3) Confirmed by a catalogue: verified. This comes before the format
+    //    and placeholder rules, which are only guesses about the shape.
     const dict = dictionaryConfirms(cat, name);
-    if (dict) {
-      verified++;
-      return { ...copy, catalog_status: "verified", catalog_check: `listed as ${dict} (the app's catalogue list)` } as M;
-    }
+    if (dict) return asVerified(`listed as ${dict} (the app's catalogue list)`);
     if (lv?.status === "match") {
-      verified++;
-      return { ...copy, catalog_status: "verified", catalog_check: `found in Sigma-Aldrich's catalogue through PubChem${lv.source ? ` (${lv.source})` : ""}` } as M;
-    }
-    // A cached plan checked earlier keeps a verification made then.
-    if (m?.catalog_status === "verified" && typeof m?.catalog_check === "string" && !lv) {
-      verified++;
-      return { ...copy, catalog_status: "verified", catalog_check: m.catalog_check } as M;
+      return asVerified(`found in Sigma-Aldrich's catalogue through PubChem${lv.source ? ` (${lv.source})` : ""}`);
     }
 
-    // 4) Everything else: unverified.
-    const reason = lv?.status === "not_found"
+    // 4) The wrong shape for this supplier, or a made-up looking number: remove.
+    const shape = badFormat.get(i) ?? (looksLikePlaceholder(cat) ? "it looks like a placeholder, not a catalogue number" : null);
+    if (shape) return remove(shape);
+
+    // 5) What an earlier pass of this pipeline found out by lookup still holds
+    //    when this pass has no lookup of its own (a cached copy).
+    const earlier = opts.keepEarlier && !lv && typeof m?.catalog_check === "string" && m.catalog_check ? m : null;
+    if (earlier?.catalog_status === "verified") return asVerified(earlier.catalog_check!);
+
+    // 6) Everything else: unverified.
+    const reason = lv?.status === "unconfirmed"
+      ? `${(lv.supplier_hint ?? "Sigma-Aldrich lists this number under another name.").replace(/\.$/, "").replace("this SKU", "this number")}; that name could not be matched to this material`
+      : lv?.status === "not_found"
       ? "not in Sigma-Aldrich's catalogue as deposited in PubChem"
       : lv?.status === "unknown"
       ? "the Sigma-Aldrich lookup did not answer"
+      : earlier?.catalog_status === "unverified"
+      ? earlier.catalog_check!
       : /sigma|millipore|aldrich|supelco|merck|fluka/i.test(supplier)
       ? "not looked up (only the first numbers of a plan are checked live)"
       : `no searchable catalogue for ${supplier}`;

@@ -82,10 +82,17 @@ export function planHasControl(planText: string, kinds: string[]): boolean {
   });
 }
 
-/** "exceeds $20,000": the amount a concern claims the budget is above, or null. */
+/**
+ * "The budget exceeds $20,000": the amount a concern says the plan's budget
+ * or total is above, or null. The subject must be the budget or the total:
+ * "an EVOM2 alone costs over $3,000" is a remark about a price, and is true
+ * or false whatever the plan totals.
+ */
+const BUDGET_ABOVE = /\b(?:budget|total)\b[^.;:]{0,40}?\b(?:exceeds?|exceeding|over|above|more than|greater than|surpass(?:es)?)\s+(?:the\s+)?(?:\w+\s+){0,2}?(?:US)?\$\s?(\d[\d,]*(?:\.\d+)?)\s*(k|K|thousand)?/i;
+
 export function claimedBudgetAbove(text: string): number | null {
-  const m = (text ?? "").match(/\b(?:exceeds?|exceeding|over|above|more than|greater than|surpass(?:es)?)\s+(?:the\s+)?(?:\w+\s+){0,2}?(?:US)?\$\s?(\d[\d,]*(?:\.\d+)?)\s*(k|K|thousand)?/);
-  if (!m || !/budget|cost|total|spend|price/i.test(text)) return null;
+  const m = (text ?? "").match(BUDGET_ABOVE);
+  if (!m) return null;
   const n = Number(m[1].replace(/,/g, ""));
   if (!Number.isFinite(n)) return null;
   return m[2] ? n * 1000 : n;

@@ -122,7 +122,8 @@ const SUPPLIER_FORMATS: Array<{ match: RegExp; cat: RegExp; canonical: string }>
     canonical: "IDT Alt-R catalog numbers are in the 107xxxx–108xxxx range (e.g. 1081058, 1072558). Use 'Custom' for synthesised oligos." },
   // ATCC: letters + dash + digits (CRL-3216, CCL-2, HTB-22) or pure digits
   { match: /^atcc$/i,
-    cat: /^(?:[A-Z]{2,4}-\d{1,5}|\d{4,6}|VR-\d{2,5})$/,
+    // Sub-lines carry a decimal (HeLa S3 is CCL-2.2); primary cells are PCS-nnn-nnn.
+    cat: /^(?:[A-Z]{2,4}-\d{1,5}(?:\.\d{1,2})?|PCS-\d{3}-\d{3}|\d{4,6}|VR-\d{2,5})$/,
     canonical: "ATCC catalog numbers are letters-dash-digits (e.g. CRL-3216, CCL-2, HTB-22)." },
   // Promega: letter + 4 digits (G3041, G7572) or letter + 4 digits + letter
   { match: /promega/i,
@@ -281,9 +282,49 @@ export function cellLineIn(name: string | undefined): CellLineEntry | null {
   return best;
 }
 
+// Words a cell-line material may carry besides the line's own name and
+// still be that plain line ("HepG2 cells, human hepatocellular carcinoma, 1 vial").
+const CELL_NAME_WORDS = new Set([
+  "cell", "cells", "line", "lines", "human", "mouse", "murine", "rat", "monkey", "hamster", "atcc", "the", "of",
+  "from", "a", "an", "and", "for", "per", "vial", "vials", "frozen", "cryovial", "cryopreserved", "stock",
+  "passage", "low", "early", "hepatocellular", "carcinoma", "adenocarcinoma", "hepatoma", "hepatocyte",
+  "hepatocytes", "neuroblastoma", "colorectal", "colon", "epithelial", "epithelium", "breast", "cancer", "lung",
+  "kidney", "embryonic", "cervical", "leukemia", "leukaemia", "monocyte", "monocytes", "macrophage",
+  "macrophages", "myoblast", "myoblasts", "fibroblast", "fibroblasts", "preadipocyte", "preadipocytes",
+  "adipocyte", "adipocytes", "osteosarcoma", "glioblastoma", "prostate", "liver", "intestinal", "differentiated",
+  "undifferentiated", "certified", "authenticated", "mycoplasma", "free", "tested", "culture", "cultured",
+  "parental", "wild", "type", "wt", "adherent", "suspension", "ovary", "chinese", "african", "green",
+  "lymphocyte", "lymphocytes", "lymphoblast", "neuronal", "neuron", "neurons", "tumor", "tumour", "x", "ml",
+  "million", "t", "b",
+]);
+
+const alnumKey = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/**
+ * The ATCC cell line a material is, when its name is that line and nothing
+ * else. A sub-line or an engineered variant has its own number ("Vero E6" is
+ * CRL-1586, not Vero's CCL-81; "HeLa S3" is CCL-2.2; "HepG2/C3A",
+ * "HEK293 cells stably expressing GFP"), so any word in the name that is not
+ * part of the line's name, its ATCC number or a general description means
+ * the list has no answer.
+ */
+export function plainCellLineIn(name: string | undefined): CellLineEntry | null {
+  const e = cellLineIn(name);
+  if (!e) return null;
+  const own = [...e.aliases, alnumKey(e.label), alnumKey(e.atcc)];
+  for (const token of (name ?? "").split(/[\s,;:()[\]/]+/)) {
+    const key = alnumKey(token);
+    if (!key || /^\d+$/.test(key) || CELL_NAME_WORDS.has(key)) continue;
+    if (key.length >= 2 && own.some((o) => o.includes(key))) continue;
+    if (atccShaped(token)) continue; // a number written into the name is judged as the number
+    return null;
+  }
+  return e;
+}
+
 /** Whether a catalog number has ATCC's letters-dash-digits shape. */
 export function atccShaped(cat: string): boolean {
-  return /^[A-Z]{2,4}-\d{1,5}$/i.test((cat ?? "").trim());
+  return /^[A-Z]{2,4}-\d{1,5}(?:\.\d{1,2})?$/i.test((cat ?? "").trim());
 }
 
 /**
