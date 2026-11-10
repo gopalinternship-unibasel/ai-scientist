@@ -137,6 +137,25 @@ Deno.test("lookupMaterialsLive: verified only when the names agree, by product n
   assertEquals(r[1].supplier_hint, 'Sigma-Aldrich lists this SKU as "Sodium chloride, BioXtra, >=99.5% (AT)".');
   assertEquals(r[5].source, "B5887_SIGMA");
 
+  // PubChem lists a salt's names under the acid's compound (seen live on 10
+  // Nov 2026: palmitic acid, CID 985, carries "Sodium Palmitate, Palmitic
+  // acid sodium salt, ..."). The acid's number does not confirm the salt, nor
+  // the salt's number the acid; a bare "palmitate" fits either.
+  const salts = pubchemFull(
+    { P0500_SIGMA: "Palmitic acid, >=99%", P9767_SIGMA: "Sodium palmitate, >=98.5%" },
+    { P0500_SIGMA: 985, P9767_SIGMA: 2735111 },
+    { 985: ["Palmitic acid", "Hexadecanoic acid", "Sodium Palmitate, Palmitic acid sodium salt, Sodium hexadecanoate"], 2735111: ["Sodium palmitate", "Palmitic acid sodium salt", "Hexadecanoic acid, sodium salt"] },
+  );
+  const s = await lookupMaterialsLive([
+    { name: "Sodium palmitate", supplier: "Sigma-Aldrich", catalog_number: "P0500" },
+    { name: "Palmitic acid", supplier: "Sigma-Aldrich", catalog_number: "P9767" },
+    { name: "Palmitate", supplier: "Sigma-Aldrich", catalog_number: "P9767" },
+    { name: "Palmitate", supplier: "Sigma-Aldrich", catalog_number: "P0500" },
+    { name: "Sodium palmitate", supplier: "Sigma-Aldrich", catalog_number: "P9767" },
+  ], salts);
+  assertEquals(s.map((x) => x.status), ["unconfirmed", "unconfirmed", "match", "match", "match"]);
+  assertEquals(s[0].supplier_hint, 'Sigma-Aldrich lists this SKU as "Palmitic acid, >=99%".');
+
   // When the compound's names cannot be fetched, a name that does not agree is left open, not called wrong.
   const down = await lookupMaterialsLive(materials.slice(0, 2), pubchemFull(products, cids, names, { synonymsDown: true }));
   assertEquals(down.map((x) => x.status), ["unconfirmed", "unconfirmed"]);

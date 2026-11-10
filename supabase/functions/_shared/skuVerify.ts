@@ -75,6 +75,33 @@ function brandOrder(supplier: string): string[] {
 
 type FetchFn = typeof fetch;
 
+// PubChem asks for at most five requests a second and answers 503 above
+// that. Two materials are looked up at a time, each with several requests
+// (brand suffixes, the compound, its names), so the real requests are
+// spaced out and a throttled one is tried once more. Stubs in tests are not
+// slowed down.
+const MIN_GAP_MS = 250;
+let nextSlot = 0;
+
+async function pubchemGet(url: string, fetchFn: FetchFn): Promise<Response> {
+  const real = fetchFn === fetch;
+  for (let attempt = 0; ; attempt++) {
+    if (real) {
+      const now = Date.now();
+      const at = Math.max(now, nextSlot);
+      nextSlot = at + MIN_GAP_MS;
+      if (at > now) await new Promise((r) => setTimeout(r, at - now));
+    }
+    const res = await fetchFn(url, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(TIMEOUT_MS) });
+    if ((res.status === 503 || res.status === 429) && attempt === 0 && real) {
+      try { await res.body?.cancel(); } catch { /* noop */ }
+      await new Promise((r) => setTimeout(r, 1200));
+      continue;
+    }
+    return res;
+  }
+}
+
 /** Look one catalog number up in PubChem's Sigma-Aldrich deposits. */
 export async function lookupSigmaSku(
   cat: string,
@@ -86,10 +113,7 @@ export async function lookupSigmaSku(
   for (const brand of brandOrder(supplier)) {
     const sourceId = `${base}_${brand}`;
     try {
-      const res = await fetchFn(`${PUBCHEM}/${encodeURIComponent(sourceId)}/synonyms/JSON`, {
-        headers: { Accept: "application/json" },
-        signal: AbortSignal.timeout(TIMEOUT_MS),
-      });
+      const res = await pubchemGet(`${PUBCHEM}/${encodeURIComponent(sourceId)}/synonyms/JSON`, fetchFn);
       if (res.status === 400 || res.status === 404) {
         // PubChem answers "Invalid identifier" for a source ID it does not
         // have; try the next brand suffix.
@@ -161,13 +185,14 @@ function jaccard(a: Set<string>, b: Set<string>): number {
 }
 
 /** A name's readings: all of it, the part before the first comma, and each bracketed alternative. */
-function nameReadings(name: string): Set<string>[] {
+function nameReadings(name: string, ignore?: Set<string>): Set<string>[] {
   const brackets = [...(name ?? "").matchAll(/\(([^()]*)\)/g)].map((m) => m[1]);
   const outside = (name ?? "").replace(/\([^()]*\)/g, " ");
   const seen = new Set<string>();
   const out: Set<string>[] = [];
   for (const part of [outside, outside.split(",")[0], ...brackets]) {
     const words = productWords(part);
+    if (ignore) for (const w of ignore) words.delete(w);
     const key = [...words].sort().join(" ");
     if (words.size > 0 && !seen.has(key)) {
       seen.add(key);
@@ -194,11 +219,16 @@ export type NameAgreement = "same" | "related" | "different";
  *    butyrate" and "Sodium chloride"; "BSA" and "Dimethyl sulfoxide").
  * `matched` is the catalogue name that agreed.
  */
-export function nameAgreement(declared: string, catalogueNames: string[]): { agreement: NameAgreement; matched?: string } {
-  const mine = nameReadings(declared);
+export function nameAgreement(
+  declared: string,
+  catalogueNames: string[],
+  /** Words left out on both sides (the cations, when the material names none: a bare "palmitate"). */
+  ignore?: Set<string>,
+): { agreement: NameAgreement; matched?: string } {
+  const mine = nameReadings(declared, ignore);
   let related = false;
   for (const theirs of catalogueNames) {
-    for (const t of nameReadings(theirs)) {
+    for (const t of nameReadings(theirs, ignore)) {
       for (const m of mine) {
         if (jaccard(m, t) >= SAME_PRODUCT_SHARE) return { agreement: "same", matched: theirs };
         if (related) continue;
@@ -235,10 +265,7 @@ const MAX_SYNONYMS = 250;
  */
 export async function compoundNames(sourceId: string, fetchFn: FetchFn = fetch): Promise<string[] | null> {
   try {
-    const res = await fetchFn(`${PUBCHEM}/${encodeURIComponent(sourceId)}/cids/JSON`, {
-      headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    });
+    const res = await pubchemGet(`${PUBCHEM}/${encodeURIComponent(sourceId)}/cids/JSON`, fetchFn);
     if (res.status === 400 || res.status === 404) {
       try { await res.body?.cancel(); } catch { /* noop */ }
       return [];
@@ -247,10 +274,7 @@ export async function compoundNames(sourceId: string, fetchFn: FetchFn = fetch):
     const j = await res.json().catch(() => null);
     const cid = j?.InformationList?.Information?.[0]?.CID?.[0];
     if (!Number.isInteger(cid)) return [];
-    const syn = await fetchFn(`${PUBCHEM_COMPOUND}/${cid}/synonyms/JSON`, {
-      headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    });
+    const syn = await pubchemGet(`${PUBCHEM_COMPOUND}/${cid}/synonyms/JSON`, fetchFn);
     if (!syn.ok) {
       try { await syn.body?.cancel(); } catch { /* noop */ }
       return null;
@@ -291,20 +315,58 @@ async function judgeFound(
   const listed = `Sigma-Aldrich lists this SKU as "${found.name}".`;
   // A name made only of form words ("Stock solution") cannot be compared.
   if (productWords(declared).size === 0) return { status: "unconfirmed", supplier_hint: listed };
-  const byName = nameAgreement(declared, [found.name]);
-  if (byName.agreement === "same") return { status: "match", source: found.source_id };
+  // A material that names no cation ("palmitate", "butyrate") is compared
+  // without them: it may be the acid or any salt. One that does name a form
+  // is held to it (saltConflict).
+  const ignore = cations(declared) === "" ? CATION_SET : undefined;
+  const byName = nameAgreement(declared, [found.name], ignore);
+  if (byName.agreement === "same") {
+    return saltConflict(declared, found.name) ? { status: "unconfirmed", supplier_hint: listed } : { status: "match", source: found.source_id };
+  }
   const names = await compoundNames(found.source_id, fetchFn);
   if (names === null) {
     // Without the compound's other names, "Metformin" for Sigma's
     // "1,1-Dimethylbiguanide hydrochloride" cannot be told from a wrong number.
     return { status: "unconfirmed", supplier_hint: listed };
   }
-  const bySynonym = names.length > 0 ? nameAgreement(declared, names) : byName;
+  const bySynonym = names.length > 0 ? nameAgreement(declared, names, ignore) : byName;
   if (bySynonym.agreement === "same") {
-    return { status: "match", source: `${found.source_id}; PubChem also names this compound "${bySynonym.matched}"` };
+    // PubChem files a salt's names under the acid's compound and the other
+    // way round ("Sodium palmitate" is listed for palmitic acid). The number
+    // is one of the two: when the material names a salt and the product is
+    // the acid (or another salt), it is the same compound family but not
+    // confirmed as this product.
+    if (saltConflict(declared, found.name)) return { status: "unconfirmed", supplier_hint: listed };
+    return { status: "match", source: `${found.source_id}; PubChem also names this compound "${shortName(bySynonym.matched ?? "")}"` };
   }
   const related = byName.agreement === "related" || bySynonym.agreement === "related";
   return related ? { status: "unconfirmed", supplier_hint: listed } : { status: "mismatch", supplier_hint: listed };
+}
+
+const CATIONS = ["sodium", "disodium", "trisodium", "potassium", "dipotassium", "calcium", "magnesium", "lithium", "ammonium", "zinc"];
+const CATION_SET = new Set(CATIONS);
+
+/** The salt-forming cations a product name states ("sodium"), as a sorted key. */
+function cations(name: string): string {
+  const words = new Set((name ?? "").toLowerCase().split(/[^a-z]+/));
+  return CATIONS.filter((c) => words.has(c)).sort().join("+");
+}
+
+/**
+ * The material names one form and the product is another: a named salt
+ * against the acid or another salt, or the acid against a salt. A bare
+ * "palmitate" fits either.
+ */
+function saltConflict(declared: string, product: string): boolean {
+  const d = cations(declared);
+  const p = cations(product);
+  if (d) return d !== p;
+  return /\bacid\b/i.test(declared) && p !== "";
+}
+
+function shortName(name: string): string {
+  const first = name.split(",")[0].trim();
+  return first.length > 80 ? `${first.slice(0, 77)}...` : first;
 }
 
 /**
