@@ -100,6 +100,24 @@ export function classifyHttpError(status: number, body?: string): ErrorKind {
 }
 
 /**
+ * Kind and message for an exception that ended a run. A model call that ran
+ * out of time (fetchWithRetry aborts with "<label> timed out after N ms") is
+ * a TIMEOUT: round-3 fix check, two runs that waited 60 minutes behind other
+ * projects' requests in the shared Ollama were stored as "INTERNAL: Internal
+ * error".
+ */
+export function runFailure(e: unknown): { kind: ErrorKind; message: string } {
+  const text = e instanceof Error ? `${e.name} ${e.message}` : String(e);
+  if (/timed out|TimeoutError|AbortError/i.test(text)) {
+    return {
+      kind: "TIMEOUT",
+      message: "The model server did not answer in time (on a shared local model it may be busy with other requests). Press Retry; AI_MIN_TIMEOUT_MS sets how long each call may wait.",
+    };
+  }
+  return { kind: "INTERNAL", message: "Internal error" };
+}
+
+/**
  * Encode error kind + human message into the single `error` column. Format:
  *   "KIND: message"
  * The client splits on the first `: ` to extract the kind.

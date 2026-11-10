@@ -9,7 +9,7 @@ import { searchLiterature, type LitPaper } from "../_shared/literature.ts";
 import { screenSafety } from "../_shared/safety.ts";
 import {
   callAIWithFallback, PLAN_MODELS, FAST_MODELS, REASONING_MODELS,
-  classifyHttpError, encodeError, type ErrorKind,
+  classifyHttpError, encodeError, runFailure, type ErrorKind,
 } from "../_shared/ai-fallback.ts";
 import { gateHypothesis } from "../_shared/hypothesisGate.ts";
 import { findCatalogIssues } from "../_shared/catalogCheck.ts";
@@ -1206,14 +1206,17 @@ serve(async (req) => {
             } catch (e) {
               console.error("background run error", e);
               stopHeartbeat();
+              // A model call that ran out of time is a TIMEOUT, not an
+              // internal error (runFailure in ai-fallback.ts).
+              const { kind, message: text } = runFailure(e);
               if (runId) {
                 await supabase
                   .from("runs")
-                  .update({ status: "failed", error: encodeError("INTERNAL", "Internal error") })
+                  .update({ status: "failed", error: encodeError(kind, text) })
                   .eq("id", runId)
                   .neq("status", "done");
               }
-              send("error", { message: "Internal error", kind: "INTERNAL" });
+              send("error", { message: text, kind });
             }
           };
 

@@ -254,7 +254,7 @@ powershell -ExecutionPolicy Bypass -File scripts\start-local.ps1 -RestartFunctio
 | `AI_MAX_TOKENS_PARAM` | `max_tokens`, `max_completion_tokens` (OpenAI gpt-5 / o-series) or `none`. |
 | `AI_MAX_TOKENS_CAP` | Upper bound on every output budget (3072 locally). Prompt + output must fit the model's context window: 8192 tokens for the local `qwen2.5-3b-4threads`. |
 | `AI_COMPACT_OUTPUT` | `true` for small local models: lists capped at 5 items and text fields at 400 characters (both enforced by Ollama's JSON grammar, so a model stuck in a loop has to close the field), short answers requested, long prompt inputs (previous plan, plan under review) cut short. Set `false` for hosted models. |
-| `AI_MIN_TIMEOUT_MS` | Floor for every per-call timeout (60 minutes locally, `0` for hosted). |
+| `AI_MIN_TIMEOUT_MS` | Floor for every per-call timeout, including the time a call waits in the Ollama queue (2 hours locally since 10 Nov 2026, `0` for hosted). A call that runs out of it fails the run as `TIMEOUT` (Retry). An existing `supabase\functions\.env` keeps its old value: edit it and run `start-local.ps1 -RestartFunctions`. |
 | `AI_EMBED_MODEL` | Embedding model (`nomic-embed-text` locally, natively 768-d). Empty switches embeddings off. |
 | `AI_EMBED_BASE_URL`, `AI_EMBED_API_KEY` | Separate embeddings endpoint (for chat providers without one, for example the Hugging Face router or the Lovable gateway). |
 | `AI_EMBED_DIMENSIONS` | `true` to request 768-d vectors from OpenAI / Gemini embedding models. |
@@ -294,7 +294,7 @@ docker run --rm -v "${PWD}:/app" -w /app -e DENO_DIR=/app/supabase/.temp/deno-ca
 (With Deno installed locally: `deno test --allow-net --allow-env --allow-read supabase/functions/_shared/ supabase/functions/run-experiment/`.)
 
 Measured on 10 Nov 2026 after the QA round-2 fixes: Vitest 19 files / 73
-tests, Deno 112 tests, ESLint 0 errors (9 warnings), `tsc` and `deno check`
+tests, Deno 113 tests, ESLint 0 errors (9 warnings), `tsc` and `deno check`
 clean. The plan checks have their own Deno suites built from the QA's
 failing plans (`supabase/functions/_shared/planGuards.test.ts` for round 1,
 `planChecksRound2.test.ts` for round 2), and the literature queries and the
@@ -363,9 +363,19 @@ which still points at the deleted hosted project.
   queue. The CRP plan itself: 2,275 prompt tokens at 10.5 tokens/s, 1,702
   generated tokens at 2.6 tokens/s (14.5 minutes); critiques ran at 0.7-1.0
   generated tokens/s while the other projects' 7B/8B models were busy. A
-  cache hit (same hypothesis) answered in under a second. These times are
-  set by the shared CPU, not by the pipeline; the only lever on this PC is
-  a smaller or a hosted model.
+  cache hit (same hypothesis) answered in under a second. Later (00:00-00:50
+  UTC, host CPU at 100%, another project's `qwen2.5-7b-4threads` generating
+  at the same time) the refinement "Shorten the overall timeline to 2
+  weeks." of 78967afc (run af633061) streamed its first plan at about 75
+  characters a minute (roughly 0.4 generated tokens/s) and needed 65 minutes
+  for it; the timeline check flagged 3+ weeks against the 2 asked and the
+  automatic second attempt started, which was stopped there rather than
+  waited for. Two runs queued behind it (the budget refinement c4aec570 and
+  an NMN run) waited 60 minutes for their first model call and failed at the
+  then 60-minute `AI_MIN_TIMEOUT_MS`, recorded as "Internal error"; such a
+  failure is now a `TIMEOUT` with a Retry button, and the local floor is 2
+  hours. These times are set by the shared CPU, not by the pipeline; the
+  only lever on this PC is a smaller or a hosted model.
 - **Ollama thread count.** Ollama runs a model with one thread per CPU core
   (8 here). When the PC is busy those threads stall each other: in a test on
   9 Nov 2026 qwen2.5:3b generated 0.07 tokens/s with the default threads and

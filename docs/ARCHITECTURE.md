@@ -261,7 +261,8 @@ Per-stage budgets:
 
 Per-stage budgets on the hosted models (the code's defaults). Every timeout
 is raised to at least `AI_MIN_TIMEOUT_MS`, which the self-hosted setup sets to
-60 minutes because a CPU-only local model needs that long:
+2 hours because a CPU-only local model, and the queue in front of a shared
+one, need that long (a call that runs out of time fails the run as `TIMEOUT`):
 
 | Stage | Model preference | Timeout (hosted) |
 |---|---|---|
