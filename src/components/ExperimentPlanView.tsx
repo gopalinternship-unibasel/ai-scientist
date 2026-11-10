@@ -23,6 +23,8 @@ import { exportPlanToPdf } from "@/lib/exportPdf";
 import { budgetTotal, checkBudget, checkLabel, costLineItems, planCheckNotes, shownBudget, verifiedSource } from "@/lib/planIntegrity";
 import { SectionFeedback, type FeedbackSection } from "@/components/SectionFeedback";
 import { Sparkles } from "lucide-react";
+import { lessonMatchPercent } from "@/lib/lessons";
+import { catalogDisplay } from "@/lib/catalogStatus";
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from "@/components/ui/tooltip";
@@ -32,7 +34,9 @@ export interface AppliedFeedbackEntry {
   section: string;
   rating: number | null;
   correction: string;
+  /** Cosine similarity (0-1); older runs stored the ranking score here (see lib/lessons.ts). */
   similarity: number;
+  score?: number;
 }
 
 /** Render a small "Applied N lessons" pill that, on hover, lists the
@@ -56,7 +60,7 @@ const AppliedLessonsBadge = ({ entries }: { entries: AppliedFeedbackEntry[] }) =
           {entries.map((e) => (
             <div key={e.id} className="border-l-2 border-primary/40 pl-2">
               <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                {e.section}{e.rating != null ? ` · ${e.rating}★` : ""} · {(e.similarity * 100 | 0)}% match
+                {e.section}{e.rating != null ? ` · ${e.rating}★` : ""} · {lessonMatchPercent(e)}% match
               </div>
               <div className="mt-0.5 text-foreground">{e.correction}</div>
             </div>
@@ -479,7 +483,19 @@ export const ExperimentPlanView = ({
                   </td>
                   <td className="py-2.5 pr-4 text-foreground/80">{m.supplier}</td>
                   <td className="py-2.5 pr-4 font-mono text-xs text-muted-foreground">
-                    {m.catalog_number ?? "—"}
+                    {(() => {
+                      // Only a number a catalogue confirmed is shown plainly (lib/catalogStatus.ts).
+                      const c = catalogDisplay(m);
+                      if (!c) return "—";
+                      return (
+                        <span data-testid="catalog-number" data-status={c.verified ? "verified" : "unverified"} title={c.note || undefined}>
+                          {c.number}
+                          <span className={`ml-1 block font-sans text-[9px] uppercase tracking-wider ${c.verified ? "text-success" : "text-destructive"}`}>
+                            {c.verified ? "verified" : "unverified"}
+                          </span>
+                        </span>
+                      );
+                    })()}
                   </td>
                   <td className="py-2.5 pr-4 text-foreground/80">{m.quantity}</td>
                   <td className="py-2.5 pr-4 text-right font-mono text-xs">

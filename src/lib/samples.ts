@@ -53,6 +53,9 @@ export type ExperimentPlan = {
     name: string;
     supplier: string;
     catalog_number?: string;
+    /** Set by the plan checks since QA round 3; absent on older plans (shown as unverified). */
+    catalog_status?: "verified" | "unverified";
+    catalog_check?: string;
     quantity: string;
     unit_cost_usd: number;
     total_cost_usd: number;

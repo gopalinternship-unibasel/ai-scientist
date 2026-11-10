@@ -1,5 +1,8 @@
-// Compact pill list of all versions in a refinement chain.
-// Highlights the currently viewed run and links to the others.
+// Compact pill list of all versions in a refinement chain (the original run,
+// its refinements and their refinements; RunPage loads them with
+// versionChain.ts). Highlights the currently viewed run and links to the
+// others. A refinement made from an earlier version than the one before it
+// (a branch: v1 refined twice) says which version it was made from.
 import { Link } from "react-router-dom";
 import { GitBranch, Sparkles } from "lucide-react";
 
@@ -9,6 +12,7 @@ export interface VersionEntry {
   refinement_instruction: string | null;
   created_at: string;
   status: string;
+  parent_run_id?: string | null;
 }
 
 interface Props {
@@ -18,7 +22,8 @@ interface Props {
 
 export const VersionSwitcher = ({ versions, currentId }: Props) => {
   if (versions.length <= 1) return null;
-  const sorted = [...versions].sort((a, b) => a.version - b.version);
+  const sorted = [...versions].sort((a, b) => a.version - b.version || a.created_at.localeCompare(b.created_at));
+  const byId = new Map(sorted.map((v) => [v.id, v]));
 
   return (
     <div className="rounded-md border border-rule bg-paper p-3">
@@ -29,7 +34,10 @@ export const VersionSwitcher = ({ versions, currentId }: Props) => {
         {sorted.map((v) => {
           const isCurrent = v.id === currentId;
           const label = `v${v.version}`;
-          const tooltip = v.refinement_instruction ?? "Initial plan";
+          const parent = v.parent_run_id ? byId.get(v.parent_run_id) : undefined;
+          // "from v1" when this refinement was not made from the version just before it.
+          const from = parent && parent.version !== v.version - 1 ? `from v${parent.version}` : null;
+          const tooltip = `${v.refinement_instruction ?? "Initial plan"}${parent ? ` (refined from v${parent.version})` : ""}`;
           const inner = (
             <span
               title={tooltip}
@@ -41,6 +49,7 @@ export const VersionSwitcher = ({ versions, currentId }: Props) => {
             >
               {v.refinement_instruction && <Sparkles className="h-3 w-3 text-accent" />}
               {label}
+              {from && <span className="text-foreground/50">{from}</span>}
               <span className="hidden max-w-[180px] truncate text-foreground/50 sm:inline">
                 {v.refinement_instruction ? `· ${v.refinement_instruction}` : "· initial"}
               </span>

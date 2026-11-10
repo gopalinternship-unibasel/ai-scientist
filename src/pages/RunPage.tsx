@@ -22,6 +22,8 @@ import { getOwnerToken } from "@/lib/owner";
 import { parseRunError, hintForKind, isRetryable } from "@/lib/runErrors";
 import { canGiveFeedback, canRefineRun } from "@/lib/runAccess";
 import { refinementBase } from "@/lib/versionBase";
+import { loadChain } from "../../supabase/functions/_shared/versionChain";
+import { madeByOlderPipeline } from "../../supabase/functions/_shared/pipelineVersion";
 import type { ExperimentPlan, LiteratureQC, PlanCritique } from "@/lib/samples";
 
 type Status = "pending" | "qc" | "plan" | "done" | "failed";
@@ -32,6 +34,7 @@ interface AppliedFeedback {
   rating: number | null;
   correction: string;
   similarity: number;
+  score?: number;
 }
 
 interface Run {
@@ -58,8 +61,11 @@ interface Run {
 const RUN_COLUMNS =
   "id,hypothesis,status,qc,plan,critique,error,created_at,parent_run_id,version,refinement_instruction,share_token,owner_user_id,updated_at,applied_feedback,solicit_section,solicit_reason,progress";
 
-// Stall threshold: warn the user if no progress for 90s on an in-flight run.
+// Stall threshold: warn the user if no progress for 150 s on an in-flight run
+// (the server writes a heartbeat every 20 s).
 const STALL_THRESHOLD_MS = 150_000;
+
+const CHAIN_COLUMNS = "id,version,refinement_instruction,created_at,status,parent_run_id,plan";
 
 const RunPage = () => {
   const { id } = useParams<{ id: string }>();
@@ -75,6 +81,8 @@ const RunPage = () => {
   const [shareCopied, setShareCopied] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const retryAbortRef = useRef<AbortController | null>(null);
+  // Which run (and status) the version list was last loaded for.
+  const chainKeyRef = useRef<string | null>(null);
 
   // Pick a client whose RLS context can read this run:
   // - signed-in user, no share token → default supabase client (their JWT)
@@ -110,14 +118,29 @@ const RunPage = () => {
       const r = data as unknown as Run;
       setRun(r);
 
-      // Load all versions in this refinement chain (root + descendants).
-      const rootId = r.parent_run_id ?? r.id;
-      const { data: chain } = await client
-        .from("runs")
-        .select("id,version,refinement_instruction,created_at,status,parent_run_id,plan")
-        .or(`id.eq.${rootId},parent_run_id.eq.${rootId}`)
-        .order("version", { ascending: true });
-      if (active && chain) setVersions(chain as unknown as VersionEntry[]);
+      // Every version in this refinement chain: up to the original run and
+      // down through all refinements, refinements of refinements included
+      // (versionChain.ts). Until QA round 3 only the root and its direct
+      // children were loaded, so v3 (a refinement of v2) was missing from
+      // v1's and v2's switcher and v1 from v3's. Reloaded when the run or
+      // its status changes, not on every poll.
+      const chainKey = `${r.id}:${r.status}`;
+      if (chainKeyRef.current === chainKey) return;
+      chainKeyRef.current = chainKey;
+      type Row = VersionEntry & { parent_run_id: string | null; plan?: ExperimentPlan | null };
+      const chain = await loadChain<Row>(
+        { id: r.id, parent_run_id: r.parent_run_id, version: r.version, refinement_instruction: r.refinement_instruction, created_at: r.created_at, status: r.status, plan: r.plan },
+        async (pid) => {
+          const { data: row } = await client.from("runs").select(CHAIN_COLUMNS).eq("id", pid).maybeSingle();
+          return (row as unknown as Row | null) ?? null;
+        },
+        async (ids) => {
+          const { data: rows } = await client.from("runs").select(CHAIN_COLUMNS).in("parent_run_id", ids);
+          return (rows as unknown as Row[] | null) ?? [];
+        },
+      ).catch(() => null);
+      if (active && chain) setVersions(chain);
+      else if (!chain) chainKeyRef.current = null;
     };
     load();
 
@@ -218,6 +241,31 @@ const RunPage = () => {
     setShareCopied(true);
     toast.success("Share link copied to clipboard.");
     setTimeout(() => setShareCopied(false), 2000);
+  };
+
+  // A run made by an older pipeline (before the current novelty and plan
+  // checks) is never replayed from the cache; this starts a fresh one.
+  const onRunAgain = async () => {
+    if (!run || retrying) return;
+    setRetrying(true);
+    try {
+      await startRunStream({
+        hypothesis: run.hypothesis,
+        ownerToken: getOwnerToken(),
+        onEvent: (e) => {
+          if (e.type === "run") {
+            trackRun({ id: e.id, hypothesis: run.hypothesis });
+            navigate(`/runs/${e.id}`);
+          } else if (e.type === "error") {
+            toast.error(e.message);
+            setRetrying(false);
+          }
+        },
+      });
+    } catch {
+      toast.error("Could not start a new run. Please try again.");
+      setRetrying(false);
+    }
   };
 
   const onRetry = async () => {
@@ -362,6 +410,23 @@ const RunPage = () => {
           </div>
         )}
 
+        {run.status === "done" && madeByOlderPipeline(run.qc as { pipeline_version?: unknown } | null)
+          && madeByOlderPipeline(run.plan?.verification as { pipeline_version?: unknown } | undefined) && (
+          <div data-testid="older-pipeline" className="mb-6 rounded-md border border-warning/40 bg-warning/10 p-4 no-print">
+            <h2 className="font-mono text-[11px] uppercase tracking-wider text-warning">Made by an earlier version</h2>
+            <p className="mt-1 text-sm text-foreground/80">
+              This run was made before the current literature and plan checks (10 Nov 2026). Its novelty verdict,
+              references and plan checks were not recomputed and may be wrong{run.version > 1 ? "" : "; the same hypothesis is no longer answered from this copy"}.
+            </p>
+            {run.version === 1 && !shareToken && (
+              <Button variant="outline" size="sm" className="mt-3 gap-2" onClick={onRunAgain} disabled={retrying}>
+                {retrying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                Run again with the current checks
+              </Button>
+            )}
+          </div>
+        )}
+
         {run.status === "failed" && (() => {
           const parsed = parseRunError(run.error);
           const canRetry = isOwner && isRetryable(parsed.kind);
@@ -402,7 +467,7 @@ const RunPage = () => {
               Generation stalled
             </h2>
             <p className="mt-1 text-sm text-foreground/80">
-              No progress for over 90 seconds. The model may have hung. You can wait a bit
+              No progress for over 2.5 minutes. The model may have hung. You can wait a bit
               longer or start over.
             </p>
             <Link to="/" className="mt-3 inline-block">

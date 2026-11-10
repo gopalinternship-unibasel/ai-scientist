@@ -151,3 +151,22 @@ describe("ExperimentPlanView section feedback", () => {
     expect(buttons()).toHaveLength(0);
   });
 });
+
+describe("ExperimentPlanView catalog numbers (QA round 3)", () => {
+  it("never shows an unconfirmed catalog number as a plain one", () => {
+    const withStatus: ExperimentPlan = {
+      ...plan,
+      materials: [
+        { name: "Caco-2 cells", supplier: "ATCC", catalog_number: "HTB-37", catalog_status: "verified", catalog_check: "ATCC's number for Caco-2", quantity: "1 vial", unit_cost_usd: 500, total_cost_usd: 500 },
+        { name: "Sodium butyrate", supplier: "Sigma-Aldrich", catalog_number: "B3157", catalog_status: "unverified", catalog_check: "not in Sigma-Aldrich's catalogue as deposited in PubChem", quantity: "5 g", unit_cost_usd: 60, total_cost_usd: 60 },
+        { name: "Old plan's number", supplier: "Thermo Fisher", catalog_number: "A1000", quantity: "1", unit_cost_usd: 10, total_cost_usd: 10 },
+      ],
+    };
+    render(<MemoryRouter><ExperimentPlanView plan={withStatus} hypothesis="h" version={1} /></MemoryRouter>);
+    // The table may render more than once (print and screen layouts): check the first copy.
+    const cells = screen.getAllByTestId("catalog-number").slice(0, 3);
+    expect(cells.map((c) => c.getAttribute("data-status"))).toEqual(["verified", "unverified", "unverified"]);
+    expect(cells[1].getAttribute("title")).toMatch(/PubChem/);
+    expect(cells[2].textContent).toMatch(/A1000\s*unverified/i);
+  });
+});

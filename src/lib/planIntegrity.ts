@@ -92,6 +92,7 @@ export function planCheckNotes(plan: ExperimentPlan, references: RefLike[]): Pla
 // planGuards.ts FIXED_KINDS); every other finding is for the reader to check.
 const FIXED_KINDS = new Set([
   "budget_total_corrected", "unverified_sources_removed", "materials_line_corrected", "catalog_numbers_removed",
+  "catalog_numbers_corrected",
 ]);
 
 /** "Fixed" for corrections the checks made, "Check" for findings left to the reader. */
