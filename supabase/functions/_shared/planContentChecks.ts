@@ -1007,3 +1007,69 @@ export function checkCatalogNumbers<M extends CatalogInput>(
   });
   return { materials: out, removed, corrected, unverified, verified };
 }
+
+// --- catalog numbers written into protocol steps --------------------------------
+
+// Supplier names a step may give a catalog number after.
+const STEP_SUPPLIER = /\b(?:Sigma[- ]?Aldrich|MilliporeSigma|Millipore|Sigma|Merck|Thermo(?:\s?Fisher)?(?:\sScientific)?|Fisher(?:\sScientific)?|Invitrogen|Gibco|Life\sTechnologies|Corning|Falcon|Promega|Qiagen|Abcam|Bio-?Rad|BD(?:\sBiosciences)?|Lonza|ATCC|NEB|New\sEngland\sBiolabs|Roche|Cayman(?:\sChemical)?|Tocris|R&D\sSystems|Cell\sSignaling(?:\sTechnology)?|Santa\sCruz(?:\sBiotechnology)?|IDT|Addgene|World\sPrecision\sInstruments|WPI|VWR|Selleck(?:chem)?|MedChemExpress|TCI|Alfa\sAesar|Acros|Greiner|Eppendorf|Sartorius|Agilent|PerkinElmer|BioLegend|Miltenyi|STEMCELL(?:\sTechnologies)?|Takara|Zymo)\b/gi;
+// "cat. no.", "catalog #", "Cat:" ...
+const CAT_WORD = String.raw`[Cc]at(?:alog(?:ue)?)?\.?\s*(?:[Nn]o\.?|[Nn]umber|#)?\s*[:#]?\s*`;
+// A catalog number: letters then digits (S8978, HTB-37, O0625, ab12345,
+// PHR1084-1G) or five or more digits (11965092). Not a quantity: nothing
+// that is followed by a unit ("Thermo Fisher 10000 cells", "Corning 96-well").
+const NOT_A_QUANTITY = String.raw`(?![\w%°µμ])(?!\s*(?:%|[µμu]?[lLmMgG]\b|[mcn]m\b|kg\b|wells?\b|cells?\b|rpm\b|x\s?g\b|°|units?\b))`;
+const STEP_TOKEN = String.raw`(?:[A-Z]{1,4}-?\d{2,7}(?:[-.]\d{1,4}[A-Z]{0,3})?|[a-z]{2}\d{3,7}|\d{5,9}(?:-\d{2,4})?)`;
+const AFTER_SUPPLIER = new RegExp(String.raw`^(\s*[,:;#(-]?\s*(?:${CAT_WORD})?)(${STEP_TOKEN})${NOT_A_QUANTITY}`);
+// With the words "cat. no." in front any number counts ("cat. no. 3470").
+const AFTER_SUPPLIER_CAT = new RegExp(String.raw`^(\s*[,:;#(-]?\s*${CAT_WORD})([A-Za-z]{0,4}-?\d{3,9}(?:[-.]\d{1,4}[A-Z]{0,3})?)${NOT_A_QUANTITY}`);
+const BARE_CAT = new RegExp(String.raw`\b[Cc]at(?:alog(?:ue)?)?\.?\s*(?:[Nn]o\.?|[Nn]umber|#)\s*[:#]?\s*([A-Za-z]{0,4}-?\d{3,9}(?:[-.]\d{1,4}[A-Z]{0,3})?)${NOT_A_QUANTITY}`, "g");
+
+export interface StepCatalogRemoval {
+  /** 1-based step number. */
+  step: number;
+  catalog_number: string;
+}
+
+/**
+ * Catalog numbers written into protocol step text ("2 mM sodium butyrate
+ * (Sigma-Aldrich, S8978)", run 42c080d0 of 10 Nov 2026). Only the materials
+ * table is checked against a catalogue, so a number in a step would be
+ * shown as real without any check. It is taken out of the text (the
+ * supplier's name stays) unless it is one of `verified`, the numbers the
+ * materials check confirmed.
+ */
+export function stripStepCatalogNumbers<S extends { title?: string; description?: string }>(
+  steps: S[] | undefined,
+  verified: Iterable<string> = [],
+): { steps: S[]; removed: StepCatalogRemoval[] } {
+  if (!Array.isArray(steps)) return { steps: [], removed: [] };
+  const ok = new Set([...verified].map((v) => v.toUpperCase()));
+  const removed: StepCatalogRemoval[] = [];
+  const out = steps.map((s, i) => {
+    const text = s?.description;
+    if (typeof text !== "string" || !/\d/.test(text)) return s;
+    // Spans to cut, found from the supplier names and from bare "cat. no. X".
+    const cuts: Array<[number, number, string]> = [];
+    for (const m of text.matchAll(STEP_SUPPLIER)) {
+      const end = (m.index ?? 0) + m[0].length;
+      const rest = text.slice(end);
+      const t = rest.match(AFTER_SUPPLIER_CAT) ?? rest.match(AFTER_SUPPLIER);
+      if (t && !ok.has(t[2].toUpperCase())) cuts.push([end, end + t[0].length, t[2]]);
+    }
+    for (const m of text.matchAll(BARE_CAT)) {
+      const start = m.index ?? 0;
+      if (ok.has(m[1].toUpperCase()) || cuts.some(([a, b]) => start < b && start + m[0].length > a)) continue;
+      cuts.push([start, start + m[0].length, m[1]]);
+    }
+    if (cuts.length === 0) return s;
+    cuts.sort((a, b) => b[0] - a[0]);
+    let cleaned = text;
+    for (const [a, b, token] of cuts) {
+      cleaned = cleaned.slice(0, a) + cleaned.slice(b);
+      removed.push({ step: i + 1, catalog_number: token });
+    }
+    cleaned = cleaned.replace(/\(\s*[,;:]?\s*\)/g, "").replace(/\s+([,.;:)])/g, "$1").replace(/\(\s+/g, "(").replace(/\s{2,}/g, " ").trim();
+    return { ...s, description: cleaned };
+  });
+  return { steps: out, removed: removed.sort((a, b) => a.step - b.step) };
+}

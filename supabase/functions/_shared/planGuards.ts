@@ -14,7 +14,7 @@
 //    timeline to 8 weeks" produced $16,235 and 5 phases of one month.
 
 import {
-  MATERIALS_LINE_RE, materialsSubtotal, reconcileBudget, reconcileMaterialsLine, sanitizeStepSources,
+  costLineItems, MATERIALS_LINE_RE, materialsSubtotal, reconcileBudget, reconcileMaterialsLine, sanitizeStepSources,
   type RefLike, type SourceReport,
 } from "./planIntegrity.ts";
 import { CATALOG_GROUPS, relevantCatalogGroups } from "./costCatalog.ts";
@@ -22,7 +22,7 @@ import { checkTimelineConsistency, parseDurationToHours } from "./timelineCheck.
 import { anchorConcepts, hypothesisConcepts, mentions, textWords } from "./hypothesisTerms.ts";
 import {
   checkCatalogNumbers, compartmentMismatch, dilutionIssues, doseIssues, type LiveSkuFinding, materialListSteps,
-  type MaterialWithCatalog, missingMaterials, readoutMissing, stepDurationIssues, unlikelySuppliers,
+  type MaterialWithCatalog, missingMaterials, readoutMissing, stepDurationIssues, stripStepCatalogNumbers, unlikelySuppliers,
 } from "./planContentChecks.ts";
 import { PIPELINE_VERSION } from "./pipelineVersion.ts";
 
@@ -48,6 +48,7 @@ export interface PlanIssue {
     | "protocol_exceeds_timeline"
     | "step_durations_inconsistent"
     | "budget_cap_not_met"
+    | "budget_materials_only"
     | "refinement_budget_not_met"
     | "refinement_timeline_not_met"
     | "unverified_sources_removed";
@@ -89,6 +90,8 @@ export const REPAIR_KINDS = new Set<PlanIssue["kind"]>([
   // materials, no step for the hypothesis' readout, a budget cap stated in
   // the hypothesis.
   "materials_missing", "readout_missing", "budget_cap_not_met",
+  // A budget of materials only is not a costing (run 42c080d0: $190 in all).
+  "budget_materials_only",
 ]);
 
 export function repairableIssues(v: PlanVerification): PlanIssue[] {
@@ -545,12 +548,20 @@ export function verifyPlan(
   if (Array.isArray(plan.materials)) {
     const cat = checkCatalogNumbers(plan.materials, ctx.liveSku ?? [], { keepEarlier: !!prev });
     plan.materials = cat.materials;
-    if (cat.removed.length > 0) {
-      issues.push({
-        kind: "catalog_numbers_removed",
-        severity: "medium",
-        detail: `${cat.removed.length} catalog number(s) were removed because they belong to another product, do not fit the supplier's format or look made up: ${cat.removed.slice(0, 4).map((r) => `${r.catalog_number} for ${r.name} (${r.why})`).join("; ")}.`,
-      });
+    // Numbers written into protocol steps are not in the table, so nothing
+    // checked them: they are taken out of the step text unless the table
+    // confirmed the same number.
+    const verifiedNumbers = cat.materials.filter((m) => m.catalog_status === "verified" && m.catalog_number).map((m) => String(m.catalog_number));
+    const inSteps = stripStepCatalogNumbers(plan.protocol, verifiedNumbers);
+    if (inSteps.removed.length > 0 && Array.isArray(plan.protocol)) plan.protocol = inSteps.steps;
+    if (cat.removed.length > 0 || inSteps.removed.length > 0) {
+      const fromTable = cat.removed.length > 0
+        ? `${cat.removed.length} catalog number(s) were removed because they belong to another product, do not fit the supplier's format or look made up: ${cat.removed.slice(0, 4).map((r) => `${r.catalog_number} for ${r.name} (${r.why})`).join("; ")}.`
+        : "";
+      const fromSteps = inSteps.removed.length > 0
+        ? `${inSteps.removed.length} catalog number(s) written into protocol steps were taken out of the text (${inSteps.removed.slice(0, 4).map((r) => `${r.catalog_number} in step ${r.step}`).join(", ")}): only numbers in the materials table are checked against a catalogue.`
+        : "";
+      issues.push({ kind: "catalog_numbers_removed", severity: "medium", detail: [fromTable, fromSteps].filter(Boolean).join(" ") });
     }
     if (cat.corrected.length > 0) {
       issues.push({
@@ -603,12 +614,26 @@ export function verifyPlan(
     }
     // A materials line far above the table may pay for unlisted items: flag it.
     const matSum = materialsSubtotal(materialsTable);
-    const matLine = (plan.budget.line_items ?? []).find((li) => MATERIALS_LINE_RE.test(li?.category ?? ""));
-    if (!change && matSum > 0 && matLine && Number(matLine.amount_usd) > matSum * 1.33) {
+    const costLines = costLineItems(plan.budget.line_items);
+    const matLines = costLines.filter((li) => MATERIALS_LINE_RE.test(li?.category ?? ""));
+    const matLinesSum = matLines.reduce((s, li) => s + (Number(li?.amount_usd) || 0), 0);
+    if (!change && matSum > 0 && matLines.length > 0 && matLinesSum > matSum * 1.33) {
       issues.push({
         kind: "materials_subtotal_mismatch",
         severity: "medium",
-        detail: `The budget line "${matLine.category ?? "materials"}" (${usd(Number(matLine.amount_usd))}) is well above the materials table subtotal (${usd(matSum)}); the difference is not itemised.`,
+        detail: `The budget line "${matLines[0].category ?? "materials"}" (${usd(matLinesSum)}${matLines.length > 1 ? ` over ${matLines.length} lines` : ""}) is well above the materials table subtotal (${usd(matSum)}); the difference is not itemised.`,
+      });
+    }
+    // A costing has more than the shopping list: labour at least. Run
+    // 42c080d0 budgeted its five materials and nothing else.
+    const otherLines = costLines.filter((li) => !MATERIALS_LINE_RE.test(li?.category ?? "") && Number(li?.amount_usd) > 0);
+    if (matLines.length > 0 && otherLines.length === 0) {
+      const team = Array.isArray(plan.team) ? plan.team as { fte?: number | string }[] : [];
+      const fte = Math.round(team.reduce((s, t) => s + (Number(t?.fte) || 0), 0) * 100) / 100;
+      issues.push({
+        kind: "budget_materials_only",
+        severity: "high",
+        detail: `The budget lists materials only (${usd(Number(plan.budget.total_usd) || 0)}): no labour, equipment or overhead${fte > 0 ? `, although the plan names a team of ${team.length} (${fte} FTE)` : ""}.`,
       });
     }
   }

@@ -289,6 +289,12 @@ export function materialsSubtotal(materials: MaterialCostLike[] | undefined | nu
  * left alone (it may cover consumables the table does not list); the guards
  * flag it when it is far above. Returns the budget unchanged when there is
  * no priced table or no materials line.
+ *
+ * A budget may have several materials lines (run 42c080d0, 10 Nov 2026: one
+ * "Materials" line per material, $120 + $25 + $20 + $15 + $10 for a $190
+ * table). They are compared together: raising the first one to the whole
+ * subtotal counted the other four twice ($260). When their sum is short,
+ * the first line is raised by the shortfall.
  */
 export function reconcileMaterialsLine<B extends BudgetLike>(
   budget: B,
@@ -296,11 +302,15 @@ export function reconcileMaterialsLine<B extends BudgetLike>(
 ): { budget: B; change: MaterialsLineChange | null } {
   const table = materialsSubtotal(materials);
   if (!budget || !Array.isArray(budget.line_items) || table <= 0) return { budget, change: null };
-  const idx = budget.line_items.findIndex((li) => MATERIALS_LINE_RE.test(li?.category ?? "") && !TOTAL_ROW_RE.test(li?.category ?? ""));
+  const isMaterials = (li: { category?: string } | undefined) =>
+    MATERIALS_LINE_RE.test(li?.category ?? "") && !TOTAL_ROW_RE.test(li?.category ?? "");
+  const idx = budget.line_items.findIndex(isMaterials);
   if (idx < 0) return { budget, change: null };
-  const stated = num(budget.line_items[idx]?.amount_usd) ?? 0;
+  const stated = Math.round(budget.line_items.filter(isMaterials).reduce((s, li) => s + (num(li?.amount_usd) ?? 0), 0) * 100) / 100;
   if (stated >= table - 1) return { budget, change: null };
-  const line_items = budget.line_items.map((li, i) => (i === idx ? { ...li, amount_usd: table } : li));
+  const first = num(budget.line_items[idx]?.amount_usd) ?? 0;
+  const raised = Math.round((first + table - stated) * 100) / 100;
+  const line_items = budget.line_items.map((li, i) => (i === idx ? { ...li, amount_usd: raised } : li));
   return {
     budget: { ...budget, line_items },
     change: { category: budget.line_items[idx]?.category ?? "Materials", stated, table },

@@ -67,3 +67,32 @@ describe("older pipeline", () => {
     expect(madeByOlderPipeline({ pipeline_version: PIPELINE_VERSION })).toBe(false);
   });
 });
+
+describe("display helpers with odd stored values", () => {
+  it("lesson match: text, missing and broken numbers never leave 0-100", () => {
+    const odd = [
+      { similarity: "0.8" as unknown as number, rating: 3 },
+      { similarity: null as unknown as number, rating: null },
+      { similarity: Number.NaN, rating: 5 },
+      { similarity: Infinity, rating: 5 },
+      { similarity: 1.9, rating: 5, score: 1.9 },
+      { similarity: 0.82, rating: 5, score: 1.74 },
+    ];
+    for (const e of odd) {
+      const p = lessonMatchPercent(e);
+      expect(Number.isInteger(p)).toBe(true);
+      expect(p).toBeGreaterThanOrEqual(0);
+      expect(p).toBeLessThanOrEqual(100);
+    }
+    expect(lessonMatchLabel(odd[0])).toBe("80% match");
+    expect(lessonMatchLabel(odd[5])).toBe("82% match");
+    // A new run whose similarity is above 1 by mistake is capped, not called a lower bound.
+    expect(lessonMatchLabel(odd[4])).toBe("100% match");
+  });
+  it("catalog number: a number stored as a number, blanks, and an unknown status", () => {
+    expect(catalogDisplay({ catalog_number: 11965092 as unknown as string, catalog_status: "verified", catalog_check: "listed" })?.number).toBe("11965092");
+    expect(catalogDisplay({ catalog_number: "   " })).toBeNull();
+    const d = catalogDisplay({ catalog_number: "X1", catalog_status: "confirmed" as unknown as "verified" });
+    expect(d?.verified).toBe(false);
+  });
+});

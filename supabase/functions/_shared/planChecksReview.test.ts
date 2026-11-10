@@ -17,11 +17,12 @@
 //    invented budget claim.
 // Run: deno test --allow-net --allow-env --allow-read --no-lock supabase/functions/_shared/
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { effectiveConstraints, hypothesisBudgetCap, parseRefinementConstraints, refinementConstraintPrompt, verifyPlan } from "./planGuards.ts";
+import { effectiveConstraints, hypothesisBudgetCap, parseRefinementConstraints, refinementConstraintPrompt, repairableIssues, verifyPlan } from "./planGuards.ts";
 import {
   checkCatalogNumbers, dilutionIssues, doseIssues, hypothesisCellLines, hypothesisDoses, missingMaterials,
-  readoutMissing, stepDurationIssues,
+  readoutMissing, stepDurationIssues, stripStepCatalogNumbers,
 } from "./planContentChecks.ts";
+import { reconcileMaterialsLine } from "./planIntegrity.ts";
 import { plainCellLineIn } from "./catalogCheck.ts";
 import { parseDurationToHours } from "./timelineCheck.ts";
 import { claimedBudgetAbove, cleanCritique } from "./critiqueGuards.ts";
@@ -296,6 +297,106 @@ Deno.test("budget cap in the hypothesis: explicit budget wording only", () => {
   assertEquals(hypothesisBudgetCap("With a total budget of at most $2.5k the screen finds 3 hits."), 2500);
   assertEquals(hypothesisBudgetCap("A $5 paper test detects CRP as well as a $300 ELISA kit."), undefined);
   assertEquals(hypothesisBudgetCap("Treatment costs under $20 per patient in total."), undefined);
+});
+
+// --- the first end-to-end run on the 7B model (42c080d0, 10 Nov 2026) ------------------------------
+
+// The plan as the model wrote it (the stored row holds the corrected copy).
+const RUN_42C = {
+  protocol: [
+    { step: 1, title: "Cell Culture", duration: "2 weeks", description: "Culture Caco-2 cells (ATCC HTB-37) in DMEM supplemented with 10% FBS and 1% penicillin/streptomycin.", source: "manufacturer's instructions" },
+    { step: 2, title: "Differentiation", duration: "21 days", description: "Differentiate cells to form a monolayer using Caco-2 differentiation medium (Lonza) for 21 days.", source: "manufacturer's instructions" },
+    { step: 3, title: "Baseline TEER Measurement", duration: "1 hour", description: "Measure TEER using an epithelial voltohmmeter (Millicell-ERS, Merck) in untreated monolayers.", source: "manufacturer's instructions" },
+    { step: 4, title: "Treatment", duration: "72 hours", description: "Incubate differentiated monolayers with 2 mM sodium butyrate (Sigma-Aldrich, S8978) in serum-free medium for 72 hours.", source: "manufacturer's instructions" },
+    { step: 5, title: "Post-Treatment TEER Measurement", duration: "1 hour", description: "Measure TEER in treated monolayers using the same voltohmmeter.", source: "manufacturer's instructions" },
+  ],
+  materials: [
+    { name: "Caco-2 cells (ATCC HTB-37)", supplier: "ATCC", quantity: "1 vial", total_cost_usd: 120 },
+    { name: "DMEM", supplier: "Sigma-Aldrich", quantity: "500 mL", total_cost_usd: 25 },
+    { name: "10% FBS", supplier: "Sigma-Aldrich", quantity: "50 mL", total_cost_usd: 20 },
+    { name: "1% Penicillin/Streptomycin", supplier: "Thermo Fisher", quantity: "100 mL", total_cost_usd: 15 },
+    { name: "Sodium Butyrate", supplier: "Sigma-Aldrich", quantity: "5 g", total_cost_usd: 10 },
+  ],
+  budget: {
+    currency: "USD",
+    line_items: [
+      { category: "Materials", amount_usd: 120, note: "Caco-2 cells" }, { category: "Materials", amount_usd: 25, note: "DMEM" },
+      { category: "Materials", amount_usd: 20, note: "10% FBS" }, { category: "Materials", amount_usd: 15, note: "1% Penicillin/Streptomycin" },
+      { category: "Materials", amount_usd: 10, note: "Sodium Butyrate" },
+    ],
+    total_usd: 90,
+  },
+  timeline: [{ phase: "Cell Culture", duration: "2 weeks" }, { phase: "Baseline TEER Measurement", duration: "1 hour" }, { phase: "Treatment", duration: "72 hours" }, { phase: "Post-Treatment TEER Measurement", duration: "1 hour" }],
+  team: [{ role: "Principal Investigator", fte: 1 }, { role: "Research Associate", fte: 0.5 }],
+};
+
+Deno.test("budget: several materials lines are compared with the table together, not one by one", () => {
+  // Five "Materials" lines that add up to the table: nothing to raise, and the total is their sum.
+  const same = reconcileMaterialsLine(RUN_42C.budget, RUN_42C.materials);
+  assertEquals(same.change, null);
+  const v = verifyPlan(RUN_42C, { hypothesis: BUTYRATE, references: [], fresh: true });
+  assertEquals(v.plan.budget?.total_usd, 190, "the first version raised the first line to $190 and summed $260");
+  assertEquals(kinds(v.verification).includes("materials_line_corrected"), false);
+  // Short by $65: the first line makes up the difference, once.
+  const short = reconcileMaterialsLine({ line_items: [{ category: "Materials", amount_usd: 100 }, { category: "Reagents", amount_usd: 25 }, { category: "Labour", amount_usd: 900 }], total_usd: 1025 }, RUN_42C.materials);
+  assertEquals(short.change, { category: "Materials", stated: 125, table: 190 });
+  assertEquals(short.budget.line_items?.map((li) => li.amount_usd), [165, 25, 900]);
+  // One line, as before.
+  assertEquals(reconcileMaterialsLine({ line_items: [{ category: "Materials", amount_usd: 100 }] }, RUN_42C.materials).budget.line_items?.[0].amount_usd, 190);
+});
+
+Deno.test("budget: a budget of materials only is flagged for a second attempt; one with labour is not", () => {
+  const v = verifyPlan(RUN_42C, { hypothesis: BUTYRATE, references: [], fresh: true }).verification;
+  const f = v.issues.find((i) => i.kind === "budget_materials_only");
+  assertEquals(f?.severity, "high");
+  assertEquals(f?.detail, "The budget lists materials only ($190): no labour, equipment or overhead, although the plan names a team of 2 (1.5 FTE).");
+  assert(repairableIssues(v).some((i) => i.kind === "budget_materials_only"));
+  const withLabour = { ...RUN_42C, budget: { ...RUN_42C.budget, line_items: [...RUN_42C.budget.line_items, { category: "Labour", amount_usd: 5500 }] } };
+  assertEquals(kinds(verifyPlan(withLabour, { hypothesis: BUTYRATE, references: [], fresh: true }).verification).includes("budget_materials_only"), false);
+  // No budget, or one without a materials line: not this finding.
+  assertEquals(kinds(verifyPlan({ budget: { line_items: [{ category: "Labour", amount_usd: 100 }], total_usd: 100 } }, { hypothesis: BUTYRATE, references: [] }).verification).includes("budget_materials_only"), false);
+});
+
+Deno.test("catalog numbers written into protocol steps are taken out unless the materials table confirmed them", () => {
+  const v = verifyPlan(RUN_42C, { hypothesis: BUTYRATE, references: [], fresh: true });
+  assertEquals(v.plan.protocol?.[3].description, "Incubate differentiated monolayers with 2 mM sodium butyrate (Sigma-Aldrich) in serum-free medium for 72 hours.");
+  assertEquals(v.plan.protocol?.[0].description, RUN_42C.protocol[0].description, "HTB-37 is the number the table verified for Caco-2");
+  assertEquals(v.plan.protocol?.[2].description, RUN_42C.protocol[2].description, "a product name is not a catalog number");
+  const note = v.verification.issues.find((i) => i.kind === "catalog_numbers_removed");
+  assertEquals(note?.detail, "1 catalog number(s) written into protocol steps were taken out of the text (S8978 in step 4): only numbers in the materials table are checked against a catalogue.");
+
+  const strip = (text: string, verified: string[] = []) => stripStepCatalogNumbers([{ description: text }], verified);
+  for (const [text, cleaned, numbers] of [
+    ["Stain with Oil Red O (Sigma O0625) for 15 min.", "Stain with Oil Red O (Sigma) for 15 min.", ["O0625"]],
+    ["Use DMEM (Gibco 11965092) with 10% FBS (Thermo Fisher, cat. no. A3160401).", "Use DMEM (Gibco) with 10% FBS (Thermo Fisher).", ["11965092", "A3160401"]],
+    ["Seed on Transwell inserts (Corning, cat. no. 3470).", "Seed on Transwell inserts (Corning).", ["3470"]],
+    ["Add CellTiter-Glo reagent (cat. no. G7570) to each well.", "Add CellTiter-Glo reagent to each well.", ["G7570"]],
+    ["Add 100 µL of Promega G7570 reagent.", "Add 100 µL of Promega reagent.", ["G7570"]],
+  ] as const) {
+    const r = strip(text);
+    assertEquals(r.steps[0].description, cleaned, text);
+    assertEquals(r.removed.map((x) => x.catalog_number).sort(), [...numbers].sort(), text);
+  }
+  // Quantities, sizes, names and model numbers after a supplier are not catalog numbers.
+  for (const text of [
+    "Seed Thermo Fisher 10000 cells per well in Corning 96-well plates.",
+    "Add Sigma 10 mM stock and Merck 2 mM buffer; spin at 12000 rpm.",
+    "Measure TEER with a Millicell-ERS (Merck) voltohmmeter.",
+    "Read on a BioTek Synergy H1 plate reader at 450 nm.",
+    "Lyse 50000 cells in 100 µL RIPA buffer.",
+    "Incubate for 24 h at 37°C with 5% CO2.",
+  ]) {
+    const r = strip(text);
+    assertEquals([r.steps[0].description, r.removed.length], [text, 0], text);
+  }
+  // A number the table verified stays; the same step keeps its other fields.
+  const kept = stripStepCatalogNumbers([{ title: "T", description: "Dissolve sodium butyrate (Sigma-Aldrich, B5887).", duration: "1 h" }], ["b5887"]);
+  assertEquals(kept, { steps: [{ title: "T", description: "Dissolve sodium butyrate (Sigma-Aldrich, B5887).", duration: "1 h" }], removed: [] });
+  assertEquals(stripStepCatalogNumbers(undefined), { steps: [], removed: [] });
+  // A cached copy: the text is already clean, and the note from the first pass is kept.
+  const again = verifyPlan(v.plan, { hypothesis: BUTYRATE, references: [] });
+  assertEquals(again.plan.protocol?.[3].description, v.plan.protocol?.[3].description);
+  assertEquals(again.verification.issues.find((i) => i.kind === "catalog_numbers_removed")?.detail, note?.detail);
 });
 
 // --- critique -----------------------------------------------------------------------------------
