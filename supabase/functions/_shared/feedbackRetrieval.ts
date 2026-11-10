@@ -23,7 +23,10 @@ export interface FeedbackHint {
   correction: string;
   domain: string | null;
   hypothesis_excerpt: string | null;
+  /** Cosine similarity of the correction to this hypothesis (0-1), as the RPC returned it. */
   similarity: number;
+  /** Ranking score: (cosine + domain bonus) x rating weight; up to about 2.1, not a percentage. */
+  score: number;
 }
 
 // Cosine floor — below this we treat hits as noise. 0.55 was tuned for
@@ -92,14 +95,24 @@ export async function retrieveRelevantFeedback(
       return [];
     }
 
-    const domainNorm = (domainGuess ?? "").toLowerCase().trim();
+    return rankFeedbackRows(data as Record<string, unknown>[], domainGuess);
+  } catch (e) {
+    console.error("retrieveRelevantFeedback failed:", e);
+    return [];
+  }
+}
 
-    // 3) Re-rank: cosine × rating-weight × (1 + small domain bonus).
-    //    Weights: 1- or 5-star → 2× (strongest signals); 3-star → 1×.
-    //    Domain match adds +0.05 to the cosine before scaling.
-    //    Section relevance is applied at injection time (see below) — we
-    //    keep ALL sections in the candidate pool here so a strong cross-
-    //    section hit still surfaces, just down-weighted.
+/**
+ * Re-rank the RPC's rows: cosine × rating-weight × (1 + small domain bonus).
+ * Weights: 1- or 5-star → 2× (strongest signals); 3-star → 1×. Domain match
+ * adds +0.05 to the cosine before scaling. Section relevance is applied at
+ * injection time (see below) — we keep ALL sections in the candidate pool
+ * here so a strong cross-section hit still surfaces, just down-weighted.
+ * `similarity` stays the cosine (0-1); the ranking value is `score`.
+ */
+export function rankFeedbackRows(data: Record<string, unknown>[], domainGuess: string | null): FeedbackHint[] {
+  {
+    const domainNorm = (domainGuess ?? "").toLowerCase().trim();
     const ranked: FeedbackHint[] = data
       .map((row: Record<string, unknown>) => {
         const correction = sanitizeCorrection(String(row.correction ?? ""));
@@ -116,17 +129,17 @@ export async function retrieveRelevantFeedback(
           correction,
           domain: (row.domain as string) ?? null,
           hypothesis_excerpt: (row.hypothesis_excerpt as string) ?? null,
-          similarity: (baseSim + domainBoost) * ratingWeight,
+          // Until QA round 3 the ranking score was stored here and the run
+          // page showed it as "163% match" (run 7a01520f).
+          similarity: Math.max(0, Math.min(1, baseSim)),
+          score: (baseSim + domainBoost) * ratingWeight,
         } as FeedbackHint;
       })
       .filter((h: FeedbackHint | null): h is FeedbackHint => h !== null)
-      .sort((a: FeedbackHint, b: FeedbackHint) => b.similarity - a.similarity)
+      .sort((a: FeedbackHint, b: FeedbackHint) => b.score - a.score)
       .slice(0, MAX_HINTS);
 
     return ranked;
-  } catch (e) {
-    console.error("retrieveRelevantFeedback failed:", e);
-    return [];
   }
 }
 

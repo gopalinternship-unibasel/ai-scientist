@@ -8,7 +8,7 @@ import { checkHypothesis } from "../_shared/hypothesisValidation.ts";
 import { searchLiterature, type LitPaper } from "../_shared/literature.ts";
 import { screenSafety } from "../_shared/safety.ts";
 import {
-  callAIWithFallback, PLAN_MODELS, FAST_MODELS, REASONING_MODELS,
+  callAIWithFallback, PLAN_MODELS, REASONING_MODELS,
   classifyHttpError, encodeError, runFailure, type ErrorKind,
 } from "../_shared/ai-fallback.ts";
 import { gateHypothesis } from "../_shared/hypothesisGate.ts";
@@ -17,10 +17,14 @@ import { checkFeasibility } from "../_shared/feasibilityCheck.ts";
 import { detectCanonicalTechnique } from "../_shared/canonicalTechniques.ts";
 import { CANONICAL_RELEVANCE_FLOOR, rankByRelevance, RELEVANCE_FLOOR, type RankedPaper } from "../_shared/relevanceRank.ts";
 import { hypothesisConcepts } from "../_shared/hypothesisTerms.ts";
-import { calibrateNovelty, ON_TOPIC, type NoveltyVerdict } from "../_shared/noveltyVerdict.ts";
+import { calibrateNovelty, ON_TOPIC } from "../_shared/noveltyVerdict.ts";
 import { cleanCritique } from "../_shared/critiqueGuards.ts";
+import { classifyNovelty } from "../_shared/noveltyClassifier.ts";
+import { type ChainRow, loadChain, nextVersion as nextChainVersion } from "../_shared/versionChain.ts";
+import { hypothesisCacheKey, PIPELINE_VERSION } from "../_shared/pipelineVersion.ts";
+import { filterByEmbedding } from "../_shared/embeddingRelevance.ts";
 import { checkTimelineConsistency } from "../_shared/timelineCheck.ts";
-import { verifyMaterialsLive } from "../_shared/skuVerify.ts";
+import { lookupMaterialsLive, type SkuIssue } from "../_shared/skuVerify.ts";
 import { retrieveRelevantFeedback, feedbackPromptFragment, type FeedbackHint } from "../_shared/feedbackRetrieval.ts";
 import { normalizeDomain, resolveDomain } from "../_shared/domainNormalize.ts";
 import { fetchHouseRules } from "../_shared/houseRules.ts";
@@ -30,7 +34,7 @@ import { tryParsePartial } from "../_shared/partialJson.ts";
 import { hashForNewRun, markRunDone } from "../_shared/runPersistence.ts";
 import {
   chooseRepaired, filterRelevantRules, planDigest, parseRefinementConstraints, refinementConstraintPrompt,
-  repairableIssues, repairInstruction, scrubCandidateRefs, verificationIssueLines, verifyPlan,
+  repairableIssues, repairInstruction, verificationIssueLines, verifyPlan,
 } from "../_shared/planGuards.ts";
 
 /**
@@ -88,97 +92,15 @@ const stripCtl = (s: string) => s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "
 // How often the streamed-plan progress is written to runs.progress.
 const PROGRESS_WRITE_MS = 5000;
 
-// Stable hash of a normalised hypothesis for caching.
-async function hashHypothesis(h: string): Promise<string> {
-  const norm = h.toLowerCase().replace(/\s+/g, " ").trim();
-  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(norm));
-  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
-}
+// Cache key of a hypothesis: its normalised text and the pipeline version,
+// so runs made before the current checks are never replayed as current
+// (pipelineVersion.ts).
+const hashHypothesis = (h: string) => hypothesisCacheKey(h);
 
 // fetchWithRetry now lives in ../_shared/fetch-with-retry.ts
 // searchLiterature (multi-source: S2 + OpenAlex + PubMed) lives in ../_shared/literature.ts
 
-/**
- * Two-pass novelty classifier.
- *
- * Pass 1 ("keyword/method overlap"): the original classifier — picks the most
- * relevant references and gives a coarse signal.
- *
- * Pass 2 ("semantic equivalence"): a stricter rubric that asks whether any
- * cited paper tests *the same scientific claim* as the hypothesis (even with
- * different wording, model systems, or measurement methods). This catches the
- * "I reinvented X" failure mode that pure keyword overlap misses.
- */
-async function classifyNovelty(hypothesis: string, papers: LitPaper[], apiKey: string): Promise<NoveltyVerdict> {
-  if (papers.length === 0) {
-    return {
-      signal: "not_found" as const,
-      rationale: "No related work surfaced via Semantic Scholar, OpenAlex, or PubMed.",
-      chosen: [] as number[],
-      semantic_overlap: "low" as const,
-    };
-  }
-  const condensed = papers.slice(0, 8).map((p, i) => ({
-    i, title: p.title, year: p.year, venue: p.venue, source: p.source,
-    abstract: (p.abstract ?? "").slice(0, 600),
-  }));
-
-  const { res: aiRes } = await callAIWithFallback({
-    apiKey,
-    models: FAST_MODELS,
-    label: "novelty-classify",
-    retries: 0,
-    timeoutMs: 20_000,
-    maxTokens: 600,
-    buildBody: (model) => ({
-      model,
-      messages: [
-        { role: "system", content: "You are a research librarian assessing whether a hypothesis has prior art. Use this rubric:\n  • exact_match  — at least one candidate tests essentially the same claim (same intervention + same system + same outcome direction), even with minor wording differences.\n  • similar     — at least one candidate shares the technique AND topic area but differs on system, organism, or specific intervention. Default to this when in doubt and any candidate is on-topic.\n  • not_found   — every candidate is clearly off-topic (different field, different question).\nAlso report semantic_overlap (low/medium/high). Pick 1–3 most-relevant indices in `chosen`. ONLY pick papers that are genuinely on-topic; if none of the candidates are relevant, return chosen:[] and signal:not_found.\n\nWriting style for `rationale`: refer to papers by a short descriptor of their content (e.g. \"the thyroid cancer guideline\", \"the angiogenesis-inhibitor review\") or a brief quoted title fragment. NEVER use phrases like \"Candidate 0\", \"Candidate 1\", or index numbers — users do not see the index list. Keep it to 1–3 sentences." },
-        { role: "user", content: `HYPOTHESIS:\n${hypothesis}\n\nCANDIDATES (already pre-ranked by token overlap; the first entry is most overlapping). Use the \`i\` field only for the structured \`chosen\` output, never in your prose rationale:\n${JSON.stringify(condensed)}` },
-      ],
-      tools: [{
-        type: "function",
-        function: {
-          name: "report_novelty",
-          parameters: {
-            type: "object",
-            properties: {
-              signal: { type: "string", enum: ["not_found", "similar", "exact_match"] },
-              rationale: { type: "string" },
-              chosen: { type: "array", items: { type: "integer" } },
-              semantic_overlap: {
-                type: "string",
-                enum: ["low", "medium", "high"],
-                description: "high = a candidate tests the same scientific claim (even if worded differently); medium = closely adjacent; low = clearly different question.",
-              },
-            },
-            required: ["signal", "rationale", "chosen", "semantic_overlap"],
-            additionalProperties: false,
-          },
-        },
-      }],
-      tool_choice: { type: "function", function: { name: "report_novelty" } },
-    }),
-  });
-  if (!aiRes.ok) {
-    return { signal: "similar" as const, rationale: "Classification unavailable; defaulting to similar work exists.", chosen: [0, 1, 2], semantic_overlap: "medium" as const };
-  }
-  try {
-    const aiJson = await aiRes.json();
-    const parsed = JSON.parse(extractToolArgs(aiJson) ?? "");
-    if (!["not_found", "similar", "exact_match"].includes(parsed?.signal)) throw new Error("bad signal");
-    if (!Array.isArray(parsed.chosen)) parsed.chosen = [];
-    // Indices must point into the candidate list the model was shown.
-    parsed.chosen = parsed.chosen.filter((i: unknown) => Number.isInteger(i) && (i as number) >= 0 && (i as number) < condensed.length);
-    // Users never see the candidate list: "Candidate 2" becomes the paper's title.
-    if (typeof parsed.rationale === "string") {
-      parsed.rationale = scrubCandidateRefs(parsed.rationale, condensed.map((c) => c.title));
-    }
-    return parsed;
-  } catch {
-    return { signal: "similar" as const, rationale: "Unable to parse classification.", chosen: [0, 1, 2], semantic_overlap: "medium" as const };
-  }
-}
+// The novelty classifier lives in ../_shared/noveltyClassifier.ts.
 
 function planRepairAttempts(): number {
   const n = Number(Deno.env.get("PLAN_REPAIR_ATTEMPTS") ?? "1");
@@ -470,7 +392,7 @@ serve(async (req) => {
     if (isRefinement) {
       const { data: parent } = await supabase
         .from("runs")
-        .select("plan, qc, version, hypothesis_hash, owner_user_id, owner_token, domain")
+        .select("plan, qc, version, hypothesis_hash, owner_user_id, owner_token, domain, parent_run_id")
         .eq("id", parentRunId)
         .maybeSingle();
       if (!parent || !parent.plan) {
@@ -492,14 +414,22 @@ serve(async (req) => {
         version: parent.version ?? 1,
         domain: (parent.domain as string | null) ?? null,
       };
-      // Find max version in the chain (root + descendants).
-      const { data: siblings } = await supabase
-        .from("runs")
-        .select("version")
-        .or(`id.eq.${parentRunId},parent_run_id.eq.${parentRunId}`)
-        .order("version", { ascending: false })
-        .limit(1);
-      nextVersion = ((siblings?.[0]?.version as number | undefined) ?? parentRun.version) + 1;
+      // The next number over the WHOLE chain (root, every refinement and
+      // every refinement of a refinement): until QA round 3 only the
+      // parent and its direct children were counted, so refining v1 after
+      // v2 had been refined into v3 made a second "v3" (versionChain.ts).
+      const chain = await loadChain<ChainRow>(
+        { id: parentRunId!, parent_run_id: (parent.parent_run_id as string | null) ?? null, version: parentRun.version },
+        async (id) => {
+          const { data } = await supabase.from("runs").select("id, parent_run_id, version").eq("id", id).maybeSingle();
+          return (data as ChainRow | null) ?? null;
+        },
+        async (ids) => {
+          const { data } = await supabase.from("runs").select("id, parent_run_id, version").in("parent_run_id", ids);
+          return (data as ChainRow[] | null) ?? [];
+        },
+      );
+      nextVersion = nextChainVersion(chain);
     }
 
     // Cache: skip cache lookup for refinements (they should always re-generate).
@@ -714,6 +644,9 @@ serve(async (req) => {
             /** The classifier's own signal when the automated check changed it. */
             classifier_signal?: string;
             novelty_checked?: boolean;
+            pipeline_version?: number;
+            /** How unrelated candidates were dropped before classification. */
+            related_filter?: Record<string, unknown>;
           };
           if (isRefinement && parentRun?.qc) {
             qc = parentRun.qc as typeof qc;
@@ -745,12 +678,35 @@ serve(async (req) => {
             // signal of "exact match", and we just need *some* on-topic refs.
             const floor = canon.matched ? CANONICAL_RELEVANCE_FLOOR : RELEVANCE_FLOOR;
             const filtered = ranked.filter((p) => p.relevance >= floor);
-            const candidates: RankedPaper[] = (filtered.length > 0 ? filtered : ranked).slice(0, 8);
+            const pool: RankedPaper[] = (filtered.length > 0 ? filtered : ranked).slice(0, 12);
+            // Papers that share words but not the subject are dropped before
+            // the classifier sees them, and so before they can be shown or
+            // cited: the title + abstract of each must be close to the
+            // hypothesis in the local embedding model (embeddingRelevance.ts;
+            // QA round 3, NMN run b4d82571 cited a 1974 hydrogenase paper).
+            // Textbook-technique requests keep their methods papers, whose
+            // generic titles are far from any specific hypothesis.
+            let candidates: RankedPaper[] = pool.slice(0, 8);
+            let relatedFilter: Record<string, unknown> | undefined;
+            if (!canon.matched && pool.length > 0) {
+              setProgress({ stage: "literature", checking: pool.length });
+              const emb = await filterByEmbedding(hypothesis, pool);
+              if (emb.available) {
+                candidates = emb.kept.slice(0, 8);
+                relatedFilter = {
+                  method: "embedding", threshold: emb.threshold, checked: pool.length,
+                  dropped: emb.dropped.map((p) => `${p.embed_similarity} ${p.title.slice(0, 120)}`),
+                };
+              } else {
+                relatedFilter = { method: "words only", reason: "embedding model unavailable" };
+              }
+            }
             console.log(JSON.stringify({
               run_id: runId, step: "lit_rerank",
               raw: lit.papers.length, kept: candidates.length,
               top_score: ranked[0]?.relevance ?? 0,
               canonical: canon.matched ? canon.technique : null,
+              related_filter: relatedFilter,
             }));
 
             setProgress({ stage: "novelty", candidates: candidates.length });
@@ -816,6 +772,9 @@ serve(async (req) => {
                 // Lets the source check match a step that cites the DOI.
                 doi: p.externalId?.startsWith("10.") ? p.externalId : undefined,
                 source: p.source,
+                ...((p as { embed_similarity?: number }).embed_similarity !== undefined
+                  ? { embed_similarity: (p as { embed_similarity?: number }).embed_similarity }
+                  : {}),
               }));
             qc = {
               signal: verdict.signal,
@@ -826,6 +785,10 @@ serve(async (req) => {
               ...(verdict.corrected_from ? { classifier_signal: verdict.corrected_from } : {}),
               // The page re-checks verdicts of runs saved before this check existed.
               novelty_checked: true,
+              // Runs of older pipelines are not served from the cache and are
+              // marked on the run page (pipelineVersion.ts).
+              pipeline_version: PIPELINE_VERSION,
+              ...(relatedFilter ? { related_filter: relatedFilter } : {}),
             };
             await supabase.from("runs").update({ qc, status: "plan" }).eq("id", runId);
             send("qc", qc);
@@ -863,7 +826,9 @@ serve(async (req) => {
                 section: h.section,
                 rating: h.rating,
                 correction: h.correction,
+                // Cosine (0-1); the ranking score is kept apart (QA round 3: "163% match").
                 similarity: Number(h.similarity.toFixed(3)),
+                score: Number(h.score.toFixed(3)),
               })),
               // Telemetry flag — lets us measure later whether plans that
               // received learned lessons end up rated higher than ones that
@@ -1064,7 +1029,9 @@ serve(async (req) => {
           // (they used to reach only the reviewer critique).
           const liveSkuFor = async (p: unknown) => {
             const mats = (p as { materials?: { name?: string; catalog_number?: string; supplier?: string }[] })?.materials;
-            return await verifyMaterialsLive(mats).catch(() => []);
+            // Every Sigma-Aldrich number's lookup result: a wrong product is
+            // removed, a confirmed one marked verified, the rest unverified.
+            return await lookupMaterialsLive(mats).catch(() => []);
           };
           const guardCtx = { hypothesis, references, refinementInstruction, parentPlan: parentRun?.plan };
           let { plan: planObj, verification } = verifyPlan(rawPlan, { ...guardCtx, liveSku: await liveSkuFor(rawPlan) });
@@ -1117,8 +1084,9 @@ serve(async (req) => {
             // live lookup proved wrong were removed by verifyPlan (finding
             // "catalog_numbers_removed"); what is left here is normally empty.
             const catIssues = findCatalogIssues(planMaterials);
-            const skuIssues: Awaited<ReturnType<typeof verifyMaterialsLive>> = [];
+            const skuIssues: SkuIssue[] = [];
             const removedCatalog = verification.issues.find((i) => i.kind === "catalog_numbers_removed");
+            const unverifiedCatalog = verification.issues.find((i) => i.kind === "catalog_numbers_unverified");
             const timelineIssue = checkTimelineConsistency(
               (planObj as { protocol?: { duration?: string; title?: string }[] })?.protocol,
               (planObj as { timeline?: { duration?: string; phase?: string }[] })?.timeline,
@@ -1164,6 +1132,9 @@ serve(async (req) => {
             } else if (removedCatalog) {
               solicitSection = "materials";
               solicitReason = "Some catalog numbers in this plan belonged to other products and were removed. If you know the right catalog numbers, a quick correction will improve future plans for similar experiments.";
+            } else if (unverifiedCatalog) {
+              solicitSection = "materials";
+              solicitReason = "Some catalog numbers in this plan could not be confirmed in a supplier catalogue and are marked unverified. If you know the right numbers, a quick correction will improve future plans for similar experiments.";
             } else if (timelineIssue) {
               solicitSection = "timeline";
               solicitReason = `Our pre-checks flagged a timeline inconsistency (${timelineIssue.reason}). If you have firsthand experience with this protocol, your correction will help future plans.`;

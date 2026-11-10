@@ -33,6 +33,8 @@ export interface ScoredPaper {
   relevance: number;
   /** The hypothesis concepts (query spellings) the paper mentions. */
   matched: string[];
+  /** Cosine similarity of the paper's embedding to the hypothesis, when embeddings ran (embeddingRelevance.ts). */
+  embed_similarity?: number;
 }
 
 export type NoveltySignal = "not_found" | "similar" | "exact_match";
@@ -53,6 +55,20 @@ export const ON_TOPIC = 0.35;
 export const REFERENCE_FLOOR = 0.2;
 /** Share of the anchor concepts' weight an exact match must name. */
 export const EXACT_CORE_SHARE = 0.85;
+/**
+ * An exact match must also be this close in the embedding model, when it ran.
+ * QA round 3 probe (10 Nov 2026): the sodium butyrate / Caco-2 barrier paper
+ * that tests the butyrate hypothesis' claim scored 0.81; papers that share
+ * only "3D-printed polylactic acid" with a Dsup-coating hypothesis at most
+ * 0.75.
+ */
+export const EXACT_EMBED_MIN = 0.78;
+/**
+ * With fewer than two anchor concepts the core says little ("3D-printed" was
+ * the whole core of the Dsup hypothesis, so any 3D-printing paper named it):
+ * an exact match must then also cover this much of all the hypothesis' terms.
+ */
+export const EXACT_THIN_CORE_RELEVANCE = 0.5;
 
 function shortTitle(t: string): string {
   return t.length > 90 ? `${t.slice(0, 87).trimEnd()}...` : t;
@@ -101,8 +117,12 @@ export function calibrateNovelty(
     if (out.chosen.length === 0) out.chosen = cite(3);
     out.rationale = `Related prior work was retrieved: ${named(out.chosen[0])}. The classifier had answered "not found"; the automated check changed that to "similar" because retrieved papers cover the hypothesis' key terms.${verdict.rationale ? ` Classifier note: ${verdict.rationale}` : ""}`;
   } else if (out.signal === "exact_match") {
+    const thinCore = anchorConcepts(concepts).length < 2;
+    const qualifies = (p: ScoredPaper) =>
+      (p.embed_similarity === undefined || p.embed_similarity >= EXACT_EMBED_MIN)
+      && (!thinCore || p.relevance >= EXACT_THIN_CORE_RELEVANCE);
     const best = candidates
-      .map((p, i) => ({ i, share: coreShare(concepts, p) }))
+      .map((p, i) => ({ i, share: qualifies(p) ? coreShare(concepts, p) : 0 }))
       .sort((a, b) => b.share - a.share)[0];
     if (!best || best.share < EXACT_CORE_SHARE) {
       out.corrected_from = "exact_match";

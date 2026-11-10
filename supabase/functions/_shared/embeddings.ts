@@ -31,6 +31,40 @@ export function embeddingsEnabled(): boolean {
 }
 
 /**
+ * Embed several texts in one request (OpenAI-compatible `input` array; Ollama
+ * supports it). Returns null on any failure, or when a vector has the wrong
+ * size, so callers can fall back to their non-embedding path.
+ */
+export async function embedTexts(texts: string[]): Promise<number[][] | null> {
+  const cfg = aiConfig().embed;
+  if (!cfg.model || texts.length === 0) return null;
+  const input = texts.map((t) => (t ?? "").trim().slice(0, MAX_INPUT_CHARS) || " ");
+  try {
+    const res = await fetchWithRetry(`${cfg.baseUrl}/embeddings`, {
+      method: "POST",
+      headers: {
+        ...(cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {}),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ model: cfg.model, input, ...(cfg.sendDimensions ? { dimensions: EMBEDDING_DIMS } : {}) }),
+    }, { label: `embed-batch:${cfg.model}`, retries: 1, timeoutMs: aiTimeout(60_000) });
+    if (!res.ok) {
+      console.warn(`[embeddings] batch ${cfg.model} returned ${res.status}`);
+      try { await res.body?.cancel(); } catch { /* noop */ }
+      return null;
+    }
+    const json = await res.json();
+    const rows = Array.isArray(json?.data) ? [...json.data].sort((a, b) => (a?.index ?? 0) - (b?.index ?? 0)) : [];
+    const vecs = rows.map((r) => r?.embedding);
+    if (vecs.length !== input.length || !vecs.every((v) => Array.isArray(v) && v.length === EMBEDDING_DIMS)) return null;
+    return vecs as number[][];
+  } catch (e) {
+    console.warn("[embeddings] batch request failed:", (e as Error).message);
+    return null;
+  }
+}
+
+/**
  * Embed one text into the shared 768-d space. Returns null on any failure so
  * callers can fall back. `_apiKey` is kept for call-site compatibility; the
  * key comes from AI_EMBED_API_KEY / AI_API_KEY.
