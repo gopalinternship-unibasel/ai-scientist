@@ -19,6 +19,30 @@ export interface ClassifierCandidate {
   abstract?: string | null;
 }
 
+// Chinese, Japanese and Korean characters and their punctuation.
+const CJK_CHARS = "⺀-〿぀-ヿ㐀-䶿一-鿿가-힯豈-﫿＀-￯";
+const HAS_CJK = new RegExp(`[${CJK_CHARS}]`);
+const CJK_RUNS = new RegExp(`[${CJK_CHARS}]+`, "g");
+
+/**
+ * The classifier's rationale as shown to the user. The local qwen models
+ * slip single Chinese words into English text, and compact mode caps a text
+ * field at 400 characters, which cuts the last sentence short (run 42c080d0
+ * of 10 Nov 2026 ended "... both studies investigate the但"). Stray CJK is
+ * removed (unless the hypothesis itself is written in it), and a text that
+ * stops mid-sentence ends at its last complete sentence, or with an
+ * ellipsis when it has none.
+ */
+export function tidyRationale(text: string, hypothesis = ""): string {
+  let t = (text ?? "").toString();
+  if (!HAS_CJK.test(hypothesis)) t = t.replace(CJK_RUNS, " ");
+  t = t.replace(/\s{2,}/g, " ").replace(/\s+([,.;:])/g, "$1").trim();
+  if (!t || /[.!?)"'”’。！？]$/.test(t)) return t;
+  const end = Math.max(t.lastIndexOf(". "), t.lastIndexOf("! "), t.lastIndexOf("? "));
+  if (end >= t.length * 0.4) return t.slice(0, end + 1);
+  return `${t.replace(/[\s,;:(–—-]+$/, "")}...`;
+}
+
 export async function classifyNovelty(
   hypothesis: string,
   papers: ClassifierCandidate[],
@@ -86,7 +110,7 @@ export async function classifyNovelty(
     parsed.chosen = parsed.chosen.filter((i: unknown) => Number.isInteger(i) && (i as number) >= 0 && (i as number) < condensed.length);
     // Users never see the candidate list: "Candidate 2" becomes the paper's title.
     if (typeof parsed.rationale === "string") {
-      parsed.rationale = scrubCandidateRefs(parsed.rationale, condensed.map((c) => c.title));
+      parsed.rationale = tidyRationale(scrubCandidateRefs(parsed.rationale, condensed.map((c) => c.title)), hypothesis);
     }
     return parsed;
   } catch {

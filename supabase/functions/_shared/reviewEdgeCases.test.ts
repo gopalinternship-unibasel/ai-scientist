@@ -9,6 +9,7 @@ import { loadChain, MAX_CHAIN_DEPTH, nextVersion, parentVersion, sortChain } fro
 import { filterByEmbedding } from "./embeddingRelevance.ts";
 import { rankFeedbackRows } from "./feedbackRetrieval.ts";
 import { calibrateNovelty } from "./noveltyVerdict.ts";
+import { tidyRationale } from "./noveltyClassifier.ts";
 import { hypothesisConcepts } from "./hypothesisTerms.ts";
 import { hypothesisCacheKey, madeByOlderPipeline, PIPELINE_VERSION } from "./pipelineVersion.ts";
 import { claimedMissingControls, cleanCritique } from "./critiqueGuards.ts";
@@ -140,6 +141,21 @@ Deno.test("novelty verdict: picks outside the candidate list, no candidates, and
   const off = { title: "Hydrogenase from Clostridium", relevance: 0.1, matched: [] };
   const nf = calibrateNovelty({ signal: "not_found", rationale: "x", chosen: [0], semantic_overlap: "high" }, [off], concepts);
   assertEquals([nf.signal, nf.chosen.length, nf.semantic_overlap], ["not_found", 0, "low"]);
+});
+
+Deno.test("novelty rationale: a stray Chinese word and a sentence cut off by the length cap are tidied", () => {
+  // Run 42c080d0 (10 Nov 2026, qwen2.5:7b): the 400-character cap cut the text after a Chinese "but".
+  const cut = "The 2014 study examines the effect of sodium butyrate on the Caco-2 barrier model, including TER at 24, 48 and 72 hours. While the exact concentration and duration differ, both studies investigate the但";
+  assertEquals(tidyRationale(cut, BUTYRATE), "The 2014 study examines the effect of sodium butyrate on the Caco-2 barrier model, including TER at 24, 48 and 72 hours.");
+  assertEquals(tidyRationale("Related work exists，但 it uses another cell line.", BUTYRATE), "Related work exists it uses another cell line.");
+  // One long unfinished sentence keeps its words and says it is cut.
+  assertEquals(tidyRationale("Several papers treat Caco-2 monolayers with butyrate and measure", BUTYRATE), "Several papers treat Caco-2 monolayers with butyrate and measure...");
+  // Finished text, quoted endings and empty text are left alone.
+  for (const ok of ["No close match was retrieved.", 'It is closest to "the barrier paper".', "Similar (medium overlap)", ""]) {
+    assertEquals(tidyRationale(ok, BUTYRATE), ok);
+  }
+  // A hypothesis written in Chinese keeps a Chinese rationale.
+  assertEquals(tidyRationale("已有类似研究。", "丁酸钠提高Caco-2单层的跨上皮电阻。"), "已有类似研究。");
 });
 
 Deno.test("cache key and pipeline marker: odd inputs", async () => {

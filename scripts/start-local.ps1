@@ -176,7 +176,8 @@ foreach ($line in Get-Content $fnEnv) {
 }
 $base = $fnSettings['AI_BASE_URL']
 # Local model variants this script creates on demand (name -> Ollama base model).
-# qwen2.5-7b-4threads is the optional larger planner (AI_MODEL_PLAN, see .env.example).
+# qwen2.5-7b-4threads is the default chat model since 10 Nov 2026 (AI_MODEL in
+# .env.example); qwen2.5-3b-4threads is the faster, less correct alternative.
 $LocalVariants = @{ 'qwen2.5-3b-4threads' = 'qwen2.5:3b'; 'qwen2.5-7b-4threads' = 'qwen2.5:7b' }
 if ($base -and $base -match 'host\.docker\.internal:11434|localhost:11434|127\.0\.0\.1:11434') {
   try {
@@ -187,7 +188,7 @@ if ($base -and $base -match 'host\.docker\.internal:11434|localhost:11434|127\.0
     foreach ($m in ($want | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Select-Object -Unique)) {
       if ($LocalVariants.ContainsKey($m)) {
         $baseModel = $LocalVariants[$m]
-        # The default local chat model is a variant of qwen2.5:3b (shares its
+        # The local chat model is a variant of its base model (shares the
         # weights, no download) with 4 CPU threads and an 8192-token context.
         # Ollama's default context is 4096 tokens, and a planner prompt plus
         # its plan does not fit in that: Ollama then "shifts" the context,
