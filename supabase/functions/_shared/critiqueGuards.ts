@@ -58,6 +58,9 @@ const MISSING_CONTROL = /\b(?:missing|lacks?|lacking|no|without|absent|omits?|ne
 const CONTROL_FILLER = new Set([
   "a", "an", "the", "any", "proper", "appropriate", "adequate", "additional", "suitable", "explicit", "clear",
   "dedicated", "separate", "and", "or", "of", "for", "with", "group", "groups", "treatment", "condition", "experimental",
+  // "quality control", "temperature control" are not control groups.
+  "better", "more", "further", "rigorous", "stricter", "tighter", "quality", "temperature", "humidity", "process",
+  "contamination", "infection", "cost", "budget", "version", "access", "inventory", "document", "change",
 ]);
 
 /** The control kinds a critique says are missing ("vehicle", "palmitate-only"). */

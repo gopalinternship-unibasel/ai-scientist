@@ -94,6 +94,12 @@ export function calibrateNovelty(
   verdict: NoveltyVerdict,
   candidates: ScoredPaper[],
   concepts: Concept[],
+  /**
+   * `requireReference`: "similar" must have a paper to show. The pipeline
+   * sets it (it sees titles and abstracts); the run page's re-check of older
+   * runs does not (it has titles only, too little to call work "not found").
+   */
+  opts: { requireReference?: boolean } = {},
 ): NoveltyVerdict {
   const out: NoveltyVerdict = { ...verdict, chosen: [...(verdict.chosen ?? [])] };
   const onTopic = candidates
@@ -142,6 +148,13 @@ export function calibrateNovelty(
     out.chosen = best;
   }
   if (out.signal === "similar" && out.chosen.length === 0) out.chosen = cite(3);
+  if (out.signal === "similar" && out.chosen.length === 0 && opts.requireReference) {
+    // "Similar work exists" with nothing to show for it: the classifier
+    // picked only papers that share next to nothing with the hypothesis.
+    out.corrected_from = out.corrected_from ?? "similar";
+    out.signal = "not_found";
+    out.rationale = `No retrieved paper covers the key terms of this hypothesis. The classifier had answered "similar", but none of the papers it pointed to is on topic.`;
+  }
   if (out.signal === "not_found") out.chosen = out.chosen.filter((i) => (candidates[i]?.relevance ?? 0) >= ON_TOPIC);
 
   out.semantic_overlap = out.signal === "not_found"

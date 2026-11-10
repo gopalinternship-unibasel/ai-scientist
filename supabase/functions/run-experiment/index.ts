@@ -721,7 +721,7 @@ serve(async (req) => {
             // "not found" with on-topic papers, "exact match" without a paper
             // that names the hypothesis' core, and contradictory overlap
             // labels are corrected; off-topic picks are dropped.
-            const verdict = calibrateNovelty(modelVerdict, candidates, concepts);
+            const verdict = calibrateNovelty(modelVerdict, candidates, concepts, { requireReference: true });
             if (verdict.corrected_from) {
               console.log(JSON.stringify({
                 run_id: runId, step: "novelty_corrected",

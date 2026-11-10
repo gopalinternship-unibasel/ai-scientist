@@ -121,7 +121,8 @@ export function rankFeedbackRows(data: Record<string, unknown>[], domainGuess: s
         const ratingWeight = rating == null ? 1 : 1 + Math.abs(rating - 3) / 2;
         const rowDomain = ((row.domain as string) ?? "").toLowerCase().trim();
         const domainBoost = domainNorm && rowDomain && rowDomain === domainNorm ? 0.05 : 0;
-        const baseSim = (row.similarity as number) ?? 0;
+        const sim = Number(row.similarity);
+        const baseSim = Number.isFinite(sim) ? sim : 0;
         return {
           id: String(row.id),
           section: String(row.section ?? "overall"),
