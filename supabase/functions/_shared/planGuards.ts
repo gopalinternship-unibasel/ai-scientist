@@ -251,6 +251,66 @@ export function scrubCandidateRefs(rationale: string, titles: string[]): string 
 export interface RefinementConstraints {
   max_budget_usd?: number;
   max_timeline_weeks?: number;
+  /** Limits that come from an earlier refinement in the chain, not from this instruction. */
+  inherited?: Array<"budget" | "timeline">;
+}
+
+const GIVE_UP = "ignore|drop|lift|remove|relax|forget|disregard";
+const LIMIT_WORDS = {
+  budget: {
+    noun: "(?:budget|cost)",
+    more: "increase|raise|double|triple|expand",
+    free: /\b(?:any|unlimited)\s+budget\b|\bno\s+budget\s+(?:limit|cap|constraint)\b/,
+  },
+  timeline: {
+    noun: "(?:timeline|schedule|deadline|time limit)",
+    more: "extend|lengthen|prolong",
+    free: /\bno\s+(?:deadline|time limit)\b|\bas long as (?:needed|it takes)\b/,
+  },
+};
+
+/**
+ * Whether the instruction gives an earlier limit up: "ignore the budget",
+ * "increase the budget", "the timeline no longer matters", "take as long as
+ * needed". A negated verb keeps it ("do not increase the budget").
+ */
+function liftsLimit(s: string, which: "budget" | "timeline"): boolean {
+  const w = LIMIT_WORDS[which];
+  const verb = s.match(new RegExp(`\\b(?:${GIVE_UP}|${w.more})\\s+(?:the\\s+)?(?:previous\\s+|earlier\\s+|total\\s+|overall\\s+)?${w.noun}\\b`));
+  if (verb && !/(?:\b(?:without|not|never|no)|n't)\s+(?:\w+\s+)?$/.test(s.slice(0, verb.index))) return true;
+  if (new RegExp(`\\b${w.noun}\\b[^.;]{0,25}\\b(?:no longer|not a (?:constraint|concern|limit)|does(?:n't| not) matter|is flexible|unlimited)\\b`).test(s)) return true;
+  return w.free.test(s);
+}
+
+/**
+ * The limits a refinement works under: the ones its instruction states, and
+ * the ones an earlier refinement in the chain stated that it neither
+ * replaces nor gives up. Without this, "Keep the total budget under $3,000."
+ * (v2) followed by "Shorten the overall timeline to 2 weeks." (v3) left v3
+ * free to cost anything. `parentPlan` is the stored plan being refined; its
+ * verification.refinement holds the limits it worked under.
+ */
+export function effectiveConstraints(
+  instruction: string | null | undefined,
+  parentPlan?: unknown,
+): RefinementConstraints {
+  const parent = (parentPlan && typeof parentPlan === "object" ? parentPlan : {}) as PlanShape;
+  const out = parseRefinementConstraints(instruction, Number(parent.budget?.total_usd) || undefined);
+  if (!(instruction ?? "").trim()) return out;
+  const earlier = parent.verification?.refinement ?? {};
+  const s = (instruction ?? "").toLowerCase();
+  const inherited: Array<"budget" | "timeline"> = [];
+  const positive = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && n > 0;
+  if (out.max_budget_usd === undefined && positive(earlier.max_budget_usd) && !liftsLimit(s, "budget")) {
+    out.max_budget_usd = earlier.max_budget_usd;
+    inherited.push("budget");
+  }
+  if (out.max_timeline_weeks === undefined && positive(earlier.max_timeline_weeks) && !liftsLimit(s, "timeline")) {
+    out.max_timeline_weeks = earlier.max_timeline_weeks;
+    inherited.push("timeline");
+  }
+  if (inherited.length) out.inherited = inherited;
+  return out;
 }
 
 function money(raw: string, suffix: string | undefined): number | null {
@@ -658,14 +718,18 @@ export function verifyPlan(
       detail: `The hypothesis sets a budget of at most ${usd(hypCap)}; ${overBy(hypCap)}.`,
     });
   }
-  const parentTotal = Number((ctx.parentPlan as PlanShape | undefined)?.budget?.total_usd) || undefined;
-  const constraints = parseRefinementConstraints(ctx.refinementInstruction, parentTotal);
+  // The refinement's own limits and those of earlier refinements in the
+  // chain that it does not replace (effectiveConstraints).
+  const constraints = effectiveConstraints(ctx.refinementInstruction, ctx.parentPlan);
+  const asked = (which: "budget" | "timeline") => constraints.inherited?.includes(which)
+    ? "An earlier refinement of this plan asked for"
+    : "The refinement asked for";
   if (constraints.max_budget_usd !== undefined && plan.budget) {
     if (total > constraints.max_budget_usd * 1.01) {
       issues.push({
         kind: "refinement_budget_not_met",
         severity: "high",
-        detail: `The refinement asked for a budget of at most ${usd(constraints.max_budget_usd)}; ${overBy(constraints.max_budget_usd)}.`,
+        detail: `${asked("budget")} a budget of at most ${usd(constraints.max_budget_usd)}; ${overBy(constraints.max_budget_usd)}.`,
       });
     }
   }
@@ -678,7 +742,7 @@ export function verifyPlan(
       issues.push({
         kind: "refinement_timeline_not_met",
         severity: "high",
-        detail: `The refinement asked for a timeline of at most ${constraints.max_timeline_weeks} weeks; the phases add up to ${weeks} weeks.`,
+        detail: `${asked("timeline")} a timeline of at most ${constraints.max_timeline_weeks} weeks; the phases add up to ${weeks} weeks.`,
       });
     } else if (stepWeeks > constraints.max_timeline_weeks * 1.5) {
       // Run 69a412a9 (QA round 3): phases of 1 + 1 weeks, but five protocol
@@ -686,7 +750,7 @@ export function verifyPlan(
       issues.push({
         kind: "refinement_timeline_not_met",
         severity: "high",
-        detail: `The refinement asked for a timeline of at most ${constraints.max_timeline_weeks} weeks; the phases fit, but the protocol step durations add up to ${stepWeeks} weeks.`,
+        detail: `${asked("timeline")} a timeline of at most ${constraints.max_timeline_weeks} weeks; the phases fit, but the protocol step durations add up to ${stepWeeks} weeks.`,
       });
     }
   }
@@ -754,10 +818,10 @@ export function verificationIssueLines(v: PlanVerification): string[] {
 export function refinementConstraintPrompt(c: RefinementConstraints): string {
   const lines: string[] = [];
   if (c.max_budget_usd !== undefined) {
-    lines.push(`- budget.total_usd MUST be at most ${c.max_budget_usd} USD, and the line items must add up to it. Cut scope, FTE, duration or quantities to get there.`);
+    lines.push(`- budget.total_usd MUST be at most ${c.max_budget_usd} USD${c.inherited?.includes("budget") ? " (a limit from an earlier refinement that still holds)" : ""}, and the line items must add up to it. Cut scope, FTE, duration or quantities to get there.`);
   }
   if (c.max_timeline_weeks !== undefined) {
-    lines.push(`- The timeline phases MUST add up to at most ${c.max_timeline_weeks} weeks in total. Write phase durations in weeks.`);
+    lines.push(`- The timeline phases MUST add up to at most ${c.max_timeline_weeks} weeks in total${c.inherited?.includes("timeline") ? " (a limit from an earlier refinement that still holds)" : ""}. Write phase durations in weeks.`);
   }
   return lines.length ? `\nHARD LIMITS FROM THE REFINEMENT (the plan is rejected if it breaks them):\n${lines.join("\n")}` : "";
 }

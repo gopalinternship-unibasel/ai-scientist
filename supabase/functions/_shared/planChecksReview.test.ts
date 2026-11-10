@@ -17,7 +17,7 @@
 //    invented budget claim.
 // Run: deno test --allow-net --allow-env --allow-read --no-lock supabase/functions/_shared/
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { hypothesisBudgetCap, parseRefinementConstraints, verifyPlan } from "./planGuards.ts";
+import { effectiveConstraints, hypothesisBudgetCap, parseRefinementConstraints, refinementConstraintPrompt, verifyPlan } from "./planGuards.ts";
 import {
   checkCatalogNumbers, dilutionIssues, doseIssues, hypothesisCellLines, hypothesisDoses, missingMaterials,
   readoutMissing, stepDurationIssues,
@@ -255,6 +255,40 @@ Deno.test("refinement limits: only an amount of money is a budget cap", () => {
   assertEquals(parseRefinementConstraints("Keep costs under 3k.").max_budget_usd, 3000);
   assertEquals(parseRefinementConstraints("At most 4000 USD in total.").max_budget_usd, 4000);
   assertEquals(parseRefinementConstraints("Cut the budget by 30%.", 10000).max_budget_usd, 7000);
+});
+
+Deno.test("refinement limits: a limit holds for later refinements of the chain until one replaces it or gives it up", () => {
+  // v2 "Keep the total budget under $3,000." was checked and stored its limit.
+  const v2 = verifyPlan({ budget: { line_items: [{ category: "Labour", amount_usd: 2900 }], total_usd: 2900 }, timeline: [{ duration: "6 weeks" }] }, {
+    hypothesis: METFORMIN, references: [], refinementInstruction: "Keep the total budget under $3,000.", fresh: true,
+  }).plan;
+  assertEquals(v2.verification?.refinement, { max_budget_usd: 3000 });
+
+  // v3 asks only for a shorter timeline: the budget limit still holds.
+  assertEquals(effectiveConstraints("Shorten the overall timeline to 2 weeks.", v2), { max_timeline_weeks: 2, max_budget_usd: 3000, inherited: ["budget"] });
+  const over = { budget: { line_items: [{ category: "Labour", amount_usd: 9000 }], total_usd: 9000 }, timeline: [{ duration: "2 weeks" }] };
+  const v3 = verifyPlan(over, { hypothesis: METFORMIN, references: [], refinementInstruction: "Shorten the overall timeline to 2 weeks.", parentPlan: v2, fresh: true });
+  const finding = v3.verification.issues.find((i) => i.kind === "refinement_budget_not_met");
+  assertEquals(finding?.detail, "An earlier refinement of this plan asked for a budget of at most $3,000; this plan totals $9,000 (Labour $9,000), $6,000 over.");
+  assertEquals(v3.verification.issues.some((i) => i.kind === "refinement_timeline_not_met"), false);
+  assert(refinementConstraintPrompt(effectiveConstraints("Shorten the overall timeline to 2 weeks.", v2)).includes("at most 3000 USD (a limit from an earlier refinement that still holds)"));
+
+  // v4, refined from v3, still carries both.
+  assertEquals(effectiveConstraints("Use 96-well plates.", v3.plan), { max_budget_usd: 3000, max_timeline_weeks: 2, inherited: ["budget", "timeline"] });
+
+  // A new number replaces the old one; giving the limit up ends it; a negated verb does not.
+  assertEquals(effectiveConstraints("Raise the budget cap to $5,000.", v2).max_budget_usd, 5000);
+  for (const text of ["Ignore the budget and add a second cell line.", "Increase the budget; add RNA-seq.", "The budget no longer matters, add a positive control.", "There is no budget limit any more."]) {
+    assertEquals(effectiveConstraints(text, v2).max_budget_usd, undefined, text);
+  }
+  for (const text of ["Add a positive control without raising the budget.", "Do not increase the budget; add a positive control.", "Add a vehicle control."]) {
+    assertEquals(effectiveConstraints(text, v2).max_budget_usd, 3000, text);
+  }
+  assertEquals(effectiveConstraints("Extend the timeline to 12 weeks.", v3.plan).max_timeline_weeks, undefined);
+  assertEquals(effectiveConstraints("Take as long as needed, but add a replicate.", v3.plan).max_timeline_weeks, undefined);
+  // Not a refinement: nothing is inherited, whatever the plan carries.
+  assertEquals(effectiveConstraints(null, v2), {});
+  assertEquals(effectiveConstraints("Add a vehicle control.", { verification: { refinement: { max_budget_usd: "3000", max_timeline_weeks: -1 } } }), {});
 });
 
 Deno.test("budget cap in the hypothesis: explicit budget wording only", () => {

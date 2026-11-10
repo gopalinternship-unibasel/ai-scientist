@@ -33,7 +33,7 @@ import { aiApiKey, contentAsJson, extractToolArgs, promptChars } from "../_share
 import { tryParsePartial } from "../_shared/partialJson.ts";
 import { hashForNewRun, markRunDone } from "../_shared/runPersistence.ts";
 import {
-  chooseRepaired, filterRelevantRules, planDigest, parseRefinementConstraints, refinementConstraintPrompt,
+  chooseRepaired, effectiveConstraints, filterRelevantRules, planDigest, refinementConstraintPrompt,
   repairableIssues, repairInstruction, verificationIssueLines, verifyPlan,
 } from "../_shared/planGuards.ts";
 
@@ -867,8 +867,9 @@ serve(async (req) => {
           // It now gets a digest of every section, and numeric limits in the
           // instruction ("under $3,000", "8 weeks") are spelled out as hard
           // limits and checked after generation (planGuards.ts).
-          const parentTotal = Number((parentRun?.plan as { budget?: { total_usd?: number } } | null)?.budget?.total_usd) || undefined;
-          const refinementLimits = isRefinement ? parseRefinementConstraints(refinementInstruction, parentTotal) : {};
+          // The limits this refinement works under: its own and those of
+          // earlier refinements in the chain that still hold.
+          const refinementLimits = isRefinement ? effectiveConstraints(refinementInstruction, parentRun?.plan) : {};
           const refinementContext = isRefinement
             ? `\n\nPREVIOUS PLAN (for context — do not repeat verbatim, produce a NEW complete plan reflecting the refinement):\n${planDigest(parentRun?.plan, promptChars(8000, 3500), { budget: refinementLimits.max_budget_usd !== undefined, durations: refinementLimits.max_timeline_weeks !== undefined })}\n\nREFINEMENT REQUEST — the user has the plan above and wants you to revise it according to this instruction. Honour it strictly while keeping everything else operationally sound; change every section the instruction affects:\n"""${refinementInstruction}"""${refinementConstraintPrompt(refinementLimits)}`
             : "";
