@@ -22,16 +22,17 @@ edge-function tests.
 
 ```bash
 bun install
-bun run dev          # http://localhost:8080
-bun test             # frontend + lib (Vitest)
+bun run test         # frontend + lib (Vitest). Not `bun test`: Bun's own runner has no jsdom here.
 
-# Edge functions
-deno test --allow-net --allow-env supabase/functions/
+# Edge functions (--no-lock keeps Deno from writing a deno.lock into the repo)
+deno test --allow-net --allow-env --allow-read --no-lock supabase/functions/_shared/ supabase/functions/run-experiment/
 ```
 
-`.env` is auto-managed by Lovable Cloud and is required for the dev server
-to talk to the backend. If you're working purely on UI, the published
-backend at `ai-scientist.lovable.app` is fine.
+The hosted Lovable Cloud backend this project was built on
+(`ai-scientist.lovable.app`) no longer exists, and the committed `.env`
+still points at it. To run the app, use the local stack: see
+[`RUNNING.md`](./RUNNING.md) (`scripts/start-local.ps1` starts Supabase, the
+edge functions and the dev server on http://localhost:5180).
 
 ## Project layout
 

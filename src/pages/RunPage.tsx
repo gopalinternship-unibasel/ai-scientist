@@ -81,8 +81,11 @@ const RunPage = () => {
   const [shareCopied, setShareCopied] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const retryAbortRef = useRef<AbortController | null>(null);
-  // Which run (and status) the version list was last loaded for.
+  // Which run (and status) the version list was last loaded for, when, and
+  // whether another version in it was still running then.
   const chainKeyRef = useRef<string | null>(null);
+  const chainAtRef = useRef(0);
+  const chainActiveRef = useRef(false);
 
   // Pick a client whose RLS context can read this run:
   // - signed-in user, no share token → default supabase client (their JWT)
@@ -103,6 +106,8 @@ const RunPage = () => {
     // the session arrived (seen in the round-2 fix check, 9 Nov 2026).
     if (!id || authLoading) return;
     let active = true;
+    // One chain load at a time for this effect run.
+    let chainLoading = false;
 
     untrackRun(id);
 
@@ -124,23 +129,37 @@ const RunPage = () => {
       // children were loaded, so v3 (a refinement of v2) was missing from
       // v1's and v2's switcher and v1 from v3's. Reloaded when the run or
       // its status changes, not on every poll.
+      // While another version of the chain is still being generated, the
+      // list is refreshed every 15 s so its "running" label turns over.
       const chainKey = `${r.id}:${r.status}`;
-      if (chainKeyRef.current === chainKey) return;
-      chainKeyRef.current = chainKey;
+      const due = chainKeyRef.current !== chainKey
+        || (chainActiveRef.current && Date.now() - chainAtRef.current > 15_000);
+      if (!due || chainLoading) return;
+      chainLoading = true;
       type Row = VersionEntry & { parent_run_id: string | null; plan?: ExperimentPlan | null };
       const chain = await loadChain<Row>(
         { id: r.id, parent_run_id: r.parent_run_id, version: r.version, refinement_instruction: r.refinement_instruction, created_at: r.created_at, status: r.status, plan: r.plan },
         async (pid) => {
-          const { data: row } = await client.from("runs").select(CHAIN_COLUMNS).eq("id", pid).maybeSingle();
+          const { data: row, error: e } = await client.from("runs").select(CHAIN_COLUMNS).eq("id", pid).maybeSingle();
+          if (e) throw e;
           return (row as unknown as Row | null) ?? null;
         },
         async (ids) => {
-          const { data: rows } = await client.from("runs").select(CHAIN_COLUMNS).in("parent_run_id", ids);
+          const { data: rows, error: e } = await client.from("runs").select(CHAIN_COLUMNS).in("parent_run_id", ids);
+          if (e) throw e;
           return (rows as unknown as Row[] | null) ?? [];
         },
       ).catch(() => null);
-      if (active && chain) setVersions(chain);
-      else if (!chain) chainKeyRef.current = null;
+      chainLoading = false;
+      // The key is recorded only once the list is on the page: a load that
+      // was cut off (the effect re-ran when the session arrived) or failed
+      // is repeated by the next poll. Recording it before the load left the
+      // switcher empty in that case.
+      if (!active || !chain) return;
+      setVersions(chain);
+      chainKeyRef.current = chainKey;
+      chainAtRef.current = Date.now();
+      chainActiveRef.current = chain.some((v) => v.id !== r.id && v.status !== "done" && v.status !== "failed");
     };
     load();
 
@@ -197,8 +216,9 @@ const RunPage = () => {
     }
   }, [run?.status]);
 
-  // Stall detection: if status is in-flight and updated_at hasn't moved in 90s,
-  // surface a warning so the user can retry instead of staring at a spinner.
+  // Stall detection: if status is in-flight and updated_at hasn't moved for
+  // STALL_THRESHOLD_MS (150 s), surface a warning so the user can retry
+  // instead of staring at a spinner.
   useEffect(() => {
     if (!run) return;
     const inFlight = run.status === "pending" || run.status === "qc" || run.status === "plan";

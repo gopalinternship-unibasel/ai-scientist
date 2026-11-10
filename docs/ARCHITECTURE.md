@@ -494,7 +494,7 @@ graph TB
 
 - **Adding a new deterministic guard** → `supabase/functions/_shared/` + wire it in `run-experiment/index.ts` before the planner call.
 - **Adding a literature source** → implement `searchX(q, timeoutMs): Promise<LitPaper[]>` in `_shared/literature.ts` and add it to the `Promise.allSettled` array in `searchLiterature`.
-- **Tuning novelty calibration** → edit `_shared/noveltyCalibration.ts` and run the nightly drift check.
+- **Tuning novelty calibration** → edit `_shared/noveltyCalibration.ts` (a fixture of hypotheses with expected verdicts) and run `novelty.test.ts`. Nothing runs it on a schedule.
 - **Changing plan schema** → `_shared/plannerCore.ts` (`planSchema`); the planner is structured-output, so the schema *is* the contract.
 - **New realtime channel** → must match the `runs:%` topic policy. See §8.
 
