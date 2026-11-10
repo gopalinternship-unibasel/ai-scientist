@@ -129,6 +129,9 @@ Deno.test("readout: the hypothesis' measurement is read; R3 has no Oil Red O ste
   assertEquals(hypothesisReadout(NMN)?.reagent, true);
   assertEquals(readoutMissing(METFORMIN, R3_PROTOCOL)?.phrase, "Oil Red O staining");
   assertEquals(readoutMissing(METFORMIN, R1_PROTOCOL), null);
+  // The measured quantity's acronym in a measuring step counts ("Measure TEER" with another instrument name).
+  assertEquals(readoutMissing(BUTYRATE, [{ description: "Measure TEER with an EVOM2 meter before and after treatment." }]), null);
+  assertEquals(readoutMissing(BUTYRATE, [{ description: "Treat the monolayers with 2 mM sodium butyrate for 72 hours." }])?.phrase, "epithelial voltohmmeter");
   const v = verifyPlan({ protocol: R3_PROTOCOL, materials: R3_MATERIALS }, { hypothesis: METFORMIN, references: [] }).verification;
   assertEquals(issue(v, "readout_missing")?.severity, "high");
 });

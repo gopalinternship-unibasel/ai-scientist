@@ -2,7 +2,7 @@
 // percentages, catalog-number status, the refinement chain as the run page
 // loads it, and the older-pipeline marker.
 import { describe, it, expect } from "vitest";
-import { lessonMatchPercent } from "./lessons";
+import { lessonMatchLabel, lessonMatchPercent } from "./lessons";
 import { catalogDisplay } from "./catalogStatus";
 import { loadChain, nextVersion } from "../../supabase/functions/_shared/versionChain";
 import { madeByOlderPipeline, PIPELINE_VERSION } from "../../supabase/functions/_shared/pipelineVersion";
@@ -10,11 +10,12 @@ import { madeByOlderPipeline, PIPELINE_VERSION } from "../../supabase/functions/
 describe("lessonMatchPercent", () => {
   it("shows the cosine of new runs as a percentage", () => {
     expect(lessonMatchPercent({ similarity: 0.766, rating: 2, score: 1.224 })).toBe(77);
+    expect(lessonMatchLabel({ similarity: 0.766, rating: 2, score: 1.224 })).toBe("77% match");
   });
-  it("divides the rating weight out of older runs' stored score (run 7a01520f: 1.633 for a 2-star lesson)", () => {
-    expect(lessonMatchPercent({ similarity: 1.633, rating: 2 })).toBe(100);
-    expect(lessonMatchPercent({ similarity: 1.485, rating: 5 })).toBe(74);
-    expect(lessonMatchPercent({ similarity: 1.2, rating: null })).toBe(100);
+  it("shows a lower bound for older runs' stored score (run 7a01520f: 1.633, shown as 163%)", () => {
+    expect(lessonMatchLabel({ similarity: 1.633, rating: 2 })).toBe("at least 77% match");
+    expect(lessonMatchPercent({ similarity: 1.485, rating: 5 })).toBe(69);
+    expect(lessonMatchPercent({ similarity: 0.9, rating: null })).toBe(90);
   });
   it("never shows more than 100% or less than 0%", () => {
     for (const s of [0, 0.5, 0.99, 1, 1.5, 2.1, 3, -1]) {

@@ -23,7 +23,7 @@ import { exportPlanToPdf } from "@/lib/exportPdf";
 import { budgetTotal, checkBudget, checkLabel, costLineItems, planCheckNotes, shownBudget, verifiedSource } from "@/lib/planIntegrity";
 import { SectionFeedback, type FeedbackSection } from "@/components/SectionFeedback";
 import { Sparkles } from "lucide-react";
-import { lessonMatchPercent } from "@/lib/lessons";
+import { lessonMatchLabel } from "@/lib/lessons";
 import { catalogDisplay } from "@/lib/catalogStatus";
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
@@ -60,7 +60,7 @@ const AppliedLessonsBadge = ({ entries }: { entries: AppliedFeedbackEntry[] }) =
           {entries.map((e) => (
             <div key={e.id} className="border-l-2 border-primary/40 pl-2">
               <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                {e.section}{e.rating != null ? ` · ${e.rating}★` : ""} · {lessonMatchPercent(e)}% match
+                {e.section}{e.rating != null ? ` · ${e.rating}★` : ""} · {lessonMatchLabel(e)}
               </div>
               <div className="mt-0.5 text-foreground">{e.correction}</div>
             </div>

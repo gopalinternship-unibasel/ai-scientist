@@ -381,7 +381,7 @@ export interface Readout {
 export function hypothesisReadout(hypothesis: string): Readout | null {
   const m = (hypothesis ?? "").match(/\b(?:measured|assessed|quantified|determined|detected|monitored|evaluated|analy[sz]ed|read\s+out|visuali[sz]ed|scored)\s+(?:by|with|using|via|through)\s+(?:an?\s+|the\s+)?([^,.;()]+)/i);
   if (!m) return null;
-  const phrase = m[1].replace(/\s+(?:by|in|at|after|compared|relative|versus|vs)\b.*$/i, "").trim();
+  const phrase = m[1].replace(/\s+/g, " ").replace(/\s+(?:by|in|at|after|compared|relative|versus|vs)\b.*$/i, "").trim();
   const terms = norm(phrase).split(/[\s]+/).flatMap((w) => w.split("/"))
     .map((w) => w.replace(/[^a-z0-9+-]/g, "")).filter((w) => w.length >= 2 && !READOUT_GENERIC.has(w));
   if (terms.length === 0) return null;
@@ -411,8 +411,16 @@ function textHas(words: Set<string>, terms: string[]): boolean {
 export function readoutMissing(hypothesis: string, steps: { title?: string; description?: string }[] | undefined): Readout | null {
   const r = hypothesisReadout(hypothesis);
   if (!r || !Array.isArray(steps) || steps.length === 0) return null;
-  const words = wordSet(steps.map((s) => `${s?.title ?? ""} ${s?.description ?? ""}`).join(" "));
-  return textHas(words, r.terms) ? null : r;
+  const text = steps.map((s) => `${s?.title ?? ""} ${s?.description ?? ""}`).join(" ");
+  if (textHas(wordSet(text), r.terms)) return null;
+  // "Measure TEER with an EVOM": the measured quantity's acronym from the
+  // hypothesis ("transepithelial electrical resistance (TEER)") in a step
+  // that measures counts too. The compound's own acronym (NMN) does not.
+  const doseWords = new Set(hypothesisDoses(hypothesis).flatMap((d) => keyFor(d.substance, hypothesis).forms.flat()));
+  const acronyms = [...(hypothesis ?? "").matchAll(/\(([A-Z][A-Z0-9+]{1,7})\)/g)].map((m) => m[1]).filter((a) => !doseWords.has(a.toLowerCase()));
+  const measured = sentences(text).some((s) => /\b(?:measur|record|read|quantif|assess|monitor)\w*/i.test(s)
+    && acronyms.some((a) => new RegExp(`(?:^|[^A-Za-z0-9])${a.replace(/\+/g, "\\+")}(?![A-Za-z0-9])`).test(s)));
+  return measured ? null : r;
 }
 
 // Reagents a protocol often uses without listing them: the spellings to
@@ -496,7 +504,9 @@ export function missingMaterials(
     if (hasForm(protocol, forms) && !hasForm(listed, forms)) add(line);
   }
   const r = hypothesisReadout(hypothesis);
-  if (r?.reagent && textHas(protocol, r.terms) && !textHas(listed, r.terms)) add(r.phrase);
+  // A kit is listed when the table names a distinctive word of it ("Enzymatic NAD+ Assay Kit" for "enzymatic cycling assay").
+  const listedLoose = (terms: string[]) => textHas(listed, terms) || terms.some((t) => t.length >= 5 && (listed.has(t) || listed.has(stem(t))));
+  if (r?.reagent && textHas(protocol, r.terms) && !listedLoose(r.terms)) add(r.phrase);
 
   const other: string[] = [];
   for (const c of COMMON_REAGENTS) {
