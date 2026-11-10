@@ -177,12 +177,13 @@ the planner; the rest check the plan it returns.
 | **Hypothesis gate** | `_shared/hypothesisGate.ts` | "hi", "write me a poem", off-topic chatter, vague research goals. Fails open on AI errors. |
 | **Feasibility check** | `_shared/feasibilityCheck.ts` | Sub-Abbe optical resolution, FTL signaling, perpetual motion, etc. Pure regex rules. |
 | **Safety screen** | `_shared/safety.ts` | Dual-use bio, controlled substances, human-subjects red flags. It does not block: the flags go into the planner prompt so the safety section addresses them. |
-| **Catalog numbers** | `_shared/catalogCheck.ts` + `skuVerify.ts` + `planContentChecks.ts` | Supplier catalog-number formats and a canonical SKU dictionary (Sigma, Thermo, NEB, IDT, Qiagen, Promega, Bio-Rad, ATCC); up to three Sigma-Aldrich SKUs per plan are also looked up live in PubChem's Sigma-Aldrich deposits. A number that belongs to another product (Metformin "T9531" is trehalose; HepG2 "CRL-3216" is HEK293T) or breaks the supplier's format is removed before the plan is saved, and the material's notes say so ("Fixed" finding `catalog_numbers_removed`). The planner prompt no longer shows example SKUs (the small model copied them). |
+| **Catalog numbers** | `_shared/catalogCheck.ts` + `skuVerify.ts` + `planContentChecks.ts` | Every catalog number gets a status (`catalog_status` on the material, shown in the materials table and the PDF). Removed ("Fixed", `catalog_numbers_removed`): a number that belongs to another product (local dictionary, or the live lookup of up to eight Sigma-Aldrich SKUs in PubChem's Sigma-Aldrich deposits: Metformin "T9531" is trehalose), that breaks the supplier's format, or that looks like a placeholder ("S1000", "A1000"). Corrected ("Fixed", `catalog_numbers_corrected`): a cell line from the app's ATCC list (25 lines, each checked against PubMed Central) gets ATCC's number (Caco-2 "CCL-22" becomes HTB-37). Verified: confirmed by that list, the dictionary or the live lookup. Unverified ("Check", `catalog_numbers_unverified`): everything else, including numbers the Sigma lookup cannot find and every supplier without a searchable catalogue; the table never shows these as plain numbers, and numbers of plans saved before 10 Nov 2026 (no status) are shown as unverified too. The planner prompt says which suppliers can be checked. |
 | **Citation sanitiser** | `_shared/citations.ts` | Normalises inline citations to `[N]` and drops any `[N]` that is not an index into the references retrieved for *this* run. |
 | **Source check** | `_shared/planIntegrity.ts` | Each protocol step's `source` must resolve to a retrieved reference (by `[N]`, URL, DOI or a title of 20+ characters) and is then shown as `[N] title (year)`; a source that cites anything else (URL, DOI, PMID, "et al.", a year) is removed, and so are such links inside step text. Short plain labels ("manufacturer's instructions") stay. The frontend re-applies it to plans saved before 9 Nov 2026. |
 | **Budget arithmetic** | `_shared/planIntegrity.ts` | A reagents/materials line below the materials table subtotal is raised to the subtotal (`materials_line_corrected`), then `budget.total_usd` is set to the sum of `budget.line_items` (`budget_total_corrected`). A materials line far above the table is flagged (it may pay for unlisted items). |
-| **Plan guards** | `_shared/planGuards.ts`, `planContentChecks.ts` | Flags (high severity, one automatic repair attempt): materials that do not name at least 40% of the weight of the hypothesis' anchor concepts (cell line, compound, named measurands; `hypothesisTerms.ts`), a protocol dose that differs from the hypothesis' dose by more than 1.5× (stock solutions excepted), protocol steps that are only material lists, and refinements whose numeric limit (budget cap, "cut by N%", timeline in days/weeks/months) the new plan breaks. Medium: materials that match cost-catalog items from topic groups the hypothesis does not mention, protocol steps longer than the timeline. Before the plan: house rules that share no specific term with the hypothesis are dropped (generic rules stay), the cost catalog shows only the topic groups that fit (`costCatalogPrompt`), and a refinement gets a digest of every section of the previous plan plus its limits as hard constraints. |
-| **Novelty verdict check** | `_shared/noveltyVerdict.ts` | Holds the LLM classifier to the retrieved papers: "not found" with a candidate that covers at least 35% of the hypothesis becomes "similar"; "exact match" needs a candidate naming at least 85% of the anchor concepts, otherwise it becomes "similar" (or "not found" when nothing is on-topic); the overlap label follows the verdict; off-topic picks are not shown as references. |
+| **Plan guards** | `_shared/planGuards.ts`, `planContentChecks.ts` | Flags (high severity, one automatic repair attempt): materials that do not name at least 40% of the weight of the hypothesis' anchor concepts (cell line, compound, named measurands; `hypothesisTerms.ts`); the hypothesis' compound, cell line or readout reagent used in the protocol but missing from the materials (`materials_missing`); no protocol step for the hypothesis' readout ("measured by Oil Red O staining", `readout_missing`); a protocol dose that differs from the hypothesis' dose by more than 1.5× (units in any case and with any micro sign, stock solutions excepted, dilutions worked out to their final concentration, treatment steps counted before assay-buffer steps); protocol steps that are only material lists; a budget cap the hypothesis states (`budget_cap_not_met`); and refinements whose numeric limit (budget cap, "cut by N%", timeline in days/weeks/months, checked against the phases and against the protocol step durations) the new plan breaks. Medium: dilution arithmetic that does not give the stated concentration, step durations far longer than the work their text describes, an intracellular readout measured in the supernatant without lysis, other reagents the protocol uses but the materials omit, materials that match cost-catalog items from topic groups the hypothesis does not mention, protocol steps longer than the timeline. Before the plan: house rules that share no specific term with the hypothesis are dropped (generic rules stay), the cost catalog shows only the topic groups that fit (`costCatalogPrompt`), and a refinement gets a digest of every section of the previous plan plus its limits as hard constraints. |
+| **Related-work filter** | `_shared/embeddingRelevance.ts` | Before the classifier: each candidate's title and abstract is embedded with the hypothesis (nomic-embed-text, the feedback loop's model) and dropped unless it is within 0.15 cosine of the best candidate and above 0.66, so a paper that only shares words (a 1974 hydrogenase paper for an NMN hypothesis) is never shown or cited. Without an embedding model the word ranking alone decides. |
+| **Novelty verdict check** | `_shared/noveltyVerdict.ts` | Holds the LLM classifier to the retrieved papers: "not found" with a candidate that covers at least 35% of the hypothesis becomes "similar"; "exact match" needs a candidate naming at least 85% of the anchor concepts and, when embeddings ran, a cosine of at least 0.78 (and, when the hypothesis has fewer than two anchor concepts, 50% coverage of all its terms), otherwise it becomes "similar" (or "not found" when nothing is on-topic); the overlap label follows the verdict; off-topic picks are not shown as references. |
 | **Canonical-technique override** | `_shared/canonicalTechniques.ts` | Promotes textbook protocol requests (PCR, Western, ELISA, OD600 growth curves) to `exact_match`, with disqualifiers for non-canonical perturbations (CRISPRi, knockouts, Δ-strains). It does not fire when the technique is only the readout of a claim ("... will reduce X, measured by Western blot") or the comparator of something new ("a biosensor ... matching ELISA sensitivity"). |
 
 If a pre-planner guard rejects, the run never reaches the planner — saving
@@ -192,6 +193,10 @@ guards fix what is mechanical (sources, catalog numbers, the materials line, the
 checks" and which the reviewer critique receives as high-severity
 pre-check findings. Cached plans are re-checked before they are served, and
 the corrections made when they were first saved are carried over to the copy.
+The cache key is the hypothesis together with the pipeline version
+(`_shared/pipelineVersion.ts`), so plans and novelty verdicts made before the
+current checks are never replayed; the run page marks such older runs and
+offers to run the hypothesis again.
 
 ---
 
@@ -213,7 +218,8 @@ flowchart TB
   S3 --> M
 
   M --> R[Rank by relevance<br/>coverage of the hypothesis concepts, title weighted]
-  R --> CL[Classify novelty<br/>LLM]
+  R --> EF[Embedding filter<br/>nomic-embed-text, relative cut]
+  EF --> CL[Classify novelty<br/>LLM]
   CL --> VC[Verdict check<br/>noveltyVerdict.ts]
   VC --> OUT[LiteratureQC]
 ```
@@ -234,8 +240,10 @@ then the intervention and outcome without the cell line, then the 2 heaviest,
 plus expanded-abbreviation forms. For the metformin / palmitate / HepG2
 hypothesis that is "HepG2 metformin palmitate lipid" (it used to be "treating
 hepg2 hepatocytes metformin hours"). The merged list keeps the 12 papers that
-cover the hypothesis best; the run keeps up to 8 above a relevance floor of
-0.2 (0.1 for canonical techniques).
+cover the hypothesis best; the run takes up to 12 above a relevance floor of
+0.2 (0.1 for canonical techniques), drops those far from the hypothesis in
+the embedding model (`embeddingRelevance.ts`; not for canonical techniques,
+whose methods papers are generic) and gives the classifier up to 8.
 
 The merge step de-dupes by DOI then by fuzzy title key (lowercased,
 punctuation stripped, common stop-words removed).
@@ -256,8 +264,6 @@ flowchart LR
 ```
 
 Implemented in `_shared/ai-fallback.ts` + `_shared/fetch-with-retry.ts`.
-
-Per-stage budgets:
 
 Per-stage budgets on the hosted models (the code's defaults). Every timeout
 is raised to at least `AI_MIN_TIMEOUT_MS`, which the self-hosted setup sets to
@@ -361,7 +367,7 @@ erDiagram
 
 **Key invariants**
 
-- `runs.parent_run_id` forms a tree per hypothesis — refinements bump `version`.
+- `runs.parent_run_id` forms a tree per hypothesis — refinements bump `version`. A new refinement anywhere in the tree gets one more than the highest version in the whole tree, and the run page's version switcher shows the whole tree (refinements of refinements and branches included; `_shared/versionChain.ts`).
 - `runs.status` is a state machine: `pending → qc → plan → done | failed`.
 - `plan_feedback.embedding` (pgvector) powers similarity retrieval for "feedback hints" injected into future planner prompts.
 - `domain_rules` are *distilled* from clusters of corrections — they're advisory data, not instructions, and the planner is told so to prevent prompt injection.

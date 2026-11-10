@@ -41,7 +41,7 @@ You type a hypothesis like:
 | Stage | Output |
 |---|---|
 | 🔍 **Literature QC** | Parallel search across Semantic Scholar, OpenAlex & PubMed. Classifies as `exact_match` / `similar` / `not_found`. The reference list holds only papers the search returned; a protocol step's source is shown only when it is one of them (model-written URLs, DOIs and author-year citations are removed). |
-| 🧪 **Experiment plan** | Title, summary, success criteria, step-by-step protocol with citations, materials with real supplier catalog numbers (Sigma, Thermo, IDT, NEB, ATCC, Qiagen, Promega, Bio-Rad), itemised budget, timeline, statistical design, validation, safety, risks, team. |
+| 🧪 **Experiment plan** | Title, summary, success criteria, step-by-step protocol with citations, materials with suppliers and catalog numbers (each marked verified only when a catalogue confirmed it: Sigma-Aldrich through PubChem, common ATCC cell lines, a short product list; every other number is shown as unverified, and wrong or placeholder numbers are removed), itemised budget, timeline, statistical design, validation, safety, risks, team. |
 | 🧐 **Reviewer critique** | Strengths, concerns (with severity), missing controls, statistical notes, ethical notes, overall score. |
 
 Every plan is **exportable to PDF**, **shareable** via a public link, and
@@ -95,8 +95,9 @@ catalog issues into the reviewer as extra context).
 │  1. hypothesisGate            gemini-2.5-flash-lite → gpt-5-nano     │
 │  2. feasibilityCheck          deterministic (regex rules)            │
 │  3. rate-limit                100 / hr (anon by IP, signed-in by uid)│
-│  4. cache lookup              reuse if same hypothesis hash exists   │
-│  5. literature search         S2 + OpenAlex + PubMed (parallel)      │
+│  4. cache lookup              same hypothesis + pipeline version     │
+│  5. literature search         S2 + OpenAlex + PubMed (parallel),     │
+│                               word ranking + embedding filter        │
 │  6. novelty classify          gemini-3-flash-preview → gpt-5-nano    │
 │  7. safety screen             deterministic (prompt fragment)        │
 │  8. plan generation (SSE)     gemini-3-flash-preview → gpt-5-mini    │
@@ -116,7 +117,7 @@ catalog issues into the reviewer as extra context).
 
 Offline / background jobs
 ┌──────────────────────────────────────────────────────────────────────┐
-│  distill-house-rules (cron)   gpt-5-mini                             │
+│  distill-house-rules (Admin)  gpt-5-mini                             │
 │      └─ converts trusted corrections → durable per-domain rules      │
 │  eval-harness (A/B + judge)   planner: gemini-3-flash-preview        │
 │                               judge:   gpt-5  (cross-family →        │
@@ -188,8 +189,7 @@ VITE_SUPABASE_PROJECT_ID=...
 ### Edge function tests (Deno)
 
 ```bash
-deno test --allow-net --allow-env supabase/functions/_shared/
-deno test --allow-net --allow-env supabase/functions/run-experiment/
+deno test --allow-net --allow-env --allow-read --no-lock supabase/functions/_shared/ supabase/functions/run-experiment/
 ```
 
 ## 📁 Project structure
@@ -215,8 +215,9 @@ supabase/
 
 ## 🗄️ Data model (highlights)
 
-**`runs`** — one row per generation. Stores hypothesis, SHA-256 hash (cache
-key), status (`pending` → `qc` → `plan` → `done` / `failed`), QC, plan,
+**`runs`** — one row per generation. Stores hypothesis, SHA-256 hash of the
+hypothesis and the pipeline version (cache key; runs made by an older
+pipeline are never replayed), status (`pending` → `qc` → `plan` → `done` / `failed`), QC, plan,
 critique, version, parent (for refinements), owner (anon token or user id),
 and a lazily-generated share token.
 
@@ -224,8 +225,10 @@ and a lazily-generated share token.
 pgvector, deduplicated, and retrieved on future runs in the same domain to
 nudge the planner.
 
-**`domain_rules`** — distilled house rules per scientific domain, refined
-nightly from accumulated feedback.
+**`domain_rules`** — distilled house rules per scientific domain, made from
+accumulated feedback when a moderator runs `distill-house-rules` (Admin page
+or a call to the function). No schedule runs it: the only pg_cron jobs are
+`cleanup-stale-runs` and `cleanup-old-rate-limits`.
 
 **`rate_limits`** — sliding-window counter, 100 req/hour per `(identifier,
 kind)`.
@@ -256,7 +259,7 @@ kind)`.
 | Cool zebrafish to 4 K in liquid helium | 400 — cryogenic-vertebrate rule |
 | Standard PCR / Western blot / ELISA protocol | `exact_match` literature, full plan |
 | Highly novel composite material hypothesis | `not_found` — **0 references**, plan still generated with honesty about novelty |
-| Same hypothesis submitted twice | Cache hit — `cached:true`, identical plan |
+| Same hypothesis submitted twice | Cache hit — `cached:true`, identical plan (only from a run of the current pipeline version) |
 
 ## 🔒 Security
 
