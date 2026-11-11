@@ -7,6 +7,11 @@ const HOURS_PER_WEEK = 168;
 
 export function timelineTotalLabel(timeline: Array<{ duration?: string | null }> | undefined | null): string | undefined {
   if (!Array.isArray(timeline) || timeline.length === 0) return undefined;
+  // The duration parser reads the first "number unit" only: "1,5 weeks" would count as 5 weeks
+  // and "3 days + 1 week" as 3 days. No total is better than a wrong one.
+  const PAIR = /\d+(?:\.\d+)?\s*(?:hours?|hrs?|h|days?|d|weeks?|wks?|w|months?|minutes?|mins?)\b/gi;
+  const unreadable = (d: string | null | undefined) => !d || /\d,\d/.test(d) || (d.match(PAIR) ?? []).length !== 1 || /\d\s*(?:-|–|to)\s*\d/.test(d);
+  if (timeline.some((p) => unreadable(p?.duration))) return undefined;
   const hours = timeline.map((p) => parseDurationToHours(p?.duration ?? undefined));
   // A phase whose duration cannot be read ("ongoing") makes any sum wrong.
   if (hours.some((h) => !(h > 0))) return undefined;

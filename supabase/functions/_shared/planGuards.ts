@@ -327,16 +327,18 @@ export function effectiveConstraints(
 
 // --- amounts of money ----------------------------------------------------------
 
-/** Number words before a unit of money or time: "three thousand", "one month". */
+/** Number words before a unit of money or time: "three thousand", "one month", "twenty four weeks". */
 const WORD_NUM: Record<string, number> = {
   a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
   eleven: 11, twelve: 12, fifteen: 15, twenty: 20, thirty: 30, forty: 40, fifty: 50,
 };
 const WORD_NUM_RE = Object.keys(WORD_NUM).join("|");
 
-/** "three thousand dollars" -> "3000 dollars", "one month" -> "1 month", "a week" -> "1 week". */
+/** "three thousand dollars" -> "3000 dollars", "one month" -> "1 month", "a week" -> "1 week", "twenty four weeks" -> "24 weeks". */
 function digitsForWords(s: string): string {
   return s
+    .replace(/\b(twenty|thirty|forty|fifty)[- ](one|two|three|four|five|six|seven|eight|nine)\b/g,
+      (_m, tens: string, units: string) => String(WORD_NUM[tens] + WORD_NUM[units]))
     .replace(new RegExp(String.raw`\b(${WORD_NUM_RE})\s+(hundred|thousand|grand|million)\b`, "g"),
       (_m, w: string, unit: string) => String(WORD_NUM[w] * (unit === "hundred" ? 100 : unit === "million" ? 1_000_000 : 1000)))
     .replace(new RegExp(String.raw`\b(${WORD_NUM_RE})\s+(days?|weeks?|months?|years?)\b`, "g"),
@@ -361,97 +363,166 @@ function money(raw: string, suffix: string | undefined): number | null {
   return n;
 }
 
-const CUR_PRE = String.raw`us\s*\$|usd|\$|chf|sfr\.?|eur|€|£|gbp`;
-const CUR_POST = String.raw`usd|us\s*dollars?|dollars?|bucks|chf|swiss\s+francs?|francs?|euros?|eur|€|£|gbp|pounds?`;
+const CUR_PRE = String.raw`us\s*\$|usd|c\$|a\$|\$|chf|sfr\.?|fr\.|eur|€|£|gbp|cad|aud|jpy|¥|inr|₹`;
+const CUR_POST = String.raw`usd|us\s*dollars?|dollars?|bucks|\$|chf|swiss\s+francs?|francs?|fr\.|euros?|eur|€|£|gbp|pounds?|cad|aud|jpy|yen|¥|inr|rupees?|₹`;
 const NUM = String.raw`\d{1,3}(?:[ '’\u00a0\u202f]\d{3})+(?:[.,]\d{1,2})?|\d[\d,.]*\d|\d`;
-/** An amount with its optional currency mark and multiplier; use once per pattern (named groups). */
-const AMOUNT = String.raw`(?<pre>${CUR_PRE})?\s*(?<num>${NUM})\s*(?<mult>k|thousand|grand|m|million)?\b\s*(?<post>${CUR_POST})?`;
+/**
+ * An amount with its optional currency mark and multiplier ("$3k", "3 000
+ * USD", "3000CHF", "3'000.- CHF", "3000$"); use once per pattern (named groups).
+ */
+const AMOUNT = String.raw`(?<pre>${CUR_PRE})?\s*(?<num>${NUM})(?:\.[-–])?(?:\s*(?<mult>k|thousand|grand|m|million)\b)?\s*(?<post>(?:${CUR_POST})(?![a-z]))?`;
 
+/** "don't spend more than", "must not cost more than", "shouldn't be longer than" */
+const NOT_MORE = String.raw`(?:\w+n['’]t|not|never|cannot)\s+(?:\w+\s+){0,3}?more than`;
 /** Words that put a ceiling in front of an amount. */
-const CAP_LEAD = String.raw`(?<![a-z])(?:under|below|beneath|less than|lower than|at most|at the most|max(?:imum)?(?: of)?|no more than|not more than|not (?:to )?exceed(?:ing)?|(?:without|never) (?:exceeding|going (?:over|above|beyond))|within|cap(?:ped)?(?: (?:at|of))?|limit(?:ed)?(?: (?:to|of))?|ceiling of|<=?|≤|down to|reduce(?:d)? to|cut to|lower(?:ed)? to|bring (?:it )?to|up to|not above|not over|no higher than|only have|have only|only got|(?:i|we)(?:'ve| have)(?: got)?(?: only| just)?|can (?:only |just )?(?:spend|afford)|to)`;
+const CAP_LEAD = String.raw`(?<![a-z])(?:under|below|beneath|less than|lower than|at most|at the most|max(?:imum|\.)?(?: of)?|no more than|${NOT_MORE}|not (?:to )?exceed(?:ing)?|(?:without|never) (?:exceeding|going (?:over|above|beyond))|within|cap(?:ped)?(?: (?:at|of))?|limit(?:ed)?(?: (?:to|of))?|ceiling of|<=?|≤|down to|reduce(?:d)? to|cut to|lower(?:ed)? to|bring (?:it )?to|up to|not above|not over|no higher than|only have|have only|only got|(?:i|we)(?:'ve| have)(?: got)?(?: only| just)?|can (?:only |just )?(?:spend|afford)|(?:do|redo|run|repeat|make|plan|design)\s+(?:it|this|that|everything|the (?:whole )?(?:plan|study|experiment|project|thing))\s+(?:again\s+)?for|to)`;
 /** "under $3,000", "at most a total of 4000 USD", "without exceeding a budget of 5000 dollars", "I only have $3,000" */
 const CAP_BEFORE = new RegExp(String.raw`${CAP_LEAD}\s*(?:just\s+|only\s+|about\s+|around\s+|roughly\s+)?(?:an?\s+|the\s+)?(?:(?:total\s+|overall\s+)?(?:budget|total|maximum|max|sum|cost)\s+(?:of\s+)?)?${AMOUNT}`, "g");
-/** "the budget should be $3,000", "Total budget: $3,000", "the budget is capped at $5,000", "budget of 5000 dollars" */
-const CAP_BUDGET_IS = new RegExp(String.raw`\b(?:budget|spending limit|funding|funds)\b\s*(?:(?:limit|cap|ceiling)\s*)?(?:[:=]\s*|(?:should|must|has to|have to|needs to|need to|can|will|may|shall|cannot|can't|can not)\s+(?:not\s+)?(?:only\s+)?(?:be|stay|remain|exceed|go (?:over|above))\s+|(?:is|are|stays|remains)\s+(?:now\s+|only\s+|just\s+|set (?:at|to)\s+|fixed at\s+|capped at\s+|limited to\s+)?|of\s+|at\s+)?(?:(?:under|below|at most|max(?:imum)?(?: of)?|no more than|up to|only|just|about|around)\s+)?${AMOUNT}`, "g");
+const NOT_OVER = String.raw`(?:exceed|go (?:over|above|beyond)|be (?:more|higher) than|be above|be over)`;
+/**
+ * "the budget should be $3,000", "Total budget: $3,000", "the budget is
+ * capped at $5,000", "a budget of less than 5000 dollars", "the budget must
+ * not exceed $3,000". "The budget can exceed $3,000" is not a ceiling.
+ */
+const capBudgetIs = (nouns: string) => new RegExp(String.raw`\b(?:${nouns})\b\s*(?:(?:limit|cap|ceiling)\s*)?(?:[:=]\s*|(?:should|must|has to|have to|needs to|need to|can|will|may|shall)\s+(?:only\s+)?(?:be|stay|remain)\s+|(?:should|must|can|will|may|shall|does|do)(?:\s+not|n['’]t)\s+${NOT_OVER}\s+|(?:cannot|can['’]?t|mustn['’]t|shouldn['’]t|won['’]t)\s+${NOT_OVER}\s+|(?:is|are|stays|remains)\s+(?:now\s+|only\s+|just\s+|set (?:at|to)\s+|fixed at\s+)?|of\s+|at\s+)?(?:(?:under|below|less than|at most|max(?:imum|\.)?(?: of)?|no more than|not more than|up to|only|just|about|around|within|capped at|limited to|not exceeding|not to exceed)\s+)?${AMOUNT}`, "g");
+const CAP_BUDGET_IS = capBudgetIs("budget|spending limit|funding|funds");
+/** In a hypothesis only the word "budget" counts ("labs with funding under $50,000" are its subject). */
+const CAP_BUDGET_IS_STRICT = capBudgetIs("budget");
 /** "$3,000 or less", "$3,000 maximum", "3000 USD at most", "on a $5,000 budget", "$3,000 is the limit" */
-const CAP_AFTER = new RegExp(String.raw`${AMOUNT}\s*,?\s*(?<tail>or (?:less|lower|below|under|cheaper)|at (?:the )?most|max(?:imum)?\b|tops\b|(?:total\s+|overall\s+)?budget\b|(?:is|as) (?:the|my|our|a) (?:hard\s+|upper\s+)?(?:limit|max(?:imum)?|cap|ceiling))`, "g");
+const CAP_AFTER = new RegExp(String.raw`${AMOUNT}\s*,?\s*(?<tail>or (?:less|lower|below|under|cheaper)|at (?:the )?most|max(?:imum\b|\.|\b)|tops\b|(?:total\s+|overall\s+)?budget\b|(?:is|as) (?:the|my|our|a) (?:hard\s+|upper\s+)?(?:limit|max(?:imum)?|cap|ceiling))`, "g");
 /** "under $2,000 in total" */
 const CAP_IN_TOTAL = new RegExp(String.raw`(?<![a-z])(?:under|below|less than|at most|no more than|within|up to)\s+${AMOUNT}\s+(?:in\s+)?(?:total|overall|altogether|all in)\b`, "g");
 /** "on a $5,000 budget" */
 const CAP_AMOUNT_BUDGET = new RegExp(String.raw`${AMOUNT}\s+(?<tail>(?:total\s+|overall\s+)?budget\b)`, "g");
 
+/** A pattern, and whether it asks for a ceiling ("under $3,000") or states the budget ("the budget is $3,000"). */
+interface CapPattern { re: RegExp; kind: "request" | "statement" }
+const INSTRUCTION_CAPS: CapPattern[] = [
+  { re: CAP_BEFORE, kind: "request" }, { re: CAP_AFTER, kind: "request" }, { re: CAP_IN_TOTAL, kind: "request" },
+  { re: CAP_BUDGET_IS, kind: "statement" },
+];
+const HYPOTHESIS_CAPS: CapPattern[] = [
+  { re: CAP_BUDGET_IS_STRICT, kind: "statement" }, { re: CAP_IN_TOTAL, kind: "request" }, { re: CAP_AMOUNT_BUDGET, kind: "statement" },
+];
+
 /** After a plain number: a unit that makes it a quantity, not money. */
 const QUANTITY_UNIT = /^\s*(?:weeks?|wks?|months?|years?|days?|hours?|hrs?|h\b|min(?:ute)?s?\b|sec(?:ond)?s?\b|%|percent|cells?|samples?|mice|rats|animals|wells?|plates?|replicates?|groups?|events?|patients?|participants?|subjects?|per\b|each\b|fold|[uµμ]?[lm]\b|m[lmg]\b|n[mg]\b|[uµμ]g\b|°|rpm\b|bp\b|kb\b|kda\b)/;
 /** After an amount: a price per unit, not a total. */
 const PER_UNIT = /^\s*(?:per\b|each\b|apiece\b|a piece\b|an?\s+(?:test|sample|kit|unit|assay|reaction|patient|plate|well|run)\b|\/)/;
-const TOTAL_WORDS = /\b(?:budget|total|overall|altogether|whole|entire|project|study|experiment|plan|everything|all in|for this|have|got|afford|funding|funds)\b/;
-const ITEM_WORDS = /\b(?:antibod(?:y|ies)|kits?|reagents?|primers?|probes?|plates?|assays?|instruments?|microscopes?|equipment|sequencing|samples?|items?|units?|bottles?|vials?|packs?|line items?|materials?|consumables|labou?r|personnel|salar(?:y|ies)|overheads?|travel|animals?|mice|tests?)\b/;
-/** Before a pattern: the amount describes what was, not what is asked for. */
+/** One thing a plan pays for, as opposed to the plan as a whole. */
+const ITEM = String.raw`antibod(?:y|ies)|kits?|reagents?|primers?|probes?|plates?|assays?|instruments?|microscopes?|equipment|sequencing|samples?|items?|units?|bottles?|vials?|packs?|materials?|consumables|labou?r|personnel|salar(?:y|ies)|overheads?|travel|animals?|mice|tests?|replicates?|imaging|staining|panels?|serum|media|medium`;
+const ITEM_WORD = new RegExp(String.raw`^(?:${ITEM}|each|every|per|one|ones)$`);
+/** Words before an amount that make it the plan's own figure ("keep it under", "to stay under", "the total under"). */
+const WHOLE_WORD = /^(?:it|this|everything|all|total|overall|budget|plan|study|experiment|project|whole|entire|altogether|stay|stays|get|gets|come|comes|bring|keep|have|got|afford|spend|i|we)$/;
+/** After an amount: the thing it prices ("a $500 antibody", "a $500 budget for antibodies", "a $2,000 budget line"). */
+const ITEM_AFTER = new RegExp(String.raw`^\s*(?:line\b|(?:for|on|per)\s+(?:the\s+|each\s+|every\s+)?(?:${ITEM})\b|(?:${ITEM})\b)`);
+/** Before a statement of the budget: the amount is what was, not what is asked for. */
 const DESCRIBES_PAST = /\b(?:current|currently|present|existing|previous|old|original|initial|earlier|was|were|from)\s+(?:total\s+|overall\s+)?$/;
+/** Before an amount: a floor, not a ceiling ("a minimum budget of $5,000"). */
+const FLOOR_BEFORE = /\b(?:minimum|min\.?|at least|no less than|not less than)\s+(?:an?\s+|the\s+)?(?:total\s+|overall\s+)?$/;
+/** After a statement of the budget: it describes the plan as it is ("... is too high", "... was fine"). */
+const DESCRIBES_AFTER = /^\s*(?:,\s*)?(?:which\s+)?(?:(?:is|was|seems|looks|sounds)\s+(?:far\s+|way\s+|much\s+)?too\b|was\b|were\b)/;
 
-const OTHER_CURRENCY: Array<[RegExp, string]> = [[/chf|sfr|franc/, "CHF"], [/eur|€/, "EUR"], [/£|gbp|pound/, "GBP"]];
+const OTHER_CURRENCY: Array<[RegExp, string]> = [
+  [/chf|sfr|franc|fr\./, "CHF"], [/eur|€/, "EUR"], [/£|gbp|pound/, "GBP"], [/cad|c\$/, "CAD"], [/aud|a\$/, "AUD"],
+  [/jpy|yen|¥/, "JPY"], [/inr|rupee|₹/, "INR"],
+];
 
 interface BudgetCap { usd: number; currency?: string }
 
 /**
- * The first amount in `s` (lower case) that a pattern marks as a ceiling on
- * the whole budget. `markedOnly` asks for a currency mark (hypotheses also
- * hold plain numbers of every kind); a plain number counts in an instruction
- * when it is at least 100 and stands next to a budget word.
+ * Whether the words before an amount make it the price of one item ("use an
+ * antibody under $300", "keep material costs under $2,000", "the antibody
+ * budget is $500") rather than the plan's own ceiling ("keep it under
+ * $3,000", "use fewer samples to stay under $3,000"): the nearer word decides.
  */
-function findBudgetCap(s: string, patterns: RegExp[], markedOnly: boolean): BudgetCap | undefined {
-  const found: Array<BudgetCap & { at: number }> = [];
-  for (const re of patterns) {
+function pricesAnItem(before: string): boolean {
+  const words = before.split(/[^a-z0-9$'’-]+/).filter(Boolean).slice(-6);
+  for (let i = words.length - 1; i >= 0; i--) {
+    if (ITEM_WORD.test(words[i])) return true;
+    if (WHOLE_WORD.test(words[i])) {
+      // "the materials budget", "the antibody total": an item's own budget.
+      return /^(?:budget|total)$/.test(words[i]) && i > 0 && ITEM_WORD.test(words[i - 1]);
+    }
+  }
+  return false;
+}
+
+/**
+ * The amount in `s` (lower case) that the patterns mark as a ceiling on the
+ * whole budget: the first one that asks for a ceiling, else the last one
+ * that states the budget ("The budget is $16,647. Reduce it to $5,000." asks
+ * for $5,000). `markedOnly` asks for a currency mark (hypotheses also hold
+ * plain numbers of every kind); a plain number counts in an instruction
+ * when it is at least 100 and its own clause has a budget word.
+ */
+function findBudgetCap(s: string, patterns: CapPattern[], markedOnly: boolean): BudgetCap | undefined {
+  const found: Array<BudgetCap & { at: number; kind: CapPattern["kind"] }> = [];
+  for (const { re, kind } of patterns) {
     for (const m of s.matchAll(re)) {
       const g = m.groups ?? {};
-      const v = money(g.num ?? "", g.mult);
+      let v = money(g.num ?? "", g.mult);
       if (!v) continue;
       const at = m.index ?? 0;
       const end = at + m[0].length;
       const after = s.slice(end);
-      if (PER_UNIT.test(after)) continue;
-      if (DESCRIBES_PAST.test(s.slice(0, at))) continue;
+      const head = s.slice(0, at);
+      if (PER_UNIT.test(after) || ITEM_AFTER.test(after) || FLOOR_BEFORE.test(head)) continue;
+      // "the current budget is $16,647", "the old cap of $5,000 was too low", "the budget of $16,000 is too high"
+      const names = kind === "statement" || /^(?:cap|limit|ceiling|max)/.test(m[0]);
+      if (names && (DESCRIBES_PAST.test(head) || DESCRIBES_AFTER.test(after))) continue;
       const mark = `${g.pre ?? ""} ${g.post ?? ""}`.trim();
+      const clause = head.split(/[.;:]/).pop() ?? "";
       if (!mark) {
         if (markedOnly) continue;
-        const near = s.slice(Math.max(0, at - 30), end + 12);
-        if (v < 100 || !/budget|cost|spend|afford|funding|funds/.test(near) || QUANTITY_UNIT.test(after)) continue;
+        // "Within the budget, raise n to 200": the number's own clause says nothing about money.
+        const own = `${clause.split(/,|\band\b|\bbut\b/).pop() ?? ""} ${m[0]} ${after.slice(0, 12)}`;
+        if (v < 100 || !/budget|cost|spend|afford|funding|funds/.test(own) || QUANTITY_UNIT.test(after)) continue;
       }
-      // "Use an antibody under $300" prices one item: the words around the
-      // amount name an item and nothing names the whole. A list in passing
-      // ("the total budget, including materials and labour, under $5,000")
-      // does not make it an item price.
-      const lead = s.slice(0, at).replace(/\b(?:including|incl\.?|inclusive of|covering|counting)\b[^,.;]*,?/g, " ");
-      const before = lead.split(/[.;]|\band\b|\bbut\b/).pop() ?? "";
-      const tail = (after.split(/[.;,]|\band\b|\bbut\b/)[0] ?? "").slice(0, 40);
-      const around = `${before} ${m[0]} ${tail}`;
-      if (ITEM_WORDS.test(around) && !TOTAL_WORDS.test(around)) continue;
+      if (pricesAnItem(clause)) continue;
+      // "$2,000-$3,000", "$2,000 to $3,000": the upper end is the ceiling.
+      const upper = after.match(new RegExp(String.raw`^\s*(?:-|–|—|to)\s*(?:${CUR_PRE})?\s*(${NUM})(?:\s*(k|thousand|grand|m|million)\b)?`));
+      const top = upper ? money(upper[1], upper[2] ?? g.mult) : null;
+      if (top && top > v) v = top;
       const currency = OTHER_CURRENCY.find(([cur]) => cur.test(mark))?.[1];
-      found.push({ usd: v, ...(currency ? { currency } : {}), at });
+      found.push({ usd: v, ...(currency ? { currency } : {}), at, kind });
     }
   }
   if (!found.length) return undefined;
-  const first = found.reduce((a, b) => (b.at < a.at ? b : a));
-  return { usd: first.usd, ...(first.currency ? { currency: first.currency } : {}) };
+  const requests = found.filter((f) => f.kind === "request");
+  const pick = requests.length
+    ? requests.reduce((a, b) => (b.at < a.at ? b : a))
+    : found.reduce((a, b) => (b.at > a.at ? b : a));
+  return { usd: pick.usd, ...(pick.currency ? { currency: pick.currency } : {}) };
 }
 
 const CUT_VERB = String.raw`(?:reduce|cut|lower|decrease|trim|slash|shrink|drop|bring down)`;
-const BUDGET_WORD = String.raw`(?:budget|costs?|spend(?:ing)?|price)`;
-const TIME_WORD = String.raw`(?:timeline|schedule|duration|time)`;
-const WHOLE = String.raw`(?:the\s+)?(?:total\s+|overall\s+|whole\s+|entire\s+)?`;
-const negated = (s: string, at: number) => /(?:\b(?:without|not|never|no)|n't)\s+(?:\w+\s+)?$/.test(s.slice(0, at));
+const BUDGET_NOUN = String.raw`(?:the\s+)?(?:total\s+|overall\s+|whole\s+|entire\s+)?(?:budget|costs?|spend(?:ing)?|price)`;
+const TIME_NOUN = String.raw`(?:(?:the\s+)?(?:total\s+|overall\s+|whole\s+|entire\s+)?(?:timeline|schedule|duration)|(?:the\s+)?(?:total|overall)\s+time)`;
+const negated = (s: string, at: number, words = 1) =>
+  new RegExp(String.raw`(?:\b(?:without|not|never|no)|n['’]t)\s+(?:\w+\s+){0,${words}}$`).test(s.slice(0, at));
+/** Words of a plan as a whole, for requests that could also be about one item. */
+const PLAN_WORDS = /\b(?:it|this|budget|total|overall|altogether|whole|entire|project|study|experiment|plan|everything|timeline|schedule)\b/;
+const ITEM_ANYWHERE = new RegExp(String.raw`\b(?:${ITEM})\b`);
+/** A part of the protocol, as opposed to the plan's whole duration. */
+const PART_WORDS = /\b(?:treat(?:ment|ments|ed|ing)\b|(?:pre-?)?treat\s+(?:the\s+)?(?:cells?|mice|animals|samples|cultures?|wells?)|incubat\w*|expos\w*|differentiat\w*|cultur\w*|stain\w*|step|phase|washout|recover\w*|fasting|dos(?:e|es|ed|ing)\b|feed\w*|diet\b|administ\w*|inject\w*|stimulat\w*|induc\w*|challenge|starv\w*|pre-?treat\w+|follow-?up|confluen\w*)/;
 
 /**
  * The share of the refined plan's figure an instruction asks for: "cut the
  * budget by 30%" 0.7, "halve the budget" / "cut the budget in half" 0.5,
  * "reduce the budget to 60%" 0.6, "30% cheaper" 0.7, "by a third" 2/3.
- * `word` is BUDGET_WORD or TIME_WORD; `comparative` the words after
- * "30%" ("cheaper", "faster").
+ * `half` are the wordings for a half that name no noun ("cost half as
+ * much"), `comparative` the words after "30%" ("cheaper", "faster"), and
+ * `aboutOnePart` says whether a sentence is about one item or one step
+ * ("use 20% cheaper reagents", "a 20% shorter incubation"), which is not a
+ * request about the whole plan.
  */
-function askedShare(s: string, word: string, comparative: string): number | undefined {
-  const noun = `${WHOLE}${word}`;
+function askedShare(s: string, noun: string, half: string, comparative: string, aboutOnePart: (sentence: string) => boolean): number | undefined {
   const share = (m: RegExpMatchArray | null, f: (m: RegExpMatchArray) => number): number | undefined => {
-    if (!m || negated(s, m.index ?? 0)) return undefined;
+    if (!m || negated(s, m.index ?? 0, 3)) return undefined;
+    const at = m.index ?? 0;
+    const sentence = `${s.slice(0, at).split(/[.;]/).pop() ?? ""}${m[0]}${s.slice(at + m[0].length).split(/[.;]/)[0] ?? ""}`;
+    if (aboutOnePart(sentence)) return undefined;
     const v = f(m);
     return v > 0 && v < 1 ? v : undefined;
   };
@@ -463,22 +534,45 @@ function askedShare(s: string, word: string, comparative: string): number | unde
   const first = (list: Array<number | undefined>) => list.find((v) => v !== undefined);
   return share(s.match(new RegExp(String.raw`\b${CUT_VERB}\s+${noun}\s+by\s+(\d+(?:\.\d+)?)\s*(?:%|percent)`)), (m) => 1 - pctOf(m))
     ?? share(s.match(new RegExp(String.raw`\b(\d+(?:\.\d+)?)\s*(?:%|percent)\s+(?:${comparative})\b`)), (m) => 1 - pctOf(m))
-    ?? share(s.match(new RegExp(String.raw`\b${CUT_VERB}\s+${noun}\s+to\s+(\d+(?:\.\d+)?)\s*(?:%|percent)`)), pctOf)
-    ?? share(s.match(new RegExp(String.raw`\b(?:halve|halving)\s+${noun}\b|\b${CUT_VERB}\s+${noun}\s+in\s+half\b|\bhalf\s+(?:of\s+)?(?:the\s+|its\s+)?(?:current\s+|original\s+|previous\s+)?${word}\b|\bhalf as (?:much|expensive|long)\b`)), () => 0.5)
+    ?? share(s.match(new RegExp(String.raw`\b${CUT_VERB}\s+${noun}\s+to\s+(\d+(?:\.\d+)?)\s*(?:%|percent)(?!\s*[a-z])`)), pctOf)
+    // "Halve the budget", "halve both the budget and the timeline"
+    ?? share(s.match(new RegExp(String.raw`\b(?:halve|halving)\s+(?:both\s+)?(?:[a-z ]{1,30}?\band\s+)?${noun}\b|\b${CUT_VERB}\s+${noun}\s+in\s+half\b|${half}`)), () => 0.5)
+    // "Do it for a third of the budget"
+    ?? first(fractions.map(([w, part]) => share(s.match(new RegExp(String.raw`\b${w}\s+of\s+${noun}\b`)), () => part)))
     ?? first(fractions.map(([w, cut]) => share(s.match(new RegExp(String.raw`\b${CUT_VERB}\s+${noun}\s+by\s+${w}\b`)), () => 1 - cut)))
     ?? first(fractions.map(([w, cut]) => share(s.match(new RegExp(String.raw`\b${CUT_VERB}\s+${noun}\s+to\s+${w}\b`)), () => cut)));
 }
 
+const BUDGET_HALF = String.raw`\bcosts?\s+half as much\b|\bhalf as expensive\b|\bhalf\s+(?:of\s+)?(?:the\s+|its\s+)?(?:current\s+|original\s+|previous\s+)?(?:budget|cost|price)\b`;
+const BUDGET_COMPARATIVE = "cheaper|less expensive|less costly|lower (?:budget|costs?)|less (?:budget|money|cost)";
+const TIME_HALF = String.raw`\btakes?\s+half as long\b|\btwice as (?:fast|quick(?:ly)?)\b|\bhalf\s+(?:of\s+)?(?:the\s+|its\s+)?(?:current\s+|original\s+|previous\s+)?(?:timeline|schedule|duration)\b|\bin\s+half\s+the\s+time\b`;
+const TIME_COMPARATIVE = "faster|shorter|quicker";
+const aboutAnItem = (sentence: string) => ITEM_ANYWHERE.test(sentence) && !PLAN_WORDS.test(sentence);
+const aboutAStep = (sentence: string) => PART_WORDS.test(sentence) && !PLAN_WORDS.test(sentence);
+
 /**
  * Whether the instruction asks for a lower budget without naming a figure:
- * "reduce the budget", "make it cheaper", "a cheaper version". "Use a
- * cheaper antibody" and "reduce the cost of the staining" are about one item.
+ * "reduce the budget", "make it cheaper", "a cheaper version", "this is too
+ * expensive", "bring the cost down". "Use a cheaper antibody", "a cheaper
+ * version of the kit" and "reduce the cost of the staining" are about one item.
  */
 function asksLowerBudget(s: string): boolean {
   const whole = String.raw`(?:it|this|that|the\s+(?:plan|study|experiment|project|whole thing))`;
   const cheaper = String.raw`(?:cheaper|less expensive|less costly|more affordable)`;
-  const m = s.match(new RegExp(String.raw`\b${CUT_VERB}\s+${WHOLE}${BUDGET_WORD}\b(?!\s+(?:of|for|per)\s+(?!the\s+(?:plan|study|experiment|project|whole)))|\bmake\s+${whole}\s+(?:\w+\s+){0,3}?${cheaper}\b|\b${cheaper}\s+(?:plan|version|design|study|experiment|overall|in total)\b|\bsave (?:money|costs?)\b|\b(?:cost|spend) less\b|\blower[- ]budget\b`));
-  return !!m && !negated(s, m.index ?? 0);
+  const cost = String.raw`(?:the\s+)?(?:total\s+|overall\s+)?(?:budget|costs?|price)`;
+  const m = s.match(new RegExp([
+    String.raw`\b${CUT_VERB}\s+${BUDGET_NOUN}\b(?!\s+(?:of|for|per)\s+(?!the\s+(?:plan|study|experiment|project|whole)))`,
+    String.raw`\bmake\s+${whole}\s+(?:\w+\s+){0,3}?${cheaper}\b`,
+    String.raw`\b${cheaper}\s+(?:plan|version|design|study|experiment|overall|in total)\b(?!\s+of\b)`,
+    String.raw`\bsave (?:money|costs?)\b`,
+    String.raw`\b(?:costs?|spend) less\b`,
+    String.raw`\blower[- ]budget\b`,
+    String.raw`\btoo (?:expensive|costly|pricey)\b`,
+    String.raw`\bbring\s+${cost}\s+down\b`,
+    String.raw`\b${cost}\s+(?:needs?|has|have|must|should|ought)\s+(?:to\s+)?come\s+down\b`,
+    String.raw`\b(?:over|above|beyond|outside)\s+(?:my|our|the)\s+budget\b`,
+  ].join("|")));
+  return !!m && !negated(s, m.index ?? 0, 3);
 }
 
 const WEEKS_PER_UNIT: Record<string, number> = { day: 1 / 7, week: 1, wk: 1, month: 4.345, year: 52.18 };
@@ -499,11 +593,14 @@ export function parseRefinementConstraints(
   const s = digitsForWords((instruction ?? "").toLowerCase());
   if (!s) return out;
   const share = parentTotal && parentTotal > 0
-    ? askedShare(s, BUDGET_WORD, "cheaper|less expensive|less costly|lower (?:budget|costs?)|less (?:budget|money|cost)")
+    ? askedShare(s, BUDGET_NOUN, BUDGET_HALF, `${BUDGET_COMPARATIVE}`, aboutAnItem)
+      // "It should cost 30% less.", "Spend 30% less."
+      ?? ((m) => (m && !negated(s, m.index ?? 0, 3) && Number(m[1]) > 0 && Number(m[1]) < 100 ? 1 - Number(m[1]) / 100 : undefined))(
+        s.match(/\b(?:costs?|spend|pay)\s+(\d+(?:\.\d+)?)\s*(?:%|percent)\s+less\b/))
     : undefined;
   if (share !== undefined && parentTotal) out.max_budget_usd = Math.round(parentTotal * share);
   if (out.max_budget_usd === undefined) {
-    const cap = findBudgetCap(s, [CAP_BEFORE, CAP_BUDGET_IS, CAP_AFTER, CAP_IN_TOTAL], false);
+    const cap = findBudgetCap(s, INSTRUCTION_CAPS, false);
     if (cap) {
       out.max_budget_usd = cap.usd;
       if (cap.currency) out.budget_currency = cap.currency;
@@ -512,24 +609,32 @@ export function parseRefinementConstraints(
   if (out.max_budget_usd === undefined && parentTotal && parentTotal > 0 && asksLowerBudget(s)) {
     out.lower_budget_than_usd = parentTotal;
   }
-  const timeShare = parentWeeks && parentWeeks > 0 ? askedShare(s, TIME_WORD, "faster|shorter|quicker") : undefined;
+  const timeShare = parentWeeks && parentWeeks > 0 ? askedShare(s, TIME_NOUN, TIME_HALF, TIME_COMPARATIVE, aboutAStep) : undefined;
   if (timeShare !== undefined && parentWeeks) out.max_timeline_weeks = Math.round(parentWeeks * timeShare * 100) / 100;
   if (out.max_timeline_weeks === undefined && /\b(?:timeline|schedule|duration|deadline|weeks?|months?|days?|finish|complete|shorten|faster)\b/.test(s)) {
     const DUR = String.raw`(\d+(?:\.\d+)?)\s*(days?|weeks?|wks?|months?|years?)\b`;
-    const t = s.match(new RegExp(String.raw`(?<![a-z])(?:to|into|within|under|in|at most|no more than|max(?:imum)?(?: of)?|less than|shorter than|limit(?:ed)? to|fit (?:into|in)|only have|have only|(?:i|we)(?:'ve| have)(?: got)?(?: only| just)?)\s*${DUR}`))
-      ?? s.match(new RegExp(String.raw`${DUR}\s*,?\s*(?:or (?:less|shorter|faster)|at (?:the )?most|max(?:imum)?\b|tops\b)`))
-      ?? s.match(new RegExp(String.raw`\b(?:timeline|schedule|duration|deadline)\b\s*(?:[:=]\s*|(?:should|must|has to|needs to|can|will|may)\s+(?:not\s+)?(?:only\s+)?(?:be|take|last|exceed)\s+|(?:is|of)\s+(?:now\s+|only\s+|just\s+)?)(?:(?:under|at most|no more than|up to|only|just)\s+)?${DUR}`));
+    const t = s.match(new RegExp(String.raw`(?<![a-z])(?:to|into|within|under|in|at most|no more than|${NOT_MORE.replace("more than", "(?:more|longer) than")}|no longer than|max(?:imum|\.)?(?: of)?|less than|shorter than|limit(?:ed)? to|fit (?:into|in)|only have|have only|(?:i|we)(?:'ve| have)(?: got)?(?: only| just)?)\s*${DUR}`))
+      ?? s.match(new RegExp(String.raw`${DUR}\s*,?\s*(?:or (?:less|shorter|faster)|at (?:the )?most|max(?:imum\b|\.|\b)|tops\b)`))
+      ?? s.match(new RegExp(String.raw`\b(?:timeline|schedule|duration|deadline)\b\s*(?:[:=]\s*|(?:should|must|has to|needs to|can|will|may)\s+(?:not\s+)?(?:only\s+)?(?:be|take|last|exceed)\s+|(?:is|of)\s+(?:now\s+|only\s+|just\s+)?)(?:(?:under|at most|no more than|up to|only|just)\s+)?${DUR}`))
+      // "Make it a 2-week study", "compress it into a 2 week timeline"
+      ?? s.match(/\b(\d+(?:\.\d+)?)[- ](days?|weeks?|months?|years?)\s+(?:study|timeline|plan|project|schedule|experiment|version)\b/);
     if (t) {
       // A cap on the whole plan, not a change to one part of it: "Extend the
-      // treatment to 2 weeks" and "Shorten the staining to 2 days" say
-      // nothing about the timeline's total.
-      const clause = s.slice(0, t.index ?? 0).split(/[.;]/).pop() ?? "";
+      // treatment to 2 weeks", "Shorten the staining to 2 days" and "Dose the
+      // mice for 4 weeks at most" say nothing about the timeline's total.
+      const at = t.index ?? 0;
+      const clause = s.slice(0, at).split(/[.;:]/).pop() ?? "";
+      const rest = s.slice(at + t[0].length);
+      const around = `${clause} ${t[0]} ${(rest.split(/[.;,]/)[0] ?? "").slice(0, 40)}`;
       const whole = /\b(?:timeline|schedule|deadline|project|study|overall|whole|entire|experiment|plan|total|everything|all)\b/.test(`${clause} ${t[0]}`);
       const lengthens = /\b(?:extend\w*|lengthen\w*|prolong\w*|increas\w*|at least|minimum|no less than)\b/.test(clause);
-      const partOnly = /\b(?:treat\w*|incubat\w*|expos\w*|differentiat\w*|cultur\w*|stain\w*|step|phase|washout|recover\w*|fasting|dosing|stimulat\w*|induc\w*|challenge|starv\w*|pre-?treat\w*|follow-?up)\b/.test(clause);
+      const partOnly = PART_WORDS.test(around);
       const dur = t.slice(1).filter((x) => x !== undefined);
       const unit = dur[1].replace(/s$/, "");
-      const w = Number(dur[0]) * (WEEKS_PER_UNIT[unit] ?? 0);
+      // "in a week or two": the longer one.
+      const or = rest.match(/^\s+or\s+(\d+(?:\.\d+)?|two|three|four|five|six)\b/);
+      const n = Math.max(Number(dur[0]), or ? (WORD_NUM[or[1]] ?? Number(or[1])) : 0);
+      const w = n * (WEEKS_PER_UNIT[unit] ?? 0);
       if (w > 0 && !lengthens && (whole || !partOnly)) out.max_timeline_weeks = Math.round(w * 100) / 100;
     }
   }
@@ -538,15 +643,16 @@ export function parseRefinementConstraints(
 
 /**
  * A budget cap the hypothesis itself states ("with a total budget under
- * $5,000", "the budget is capped at $5,000", "without exceeding a budget of
- * 5000 dollars", "for under $2,000 in total", "on a $5,000 budget"). Only
- * explicit budget wording with a currency mark counts: "reduces the cost to
- * under $5 per test" is the outcome, not a cap.
+ * $5,000", "the budget is capped at $5,000", "a budget not exceeding
+ * $5,000", "without exceeding a budget of 5000 dollars", "for under $2,000
+ * in total", "on a $5,000 budget"). Only explicit budget wording with a
+ * currency mark counts: "reduces the cost to under $5 per test" is the
+ * outcome, not a cap, and "the budget may exceed $5,000" is not a ceiling.
  */
 export function hypothesisBudgetCap(hypothesis: string | null | undefined): number | undefined {
   const s = digitsForWords((hypothesis ?? "").toLowerCase());
   if (!s) return undefined;
-  return findBudgetCap(s, [CAP_BUDGET_IS, CAP_IN_TOTAL, CAP_AMOUNT_BUDGET], true)?.usd;
+  return findBudgetCap(s, HYPOTHESIS_CAPS, true)?.usd;
 }
 
 /** "Materials $2,030, Labour $1,000, Overhead $1,000": the line items, for findings about the total. */
@@ -915,8 +1021,12 @@ export function verifyPlan(
         detail: `${asked("budget")} a budget of at most ${cap}; ${overBy(constraints.max_budget_usd)}.`,
       });
     }
-  } else if (constraints.lower_budget_than_usd !== undefined && plan.budget && total > constraints.lower_budget_than_usd * 0.99) {
-    // "Make it cheaper", "reduce the budget": no figure, but the total has to come down.
+  }
+  // "Make it cheaper", "reduce the budget": no figure, but the total has to
+  // come down. Checked next to an inherited cap too: "make it cheaper" on a
+  // $2,900 plan under an earlier "$3,000" cap is not met by $2,950.
+  if (constraints.lower_budget_than_usd !== undefined && plan.budget && total >= constraints.lower_budget_than_usd
+    && !issues.some((i) => i.kind === "refinement_budget_not_met")) {
     issues.push({
       kind: "refinement_budget_not_met",
       severity: "high",
@@ -1009,7 +1119,8 @@ export function refinementConstraintPrompt(c: RefinementConstraints): string {
   const lines: string[] = [];
   if (c.max_budget_usd !== undefined) {
     lines.push(`- budget.total_usd MUST be at most ${c.max_budget_usd} USD${c.budget_currency ? ` (the instruction says ${c.budget_currency}; this plan is costed in USD, so use the same number in USD)` : ""}${c.inherited?.includes("budget") ? " (a limit from an earlier refinement that still holds)" : ""}, and the line items must add up to it. Cut scope, FTE, duration or quantities to get there.`);
-  } else if (c.lower_budget_than_usd !== undefined) {
+  }
+  if (c.lower_budget_than_usd !== undefined) {
     lines.push(`- budget.total_usd MUST be clearly lower than the previous plan's ${c.lower_budget_than_usd} USD, and the line items must add up to it. Cut scope, FTE, duration or quantities to get there.`);
   }
   if (c.max_timeline_weeks !== undefined) {

@@ -14,6 +14,10 @@ describe("timelineTotalLabel", () => {
   it("shows nothing when a phase has no readable duration", () => {
     expect(timelineTotalLabel([{ duration: "1 week" }, { duration: "ongoing" }])).toBeUndefined();
     expect(timelineTotalLabel([{ duration: "1 week" }, {}])).toBeUndefined();
+    // Durations the parser would read only in part (review of 11 Nov 2026).
+    expect(timelineTotalLabel([{ duration: "1,5 weeks" }, { duration: "1 week" }])).toBeUndefined();
+    expect(timelineTotalLabel([{ duration: "3 days + 1 week" }])).toBeUndefined();
+    expect(timelineTotalLabel([{ duration: "1-2 weeks" }, { duration: "1 week" }])).toBeUndefined();
     expect(timelineTotalLabel([])).toBeUndefined();
     expect(timelineTotalLabel(undefined)).toBeUndefined();
   });
