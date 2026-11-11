@@ -477,7 +477,7 @@ function findBudgetCap(s: string, patterns: CapPattern[], markedOnly: boolean): 
         if (markedOnly) continue;
         // "Within the budget, raise n to 200": the number's own clause says nothing about money.
         const own = `${clause.split(/,|\band\b|\bbut\b/).pop() ?? ""} ${m[0]} ${after.slice(0, 12)}`;
-        if (v < 100 || !/budget|cost|spend|afford|funding|funds/.test(own) || QUANTITY_UNIT.test(after)) continue;
+        if (v < 100 || !/budget|cost|spend|afford|funding|funds|\btotal\b/.test(own) || QUANTITY_UNIT.test(after)) continue;
       }
       if (pricesAnItem(clause)) continue;
       // "$2,000-$3,000", "$2,000 to $3,000": the upper end is the ceiling.
@@ -611,6 +611,15 @@ export function parseRefinementConstraints(
   }
   const timeShare = parentWeeks && parentWeeks > 0 ? askedShare(s, TIME_NOUN, TIME_HALF, TIME_COMPARATIVE, aboutAStep) : undefined;
   if (timeShare !== undefined && parentWeeks) out.max_timeline_weeks = Math.round(parentWeeks * timeShare * 100) / 100;
+  // "The timeline is 6 weeks; shorten it to 4.": the length as it is, then the one asked for
+  // (in the same unit).
+  const restated = out.max_timeline_weeks === undefined
+    ? s.match(/\b(?:timeline|schedule|duration)\b[^.;]{0,30}?\b(?:is|of|takes)\s+(?:now\s+|currently\s+)?\d+(?:\.\d+)?\s*(days?|weeks?|wks?|months?|years?)\s*[;,.]\s*(?:please\s+)?(?:shorten|reduce|cut|trim|compress|bring)\b[^.;]*?\bto\s+(\d+(?:\.\d+)?)(?!\s*(?:%|percent|\d|[a-z$]))/)
+    : null;
+  if (restated) {
+    const w = Number(restated[2]) * (WEEKS_PER_UNIT[restated[1].replace(/s$/, "")] ?? 0);
+    if (w > 0) out.max_timeline_weeks = Math.round(w * 100) / 100;
+  }
   if (out.max_timeline_weeks === undefined && /\b(?:timeline|schedule|duration|deadline|weeks?|months?|days?|finish|complete|shorten|faster)\b/.test(s)) {
     const DUR = String.raw`(\d+(?:\.\d+)?)\s*(days?|weeks?|wks?|months?|years?)\b`;
     const t = s.match(new RegExp(String.raw`(?<![a-z])(?:to|into|within|under|in|at most|no more than|${NOT_MORE.replace("more than", "(?:more|longer) than")}|no longer than|max(?:imum|\.)?(?: of)?|less than|shorter than|limit(?:ed)? to|fit (?:into|in)|only have|have only|(?:i|we)(?:'ve| have)(?: got)?(?: only| just)?)\s*${DUR}`))

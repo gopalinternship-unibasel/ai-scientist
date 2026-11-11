@@ -368,7 +368,7 @@ docker run --rm -v "${PWD}:/app" -w /app -e DENO_DIR=/app/supabase/.temp/deno-ca
 (With Deno installed locally: `deno test --allow-net --allow-env --allow-read supabase/functions/_shared/ supabase/functions/run-experiment/`.)
 
 Measured on 11 Nov 2026 after the QA round-4 fixes and their review: Vitest 22 files / 90
-tests, Deno 185 tests, ESLint 0 errors (9 warnings), `tsc` and `deno check`
+tests, Deno 186 tests, ESLint 0 errors (9 warnings), `tsc` and `deno check`
 clean. The plan checks have their own Deno suites built from the QA's
 failing plans (`supabase/functions/_shared/planGuards.test.ts` for round 1,
 `planChecksRound2.test.ts` for round 2), and the literature queries and the
@@ -610,9 +610,13 @@ which still points at the deleted hosted project.
   - The pipeline version was not raised for the last check changes, so one
     local test run made between them (42c080d0) still shows text the current
     checks would change. New runs are not affected.
-  - A limit the reader still gets wrong: "The timeline is 6 weeks; shorten
-    it to 4." is read as 6 weeks. A limit in a wording it does not know is
-    not sent to the model as a hard limit and not checked.
+  - A limit in a wording the reader does not know ("Keep it under 3000."
+    with no word for money, "Make it a $3,000 project.", "2 weeks, no
+    more.") is not sent to the model as a hard limit and not checked. A
+    limit that was lifted in words ("The budget does not need to stay under
+    $3,000.") is still read as a limit. On the reviewer's 205 test sentences
+    the reader now agrees with an ordinary reader on 180 (90 before the
+    round-4 change was reviewed), with none read worse than before.
   - The novelty verdict for a hypothesis whose anchor words also describe
     unrelated work (the Dsup / PLA scaffold example) can still be "exact
     match" when the classifier says so.

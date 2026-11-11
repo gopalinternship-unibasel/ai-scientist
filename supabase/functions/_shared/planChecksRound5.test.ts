@@ -207,3 +207,12 @@ Deno.test("budget cap in the hypothesis: the wordings the first reader read, and
     assertEquals(hypothesisBudgetCap(text), undefined, text);
   }
 });
+
+Deno.test("leftovers of the review's probe: 'the total', a restated timeline", () => {
+  assertEquals(read("Keep the total under 3000."), { max_budget_usd: 3000 });
+  assertEquals(read("The timeline is 6 weeks; shorten it to 4."), { max_timeline_weeks: 4 });
+  assertEquals(read("The timeline is 6 weeks. Reduce it to 3."), { max_timeline_weeks: 3 });
+  // Not a restated timeline: the number after "to" is something else.
+  assertEquals(read("The timeline is 6 weeks; reduce the dose to 5 mg."), { max_timeline_weeks: 6 });
+  assertEquals(read("Keep the total number of mice under 3000."), {});
+});
