@@ -31,26 +31,28 @@ on Gopal's PC).
 Ollama models (once):
 
 ```powershell
-docker exec cvfix-ollama ollama pull qwen2.5:3b         # chat model (all roles)
+docker exec cvfix-ollama ollama pull qwen2.5:7b         # chat model (all roles), 4.7 GB
 docker exec cvfix-ollama ollama pull nomic-embed-text   # embeddings, 768 dimensions
-# with a native Ollama install: ollama pull qwen2.5:3b ; ollama pull nomic-embed-text
+# with a native Ollama install: ollama pull qwen2.5:7b ; ollama pull nomic-embed-text
 ```
 
-The configured chat model is `qwen2.5-3b-4threads`: qwen2.5:3b with 4 CPU
+The configured chat model is `qwen2.5-7b-4threads`: qwen2.5:7b with 4 CPU
 threads and an 8192-token context (see "Known limits"). It shares the
-qwen2.5:3b weights (no extra download), and `start-local.ps1` creates it
-for you as soon as qwen2.5:3b is pulled. By hand it is:
+qwen2.5:7b weights (no extra download), and `start-local.ps1` creates it
+for you as soon as qwen2.5:7b is pulled. By hand it is:
 
 ```powershell
 Invoke-RestMethod -Method Post -Uri http://localhost:11434/api/create `
-  -Body '{"model":"qwen2.5-3b-4threads","from":"qwen2.5:3b","parameters":{"num_thread":4,"num_ctx":8192},"stream":false}'
+  -Body '{"model":"qwen2.5-7b-4threads","from":"qwen2.5:7b","parameters":{"num_thread":4,"num_ctx":8192},"stream":false}'
 ```
 
-To use another Ollama model (for example `qwen2.5:7b`, better plans, about
-2.5 times slower), create a variant of it the same way with
-`"num_ctx":8192` and put its name in `AI_MODEL` in
-`supabase\functions\.env`. Ollama's default context is 4096 tokens, which
-a plan and its prompt do not fit in.
+It needs about 6 GB of RAM while loaded. Until 10 Nov 2026 the default was
+the smaller `qwen2.5-3b-4threads` (from `qwen2.5:3b`, 1.9 GB, about 2.5 GB
+loaded): faster, but its plans were wrong far more often (section 6,
+"Choosing the local model"). To use it, or any other Ollama model, create a
+variant the same way with `"num_ctx":8192` and put its name in `AI_MODEL`
+in `supabase\functions\.env`. Ollama's default context is 4096 tokens,
+which a plan and its prompt do not fit in.
 
 Ports used (all on localhost): Supabase API 54321, Postgres 54322, shadow
 DB 54320, Studio 54323, Mailpit 54324, edge-function inspector 8083,
@@ -74,8 +76,12 @@ That is all. The first `start-local.ps1` run also:
   `.env`,
 - creates two test accounts and writes them to `.local-test-user.json`
   (gitignored),
-- creates the Ollama model `qwen2.5-3b-4threads` (when `qwen2.5:3b` is
+- creates the Ollama model `qwen2.5-7b-4threads` (when `qwen2.5:7b` is
   pulled).
+
+A `supabase\functions\.env` made before 10 Nov 2026 still names
+`qwen2.5-3b-4threads`: change its `AI_MODEL` line by hand (the script never
+overwrites that file) and run `start-local.ps1 -RestartFunctions`.
 
 ## 3. Start
 
@@ -143,9 +149,12 @@ On a finished plan: **Save as PDF** (the plan and its numbered references),
 **Share** (signed-in owner; copies a link with a share token that anyone can
 open read-only, signed in or not; share-link viewers get no Refine or
 feedback buttons), **Refine** (creates version 2, 3, ... linked to the
-original; the version switcher appears above the plan, failed versions are
-labelled, and changed sections are marked "Modified" against the version
-that was refined), the star / pencil buttons on each section (feedback that
+version it was made from; a refinement of a refinement works the same way,
+and the new number is always one above the highest in the whole chain. The
+version switcher above the plan lists every version of the chain on every
+version's page, says "from v1" for a branch, labels failed versions, and
+changed sections are marked "Modified" against the version that was
+refined), the star / pencil buttons on each section (feedback that
 future plans learn from: the planner retrieves similar past corrections by
 embedding, and an admin can distil them into house rules), and
 **My feedback** in the user menu.
@@ -166,8 +175,33 @@ shown as references. A corrected verdict says so in its rationale, and the
 run's `qc.classifier_signal` keeps what the classifier said. The
 textbook-technique rule (PCR, Western blot, ELISA, ... are "exact match")
 applies only to hypotheses that ask for the technique itself, not to claims
-that use it as a readout or comparator. Runs saved before this check get it on the run page, applied to the
-references they stored (the stored row is not changed).
+that use it as a readout or comparator.
+
+Since QA round 3 (10 Nov 2026) two more things happen before anything is
+shown or cited:
+
+- **Related-work filter.** Each candidate's title and abstract is embedded
+  together with the hypothesis by the local `nomic-embed-text` (the model the
+  feedback loop already uses) and dropped unless it is within 0.15 cosine of
+  the best candidate and above 0.66 (`supabase/functions/_shared/embeddingRelevance.ts`;
+  `LIT_EMBED_MARGIN`, `LIT_EMBED_MIN_SIMILARITY`). The classifier sees only
+  the rest, so a paper that merely shares "NAD+" and "NADH" with the
+  hypothesis (the NMN run's 1974 hydrogenase paper) is never a reference or
+  a protocol source. `qc.related_filter` lists what was dropped. An "exact
+  match" now also needs a cosine of at least 0.78 to the hypothesis.
+- **Versioned cache.** The cache key is the hypothesis together with the
+  pipeline version (`_shared/pipelineVersion.ts`, now 4), so a plan or
+  verdict made before the current checks is never replayed: the first
+  request for such a hypothesis computes a fresh run, which becomes the new
+  cache entry. Runs made by an older pipeline keep what they stored; their
+  page says "Made by an earlier version" and offers **Run again with the
+  current checks**. (Their verdict is still re-checked on the page against
+  the references they stored, as before.) A refinement of such a run does
+  not copy its verdict and references: it searches the literature again,
+  so the new version is checked by the current rules throughout.
+- **"Similar" needs a paper to show.** When the classifier answers
+  "similar" but every paper it points to shares next to nothing with the
+  hypothesis, the stored verdict is "not found" and says so.
 
 **Automated checks.** Before a plan is saved (and again before a cached plan
 is served) deterministic checks run on it (`supabase/functions/_shared/planIntegrity.ts`,
@@ -177,17 +211,21 @@ by the check; "Check" findings are for the reader:
 | Check | What happens |
 |---|---|
 | Protocol sources (Fixed) | A step's source is kept only when it is one of the references the literature search returned (matched by `[N]`, URL, DOI or title) and is then shown as `[N] title (year)`. Any other URL, DOI, PMID or author-year citation is removed, also from step text. Plain labels such as "manufacturer's instructions" stay. The note says how many were removed and no longer repeats the removed link. |
-| Catalog numbers (Fixed) | A catalog number that belongs to another product (the SKU dictionary, or Sigma-Aldrich's catalogue looked up through PubChem: Metformin "T9531" is trehalose) or does not fit the supplier's format is removed, and the material's notes say why. The planner prompt no longer shows example SKUs, which the small model copied. |
+| Catalog numbers (Fixed / Check) | Every catalog number gets a status, shown in the materials table (Cat # column) and the PDF. **Removed** (Fixed): it belongs to another product (the SKU dictionary, or Sigma-Aldrich's catalogue looked up through PubChem: Metformin "T9531" is trehalose, "Sodium butyrate" with D8418 is DMSO), or no catalogue confirmed it and it does not fit the supplier's format or looks like a placeholder ("S1000", "A1000", "T1000"). **Corrected** (Fixed): a cell line from the app's ATCC list (25 common lines, each pair checked against PubMed Central) gets ATCC's number (Caco-2 "CCL-22" becomes HTB-37; a missing one is filled in). Only the plain line: a sub-line or an engineered line (Vero E6, HeLa S3, HepG2/C3A, "HEK293 stably expressing GFP") has its own number and is left alone. **Verified**: confirmed by that list, the dictionary or the PubChem lookup, where the catalogue's name must be the same product as the material's name: two thirds of their words in common, or one of the names PubChem lists for that compound ("Metformin" with D150959, which Sigma calls "1,1-Dimethylbiguanide hydrochloride"); a named salt is not confirmed by the acid's number. **Unverified** (Check): every other number: Sigma numbers PubChem does not know, numbers found under a name that only partly fits (the reason then quotes Sigma's name: "Sodium palmitate" with P0500 is listed as "Palmitic acid"), and every supplier without a searchable catalogue; the table labels them "unverified" with the reason on hover. A status the model writes into its own plan is ignored. Plans saved before 10 Nov 2026 have no status, so all their numbers show as unverified. The planner prompt says which suppliers can be checked. |
 | Budget (Fixed) | A materials line below the materials table subtotal is raised to the subtotal; the total is set to the sum of the line items, and the Budget card says what the model's own total was. A materials line far above the table is flagged. |
-| Materials (Check) | High severity when the materials do not name at least 40% of what the hypothesis is about (its cell line, compound, named measurands, by weight); also flagged when materials match cost-catalog items from topics the hypothesis does not mention (the catalog copying seen with the small model). |
-| Doses (Check) | High severity when the protocol gives the hypothesis' substance a concentration that is not within 1.5x of the hypothesis' dose ("10 mM metformin" for a 10 uM hypothesis). Stock solutions are not counted. |
+| Materials (Check) | High severity when the materials do not name at least 40% of what the hypothesis is about (its cell line, compound, named measurands, by weight), and when the protocol uses the hypothesis' compound, cell line or readout reagent but the materials leave it out ("The protocol uses palmitate, Oil Red O staining, but the materials table does not list them"). Medium for other reagents the protocol uses but the table does not list (PBS, BSA, DMSO, Transwell inserts, ...), and for materials that match cost-catalog items from topics the hypothesis does not mention. |
+| Doses (Check) | High severity when the protocol gives the hypothesis' substance a concentration that is not within 1.5x of the hypothesis' dose ("10 mM metformin" for a 10 uM hypothesis). Units are read in any case and with any micro sign ("0.5 MM", "1 ΜM", "10 µM"); a lower-case unit that is really a length or a time ("510 nm", "0.22 um filter", "35 mm dish", "2 pm") is not a dose. The substance is also found by its bracketed acronym (NMN), dilutions are worked out to their final concentration ("100 uL of 10 mM NMN to 10 mL medium" is about 99 uM, and the 10 mM it starts from is not the dose), a dose series or range that contains the hypothesis' dose passes ("0, 1, 10 and 100 uM", "1-100 uM"), and a treatment step counts before an assay-buffer step. Stock solutions are not counted. Medium when a dilution does not give the concentration the step states ("10 uL of 10 mM into 990 uL ... a 10 uM working solution" is 100 uM). |
+| Readout (Check) | High when no protocol step does the measurement the hypothesis names ("measured by Oil Red O staining"). Medium when the hypothesis is about intracellular levels but the protocol measures the culture supernatant and never lyses the cells. |
 | Suppliers (Check) | Medium when a material comes from a specialist supplier that does not sell that kind of item (antibodies from IDT, blood from Addgene). |
-| Protocol steps (Check) | High severity when at least half of the steps are only material lists. Medium when the protocol's step durations add up to more than the timeline. |
-| Refinement limits (Check) | A budget cap ("under $3,000", "cut the budget by 30%") or timeline cap ("8 weeks", "within 2 months") in the instruction is sent to the model as a hard limit and checked on the new plan. |
+| Protocol steps (Check) | High severity when at least half of the steps are only material lists. Medium when the protocol's step durations add up to more than the timeline, and when step durations are far longer than the work their text describes ("2 weeks" for "Incubate for 24 h"; steps that run "until ..." or repeat are not compared). |
+| Budget caps (Check) | High when the hypothesis itself states a budget cap ("with a total budget under $5,000") and the total is above it. The finding names the line items and the excess. |
+| Refinement limits (Check) | A budget cap ("under $3,000", "cut the budget by 30%") or timeline cap ("8 weeks", "within 2 months") in the instruction is sent to the model as a hard limit and checked on the new plan: the budget against the total (the finding names the line items and the excess), the timeline against the phases and against the protocol step durations. Only a limit on the whole plan counts: "Extend the treatment to 2 weeks" or "Shorten the staining to 2 days" is not a timeline cap, and "raise n to 12" is not a budget. A limit holds for later refinements of the same chain too (v2 "under $3,000", then v3 "shorten the timeline to 2 weeks": v3 is still checked against $3,000, and the finding says "An earlier refinement of this plan asked for ..."), until a refinement states a new number or gives it up ("ignore the budget", "increase the budget", "extend the timeline", "take as long as needed"). |
 
-A plan with a high-severity finding (materials, doses, material-list steps,
-refinement limits) is generated once more with the findings spelled out
-(`PLAN_REPAIR_ATTEMPTS`), and the better of the two is kept.
+A plan with a high-severity finding (materials, missing compound / cell line /
+readout reagent, missing readout step, doses, material-list steps, budget
+caps, refinement limits) is generated once more with the findings spelled
+out (`PLAN_REPAIR_ATTEMPTS`), and the better of the two is kept. What the
+second attempt still gets wrong stays on the plan as a "Check" finding.
 
 Findings appear in an **Automated checks** box above the plan and on the PDF
 cover page, and the reviewer critique receives them as high-severity
@@ -252,21 +290,57 @@ powershell -ExecutionPolicy Bypass -File scripts\start-local.ps1 -RestartFunctio
 | `AI_MODEL` | Model for every role. `AI_MODEL_PLAN`, `_FAST`, `_REASONING`, `_GATE`, `_DOMAIN`, `_DISTILL`, `_EVAL_PLAN`, `_JUDGE` override one role, as a comma-separated fallback chain. |
 | `AI_STRUCTURED_OUTPUT` | `json_schema` for Ollama (grammar-constrained JSON), `tools` for providers that honour forced tool calls. |
 | `AI_MAX_TOKENS_PARAM` | `max_tokens`, `max_completion_tokens` (OpenAI gpt-5 / o-series) or `none`. |
-| `AI_MAX_TOKENS_CAP` | Upper bound on every output budget (3072 locally). Prompt + output must fit the model's context window: 8192 tokens for the local `qwen2.5-3b-4threads`. |
+| `AI_MAX_TOKENS_CAP` | Upper bound on every output budget (3072 locally). Prompt + output must fit the model's context window: 8192 tokens for the local `qwen2.5-7b-4threads`. |
 | `AI_COMPACT_OUTPUT` | `true` for small local models: lists capped at 5 items and text fields at 400 characters (both enforced by Ollama's JSON grammar, so a model stuck in a loop has to close the field), short answers requested, long prompt inputs (previous plan, plan under review) cut short. Set `false` for hosted models. |
 | `AI_MIN_TIMEOUT_MS` | Floor for every per-call timeout, including the time a call waits in the Ollama queue (2 hours locally since 10 Nov 2026, `0` for hosted). A call that runs out of it fails the run as `TIMEOUT` (Retry). An existing `supabase\functions\.env` keeps its old value: edit it and run `start-local.ps1 -RestartFunctions`. |
 | `AI_EMBED_MODEL` | Embedding model (`nomic-embed-text` locally, natively 768-d). Empty switches embeddings off. |
 | `AI_EMBED_BASE_URL`, `AI_EMBED_API_KEY` | Separate embeddings endpoint (for chat providers without one, for example the Hugging Face router or the Lovable gateway). |
 | `AI_EMBED_DIMENSIONS` | `true` to request 768-d vectors from OpenAI / Gemini embedding models. |
-| `FEEDBACK_MIN_SIMILARITY` | Cosine floor for retrieving past corrections (0.7 for nomic-embed-text). |
-| `AI_MODEL_PLAN` | Planner-only model chain. Commented out in the template: `qwen2.5-7b-4threads` gives better plans at about a third of the speed (`start-local.ps1` creates the variant once `qwen2.5:7b` is pulled). |
-| `PLAN_REPAIR_ATTEMPTS` | `1` (default): a plan that breaks a refinement limit or whose materials do not fit the hypothesis is generated once more; `0` turns that off (saves one plan's model time). |
+| `FEEDBACK_MIN_SIMILARITY` | Cosine floor for retrieving past corrections (0.7 for nomic-embed-text). The lessons tooltip shows that cosine; the rating-weighted ranking value is stored separately (`applied_feedback[].score`). |
+| `LIT_EMBED_MARGIN`, `LIT_EMBED_MIN_SIMILARITY` | Related-work filter (defaults 0.15 and 0.66, measured for nomic-embed-text): a literature candidate is kept when its embedding is within the margin of the best candidate and above the floor. Another embedding model needs its own values. |
+| `AI_MODEL_FAST`, `AI_MODEL_GATE` | Commented out in the template: `qwen2.5-3b-4threads` for the short calls only (gate, novelty classifier) while the 7B model writes the plan. Faster, but two models are then loaded (about 8 GB instead of 6) and the 3B classifier is the one that called an opposing paper an "exact match". |
+| `PLAN_REPAIR_ATTEMPTS` | `1` (default): a plan with a high-severity finding (a refinement or budget limit not met, materials that do not fit, a changed dose, a missing readout) is generated once more; `0` turns that off (saves one plan's model time). |
 
 Ready-made blocks in `supabase\functions\.env.example`: OpenAI, Google Gemini
 (OpenAI-compatible endpoint), Hugging Face router, and the original Lovable
 AI gateway (restores the original Gemini / GPT-5 per-role routing when no
 `AI_MODEL` is set). The embedding column is `vector(768)`, so any embedding
 model must return 768 dimensions.
+
+### Choosing the local model
+
+The default local model is `qwen2.5-7b-4threads`. It was chosen on 10 Nov
+2026 on what the two candidates got right, not on speed. Both were given
+the app's own gate, novelty and planner prompts with the same retrieved
+papers (harness `model-compare.ts`, raw outputs `compare-3b.json` and
+`compare-7b.json` in `_e2e/ai-research-assistant-fix/round4/` on Gopal's
+PC), the 3B model's six QA round-3 runs through the app were added, and
+every plan was scored by the current automated checks
+(`round5/evaluate-compare.ts`, output `evaluate-compare.out.json`):
+
+| | `qwen2.5-3b-4threads` | `qwen2.5-7b-4threads` |
+|---|---|---|
+| Plans scored | 8 (2 from the harness, 6 QA runs) | 4 (all from the harness) |
+| Plans with a high-severity finding | 7 of 8 | 2 of 4 |
+| High-severity findings in all | 16 | 2 |
+| What they were | materials from another experiment or without the compound (2 plans), compound / cell line / readout reagent used but not listed (7), dose 10 to 500 times off the hypothesis (2), no readout step (1), budget limit not met (3), timeline limit not met (1) | budget limit not met: $13,590 for "under $3,000", with the model's own total written as $1,998 (1); the NAD/NADH assay kit used but not listed (1) |
+| Doses as in the hypothesis | 6 of 8 plans | 4 of 4 |
+| Invented catalog numbers | 5 in one plan (S1000, A1000, T1000, E1000, and CCL-22 for Caco-2) | none: it left the field empty, as the prompt asks when it does not know the number |
+| Novelty classifier, before the automatic correction | metformin: "not found" although three on-topic papers were retrieved; butyrate: "exact match", quoting a paper as reporting "a 25% or greater increase in TEER" when its title says butyrate makes the monolayer leaky | metformin and butyrate: "similar", citing the right papers; NMN: "not found" (corrected to "similar" by the check) |
+| Speed in the harness (Ollama's own timing, other projects idle or nearly) | prompt 17-33 tokens/s, generation 2.3-6.5 tokens/s; a plan of 1,620 tokens 6.6 min | prompt 7-11 tokens/s, generation 3.1-3.6 tokens/s; plans of 1,450-1,820 tokens 9.3-12.5 min; gate 16-56 s; novelty call 3-5 min |
+| Memory while loaded | about 2.5 GB | about 6 GB |
+
+The 3B harness run has only the metformin case: it was stopped before its
+butyrate and NMN plans (its metformin plan alone took 2 h 26 min of wall
+time, nearly all of it waiting behind another project's requests), which
+is why the QA runs stand in for them. "Doses as in the hypothesis" counts
+the plans the dose check did not flag. Four 7B plans are a small sample; the difference in kind (no invented
+numbers, no changed doses, no missing readout) is what decided it.
+
+The 7B model is slower: about twice the time for a complete run (see
+"Known limits"). `AI_MODEL=qwen2.5-3b-4threads` in
+`supabase\functions\.env` brings the faster model back; the checks flag
+what it gets wrong, they do not make it right.
 
 ## 7. Tests
 
@@ -293,8 +367,8 @@ docker run --rm -v "${PWD}:/app" -w /app -e DENO_DIR=/app/supabase/.temp/deno-ca
 
 (With Deno installed locally: `deno test --allow-net --allow-env --allow-read supabase/functions/_shared/ supabase/functions/run-experiment/`.)
 
-Measured on 10 Nov 2026 after the QA round-2 fixes: Vitest 19 files / 73
-tests, Deno 113 tests, ESLint 0 errors (9 warnings), `tsc` and `deno check`
+Measured on 11 Nov 2026 after the QA round-3 fixes: Vitest 21 files / 86
+tests, Deno 165 tests, ESLint 0 errors (9 warnings), `tsc` and `deno check`
 clean. The plan checks have their own Deno suites built from the QA's
 failing plans (`supabase/functions/_shared/planGuards.test.ts` for round 1,
 `planChecksRound2.test.ts` for round 2), and the literature queries and the
@@ -456,7 +530,8 @@ which still points at the deleted hosted project.
   the hypothesis `exact_match` and cites the top methods papers; since QA
   round 2 it no longer fires when the technique is only a readout or the
   comparator of something new.
-- **The novelty verdict check is word-based.** It decides "on-topic" by how
+- **The novelty verdict check is mostly word-based.** After the embedding
+  filter has removed papers far from the hypothesis, it decides "on-topic" by how
   much of the hypothesis' weighted vocabulary a paper's title and abstract
   share (`hypothesisTerms.ts`), not by reading the paper. It catches the
   contradictions the QA found (and keeps "not found" only when nothing
@@ -465,16 +540,34 @@ which still points at the deleted hosted project.
   use (a drug's brand name, a gene's alias) are missed. "Exact match" still
   comes only from the AI classifier (or the canonical rule); the check can
   only downgrade it.
-- **Live SKU check covers Sigma-Aldrich only**, through PubChem (Sigma's
-  own search endpoint no longer accepts plain requests). A catalog number
-  PubChem does not know (antibodies, kits, cell lines) is not flagged. Other
-  suppliers rely on the format rules and the small canonical dictionary.
-  Since QA round 2 a catalog number found wrong is removed from the plan
-  (with a note), not only mentioned to the reviewer, and the planner prompt
-  has no example SKUs left to copy. With `qwen2.5:3b` the plans then carry
-  hardly any catalog numbers: the small model does not know real ones, and
-  the prompt tells it to leave the field out rather than guess. A hosted
-  model fills them in.
+- **Catalog numbers: what "verified" means.** The live lookup covers
+  Sigma-Aldrich only, through PubChem (Sigma's own search endpoint no longer
+  accepts plain requests), for up to eight materials per plan. Besides that,
+  25 common ATCC cell lines and about 25 dictionary products can be
+  confirmed. Every other number is shown as **unverified** (since QA round
+  3; before, a number PubChem did not know was accepted silently and an
+  invented "Sigma S1000" or "ATCC CCL-22" for Caco-2 appeared as real).
+  "Unverified" does not mean wrong: Sigma does not deposit antibodies, kits
+  or cell lines in PubChem, and Thermo Fisher, Corning, Promega and the
+  other suppliers have no public catalogue to search, so their numbers can
+  never be verified here. Placeholder-like numbers (a letter or two and a
+  round number, a repeated digit, "123456") are removed outright. With the
+  local model most numbers end up unverified or removed: it does not know
+  real catalogue numbers. A hosted model writes more real ones, which are
+  then verified where a lookup exists.
+- **The related-work filter has a narrow margin.** `nomic-embed-text`
+  compresses similarities: on the QA's six hypotheses (probe
+  `embed-probe.ts`, 10 Nov 2026) every retrieved biology paper scored
+  0.68-0.88, the on-topic ones 0.71-0.88, the QA's three irrelevant NMN
+  papers 0.70, 0.65 and 0.51 (titles only) against an on-topic best of 0.86.
+  The relative cut (best minus 0.15, at least 0.66) drops all three and none
+  of the on-topic papers of the other five hypotheses, but an irrelevant
+  paper only 0.15 below the best still gets through, and papers that share
+  only the material (3D-printed polylactic acid for a Dsup-coating
+  hypothesis, 0.68-0.75) cannot be told apart from on-topic ones by the
+  embedding; the word coverage then decides "on-topic". On the busy CPU one
+  embedding request for 13 papers took 85-150 s while a plan was being
+  generated in the same Ollama.
 - **Scheduled jobs.** Locally pg_cron runs only the two jobs the migrations
   create (stale-run cleanup every 5 minutes, rate-limit cleanup daily). The
   hosted project's other schedules (nightly house-rule distillation,
