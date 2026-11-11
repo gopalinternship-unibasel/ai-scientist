@@ -60,6 +60,17 @@ const RULES: Array<[RegExp, CanonicalDomain]> = [
 export function normalizeDomain(...inputs: Array<string | null | undefined>): CanonicalDomain {
   const blob = inputs.filter(Boolean).join(" ").toLowerCase();
   if (!blob.trim()) return "other";
+  // An input that is a canonical name on its own wins: the run's stored
+  // domain is passed next to the hypothesis, and joined together
+  // ("cell-biology <hypothesis>") they matched no name, so feedback on a
+  // cell-biology run was stored under "other" (QA round 4).
+  for (const raw of inputs) {
+    const one = (raw ?? "").trim().toLowerCase();
+    if (!one) continue;
+    for (const d of DOMAINS) {
+      if (d !== "other" && (one === d || one.replace(/[\s_]+/g, "-") === d)) return d;
+    }
+  }
   for (const d of DOMAINS) {
     if (blob === d || blob.replace(/[\s_]+/g, "-") === d) return d;
   }

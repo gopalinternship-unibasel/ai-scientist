@@ -69,6 +69,14 @@ const RULES: Array<[RegExp, CanonicalDomain]> = [
 export function normalizeDomainStrict(...inputs: Array<string | null | undefined>): CanonicalDomain | null {
   const blob = inputs.filter(Boolean).join(" ").toLowerCase();
   if (!blob.trim()) return null;
+  // An input that is a canonical name on its own wins (see the client mirror).
+  for (const raw of inputs) {
+    const one = (raw ?? "").trim().toLowerCase();
+    if (!one) continue;
+    for (const d of DOMAINS) {
+      if (d !== "other" && (one === d || one.replace(/[\s_]+/g, "-") === d)) return d;
+    }
+  }
   for (const d of DOMAINS) {
     if (blob === d || blob.replace(/[\s_]+/g, "-") === d) return d;
   }

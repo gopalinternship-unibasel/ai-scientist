@@ -218,8 +218,8 @@ by the check; "Check" findings are for the reader:
 | Readout (Check) | High when no protocol step does the measurement the hypothesis names ("measured by Oil Red O staining"). Medium when the hypothesis is about intracellular levels but the protocol measures the culture supernatant and never lyses the cells. |
 | Suppliers (Check) | Medium when a material comes from a specialist supplier that does not sell that kind of item (antibodies from IDT, blood from Addgene). |
 | Protocol steps (Check) | High severity when at least half of the steps are only material lists. Medium when the protocol's step durations add up to more than the timeline, and when step durations are far longer than the work their text describes ("2 weeks" for "Incubate for 24 h"; steps that run "until ..." or repeat are not compared). |
-| Budget caps (Check) | High when the hypothesis itself states a budget cap ("with a total budget under $5,000") and the total is above it. The finding names the line items and the excess. |
-| Refinement limits (Check) | A budget cap ("under $3,000", "cut the budget by 30%") or timeline cap ("8 weeks", "within 2 months") in the instruction is sent to the model as a hard limit and checked on the new plan: the budget against the total (the finding names the line items and the excess), the timeline against the phases and against the protocol step durations. Only a limit on the whole plan counts: "Extend the treatment to 2 weeks" or "Shorten the staining to 2 days" is not a timeline cap, and "raise n to 12" is not a budget. A limit holds for later refinements of the same chain too (v2 "under $3,000", then v3 "shorten the timeline to 2 weeks": v3 is still checked against $3,000, and the finding says "An earlier refinement of this plan asked for ..."), until a refinement states a new number or gives it up ("ignore the budget", "increase the budget", "extend the timeline", "take as long as needed"). |
+| Budget caps (Check) | High when the hypothesis itself states a budget cap ("with a total budget under $5,000", "the budget is capped at $5,000", "without exceeding a budget of 5000 dollars") and the total is above it. The finding names the line items and the excess. |
+| Refinement limits (Check) | A budget cap or timeline cap in the instruction is sent to the model as a hard limit and checked on the new plan. The budget cap is read from ordinary wording: "under $3,000", "The budget should be $3,000 or less.", "Total budget: $3,000 maximum.", "I only have $3,000 for this.", "The budget is 3000 dollars.", "3 000 USD", "$3.000", "three thousand dollars", a share of the refined plan ("cut the budget by 30%", "halve the budget", "cut the budget in half"), and another currency ("under CHF 3,000": the number is compared as US dollars and the finding says so). "Make it cheaper" or "reduce the budget" without a figure means the total must come out below the plan it refines. A timeline cap is read the same way ("8 weeks", "within 2 months", "2 weeks or less", "within one month", "halve the timeline"). The checks: the budget against the total (the finding names the line items and the excess), the timeline against the phases and against the protocol step durations. Only a limit on the whole plan counts: "Extend the treatment to 2 weeks" or "Shorten the staining to 2 days" is not a timeline cap, and "raise n to 12" is not a budget. A limit holds for later refinements of the same chain too (v2 "under $3,000", then v3 "shorten the timeline to 2 weeks": v3 is still checked against $3,000, and the finding says "An earlier refinement of this plan asked for ..."), until a refinement states a new number or gives it up ("ignore the budget", "increase the budget", "extend the timeline", "take as long as needed"). |
 
 A plan with a high-severity finding (materials, missing compound / cell line /
 readout reagent, missing readout step, doses, material-list steps, budget
@@ -367,8 +367,8 @@ docker run --rm -v "${PWD}:/app" -w /app -e DENO_DIR=/app/supabase/.temp/deno-ca
 
 (With Deno installed locally: `deno test --allow-net --allow-env --allow-read supabase/functions/_shared/ supabase/functions/run-experiment/`.)
 
-Measured on 11 Nov 2026 after the QA round-3 fixes: Vitest 21 files / 86
-tests, Deno 165 tests, ESLint 0 errors (9 warnings), `tsc` and `deno check`
+Measured on 11 Nov 2026 after the QA round-4 fixes: Vitest 22 files / 90
+tests, Deno 175 tests, ESLint 0 errors (9 warnings), `tsc` and `deno check`
 clean. The plan checks have their own Deno suites built from the QA's
 failing plans (`supabase/functions/_shared/planGuards.test.ts` for round 1,
 `planChecksRound2.test.ts` for round 2), and the literature queries and the
@@ -599,3 +599,17 @@ which still points at the deleted hosted project.
   and push (nothing has been pushed).
 - The original hosted project and the live site `ai-scientist.lovable.app`
   are gone; bringing them back needs his Lovable account.
+
+- **Left open after QA round 4 (11 Nov 2026), all minor.**
+  - A catalog number that the model writes into a material's *name or notes*
+    ("Metformin hydrochloride (Sigma S1000)") is not examined; only the
+    Cat # column and the protocol steps are. No real run did this with an
+    invented number.
+  - A dose with the unit spelled out ("10 millimolar metformin") is not read
+    as a dose.
+  - The pipeline version was not raised for the last check changes, so one
+    local test run made between them (42c080d0) still shows text the current
+    checks would change. New runs are not affected.
+  - The novelty verdict for a hypothesis whose anchor words also describe
+    unrelated work (the Dsup / PLA scaffold example) can still be "exact
+    match" when the classifier says so.

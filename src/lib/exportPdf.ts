@@ -5,6 +5,7 @@ import { jsPDF } from "jspdf";
 import type { ExperimentPlan, LiteratureQC } from "@/lib/samples";
 import { budgetTotal, checkLabel, costLineItems, planCheckNotes, shownBudget, verifiedSource } from "@/lib/planIntegrity";
 import { catalogDisplay } from "@/lib/catalogStatus";
+import { madeByOlderPipeline } from "../../supabase/functions/_shared/pipelineVersion";
 
 const PAGE = { w: 210, h: 297 }; // A4 mm
 const M = 18;                    // margin
@@ -214,6 +215,10 @@ export function exportPlanToPdf(
     ["Version", `v${version}`],
     ["Generated", new Date().toLocaleDateString()],
   ];
+  // The run page says this above an older run; the PDF did not (QA round 4).
+  if (madeByOlderPipeline(plan.verification as { pipeline_version?: unknown } | undefined)) {
+    meta.push(["Note", "Made by an earlier version of the checks; not recomputed"]);
+  }
   for (const [k, v] of meta) {
     doc.setFont("helvetica", "bold"); doc.text(k.toUpperCase(), M, ctx.y);
     doc.setFont("helvetica", "normal"); doc.text(String(v), M + 45, ctx.y);

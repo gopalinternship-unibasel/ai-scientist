@@ -430,15 +430,19 @@ const RunPage = () => {
           </div>
         )}
 
-        {run.status === "done" && madeByOlderPipeline(run.qc as { pipeline_version?: unknown } | null)
-          && madeByOlderPipeline(run.plan?.verification as { pipeline_version?: unknown } | undefined) && (
+        {/* Also on a failed run that got as far as the literature check: its
+            verdict ("NOT FOUND - LIKELY NOVEL") is still on the page (run
+            b015232c, QA round 4). */}
+        {(run.status === "done" || (run.status === "failed" && !!run.qc))
+          && madeByOlderPipeline(run.qc as { pipeline_version?: unknown } | null)
+          && (!run.plan || madeByOlderPipeline(run.plan?.verification as { pipeline_version?: unknown } | undefined)) && (
           <div data-testid="older-pipeline" className="mb-6 rounded-md border border-warning/40 bg-warning/10 p-4 no-print">
             <h2 className="font-mono text-[11px] uppercase tracking-wider text-warning">Made by an earlier version</h2>
             <p className="mt-1 text-sm text-foreground/80">
               This run was made before the current literature and plan checks (10 Nov 2026). Its novelty verdict,
               references and plan checks were not recomputed and may be wrong{run.version > 1 ? "" : "; the same hypothesis is no longer answered from this copy"}.
             </p>
-            {run.version === 1 && !shareToken && (
+            {run.status === "done" && run.version === 1 && !shareToken && (
               <Button variant="outline" size="sm" className="mt-3 gap-2" onClick={onRunAgain} disabled={retrying}>
                 {retrying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
                 Run again with the current checks

@@ -25,6 +25,7 @@ import { SectionFeedback, type FeedbackSection } from "@/components/SectionFeedb
 import { Sparkles } from "lucide-react";
 import { lessonMatchLabel } from "@/lib/lessons";
 import { catalogDisplay } from "@/lib/catalogStatus";
+import { timelineTotalLabel } from "@/lib/timelineTotal";
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from "@/components/ui/tooltip";
@@ -393,7 +394,7 @@ export const ExperimentPlanView = ({
             <Stat
               label="Timeline"
               value={`${plan.timeline.length} phases`}
-              sub={plan.timeline.map((p) => p.duration).slice(0, 1)[0]}
+              sub={timelineTotalLabel(plan.timeline)}
             />
             <Stat label="Protocol steps" value={`${plan.protocol.length}`} sub={`${plan.materials.length} reagents`} />
           </div>

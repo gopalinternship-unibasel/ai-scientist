@@ -279,8 +279,25 @@ function abbreviates(short: string, words: string): boolean {
   return true;
 }
 
+/**
+ * The other everyday name of an acid or its salt: palmitate / palmitic acid,
+ * butyrate / butyric acid. A table that lists "Palmitic acid" for a protocol
+ * that doses palmitate was reported as missing it (QA round 4, probe 18).
+ */
+function acidSaltForms(substance: string): string[][] {
+  if (/^[a-z]{4,}ate$/.test(substance) && !/(?:phosph|sulf|sulph)ate$/.test(substance)) return [[substance.replace(/ate$/, "ic"), "acid"]];
+  if (/^[a-z]{4,}ic$/.test(substance)) return [[substance.replace(/ic$/, "ate")]];
+  return [];
+}
+
+/** "oro" for "Oil Red O staining": the initials of a readout's own words, when there are at least three. */
+function readoutAcronym(phrase: string): string | null {
+  const words = norm(phrase).split(/\s+/).map((w) => w.replace(/[^a-z0-9]/g, "")).filter((w) => w && !READOUT_GENERIC.has(w));
+  return words.length >= 3 ? words.map((w) => w[0]).join("") : null;
+}
+
 function keyFor(substance: string, hypothesis: string): SubstanceKey {
-  const forms: string[][] = [[substance]];
+  const forms: string[][] = [[substance], ...acidSaltForms(substance)];
   // "nicotinamide mononucleotide (NMN)": the acronym in brackets is another
   // spelling. Only when it abbreviates those words: in "2 mM butyrate to
   // raise resistance (TEER)" the bracket belongs to the resistance.
@@ -488,6 +505,9 @@ export function readoutMissing(hypothesis: string, steps: { title?: string; desc
   if (!r || !Array.isArray(steps) || steps.length === 0) return null;
   const text = steps.map((s) => `${s?.title ?? ""} ${s?.description ?? ""}`).join(" ");
   if (textHas(wordSet(text), r.terms)) return null;
+  // "Stain with ORO" does the Oil Red O readout.
+  const short = readoutAcronym(r.phrase);
+  if (short && wordSet(text).has(short)) return null;
   // "Measure TEER with an EVOM": the measured quantity's acronym from the
   // hypothesis ("transepithelial electrical resistance (TEER)") in a step
   // that measures counts too. The compound's own acronym (NMN) does not.
@@ -513,7 +533,7 @@ const COMMON_REAGENTS: Array<{ forms: string[][]; label: string }> = [
   { forms: [["hoechst"]], label: "Hoechst" },
   { forms: [["mtt"]], label: "MTT" },
   { forms: [["crystal", "violet"]], label: "crystal violet" },
-  { forms: [["oil", "red"]], label: "Oil Red O" },
+  { forms: [["oil", "red"], ["oro"]], label: "Oil Red O" },
   { forms: [["transwell"]], label: "Transwell inserts" },
   { forms: [["matrigel"]], label: "Matrigel" },
   { forms: [["collagen"]], label: "collagen" },
@@ -618,7 +638,9 @@ export function missingMaterials(
   const r = hypothesisReadout(hypothesis);
   // A kit is listed when the table names a distinctive word of it ("Enzymatic NAD+ Assay Kit" for "enzymatic cycling assay").
   const listedLoose = (terms: string[]) => textHas(listed, terms) || terms.some((t) => t.length >= 5 && (listed.has(t) || listed.has(stem(t))));
-  if (r?.reagent && textHas(protocol, r.terms) && !listedLoose(r.terms)) add(r.phrase);
+  // "ORO staining solution" lists the Oil Red O stain.
+  const acronym = r ? readoutAcronym(r.phrase) : null;
+  if (r?.reagent && textHas(protocol, r.terms) && !listedLoose(r.terms) && !(acronym && listed.has(acronym))) add(r.phrase);
 
   const other: string[] = [];
   for (const c of COMMON_REAGENTS) {

@@ -318,7 +318,7 @@ serve(async (req) => {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-    const hypothesis = stripCtl(rawHypothesis).trim();
+    let hypothesis = stripCtl(rawHypothesis).trim();
     const ownerToken = typeof owner_token === "string" ? stripCtl(owner_token).slice(0, 100) : null;
 
     // Optional refinement parameters (when refining a previous plan).
@@ -326,6 +326,20 @@ serve(async (req) => {
       ? rawParentId : null;
     const refinementInstruction = typeof rawRefinement === "string" && rawRefinement.trim().length > 0
       ? stripCtl(rawRefinement).trim().slice(0, 500) : null;
+    // A refinement needs both parts. Until QA round 4 a request with a
+    // parent and a blank instruction (or an instruction and a malformed
+    // parent id) silently started a NEW first run instead.
+    const asksRefinement = (rawParentId !== undefined && rawParentId !== null && rawParentId !== "")
+      || (rawRefinement !== undefined && rawRefinement !== null && rawRefinement !== "");
+    if (asksRefinement && !(parentRunId && refinementInstruction)) {
+      return new Response(JSON.stringify({
+        error: !parentRunId
+          ? "A refinement needs the id of the run it refines (parent_run_id)."
+          : "A refinement needs an instruction (refinement_instruction).",
+      }), {
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
     const isRefinement = !!(parentRunId && refinementInstruction);
 
     // Deterministic feasibility pre-screen — block hypotheses that violate
@@ -392,7 +406,7 @@ serve(async (req) => {
     if (isRefinement) {
       const { data: parent } = await supabase
         .from("runs")
-        .select("plan, qc, version, hypothesis_hash, owner_user_id, owner_token, domain, parent_run_id")
+        .select("plan, qc, version, hypothesis, hypothesis_hash, owner_user_id, owner_token, domain, parent_run_id")
         .eq("id", parentRunId)
         .maybeSingle();
       if (!parent || !parent.plan) {
@@ -408,6 +422,12 @@ serve(async (req) => {
         return new Response(JSON.stringify({ error: "You can only refine your own experiments." }), {
           status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
+      }
+      // A refinement keeps its parent's hypothesis: the text in the request
+      // is not gated for refinements, so a different one must not replace it
+      // (QA round 4: "x refine attempt here" was stored as v4 of a real run).
+      if (typeof parent.hypothesis === "string" && parent.hypothesis.trim()) {
+        hypothesis = parent.hypothesis;
       }
       parentRun = {
         plan: parent.plan, qc: parent.qc,

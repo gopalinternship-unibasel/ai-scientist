@@ -15,12 +15,18 @@ interface RunRow {
   created_at: string;
 }
 
+const PAGE_SIZE = 50;
+
 const MyRuns = () => {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const [runs, setRuns] = useState<RunRow[] | null>(null);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "done" | "failed" | "in_flight">("all");
+  // Runs are loaded a page at a time. Until QA round 4 the list stopped at
+  // the newest 50 with no way to reach older ones.
+  const [limit, setLimit] = useState(PAGE_SIZE);
+  const [total, setTotal] = useState<number | null>(null);
 
   const filtered = useMemo(() => {
     if (!runs) return null;
@@ -40,13 +46,16 @@ const MyRuns = () => {
 
     let active = true;
     const load = async () => {
-      const { data } = await supabase
+      const { data, count } = await supabase
         .from("runs")
-        .select("id,hypothesis,status,created_at")
+        .select("id,hypothesis,status,created_at", { count: "exact" })
         .eq("owner_user_id", user.id)
         .order("created_at", { ascending: false })
-        .limit(50);
-      if (active) setRuns((data ?? []) as RunRow[]);
+        .limit(limit);
+      if (active) {
+        setRuns((data ?? []) as RunRow[]);
+        setTotal(typeof count === "number" ? count : null);
+      }
     };
     load();
 
@@ -61,7 +70,7 @@ const MyRuns = () => {
       .subscribe();
 
     return () => { active = false; supabase.removeChannel(channel); };
-  }, [user, authLoading, navigate]);
+  }, [user, authLoading, navigate, limit]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -174,6 +183,15 @@ const MyRuns = () => {
               </li>
             ))}
           </ul>
+        )}
+
+        {runs && total !== null && total > runs.length && (
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground" data-testid="runs-more">
+            <span>Showing the newest {runs.length} of {total} experiments. Search and filters apply to the ones shown.</span>
+            <Button variant="outline" size="sm" onClick={() => setLimit((n) => n + PAGE_SIZE)}>
+              Show {Math.min(PAGE_SIZE, total - runs.length)} more
+            </Button>
+          </div>
         )}
       </main>
     </div>
