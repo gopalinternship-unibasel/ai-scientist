@@ -24,7 +24,9 @@ safety/feasibility checks, and a structured AI critique.**
 > **The hosted demo is offline.** It ran on a Lovable Cloud project that no
 > longer exists, so `ai-scientist.lovable.app` no longer works.
 > [`RUNNING.md`](./RUNNING.md) runs the whole system on one PC (local
-> Supabase stack, local or hosted model).
+> Supabase stack, local or hosted model). Section 11, "Live deployment",
+> describes the hosted setup (GitHub Pages and a Supabase cloud project) and
+> the steps only the owner can do.
 
 ---
 

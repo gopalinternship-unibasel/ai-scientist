@@ -14,6 +14,8 @@ guide runs the whole system on one Windows PC instead:
   default is a local Ollama (free, no key); a hosted provider is one env
   change away (see "Switching the AI provider").
 
+To put the app on the internet instead, see section 11, "Live deployment".
+
 Follow the steps in order. Every command is for **PowerShell**, run from
 the project folder.
 
@@ -366,6 +368,9 @@ docker run --rm -v "${PWD}:/app" -w /app -e DENO_DIR=/app/supabase/.temp/deno-ca
 
 (With Deno installed locally: `deno test --allow-net --allow-env --allow-read supabase/functions/_shared/ supabase/functions/run-experiment/`.)
 
+Measured on 14 Nov 2026 after the live-deployment changes: Vitest 24 files / 97 tests, Deno 205 tests,
+ESLint 0 errors (9 warnings), `tsc` and `deno check` clean.
+
 Measured on 11 Nov 2026 after the QA round-4 fixes and their review: Vitest 22 files / 90
 tests, Deno 186 tests, ESLint 0 errors (9 warnings), `tsc` and `deno check`
 clean. The plan checks have their own Deno suites built from the QA's
@@ -619,3 +624,97 @@ which still points at the deleted hosted project.
   - The novelty verdict for a hypothesis whose anchor words also describe
     unrelated work (the Dsup / PLA scaffold example) can still be "exact
     match" when the classifier says so.
+
+## 11. Live deployment
+
+This section is for putting the app on the internet. The local way of
+running it (sections 1 to 5) does not change: every hosted setting below is
+optional, and without it the code behaves as it does locally.
+
+### The pieces
+
+| Piece | What it is | Where it lives |
+|---|---|---|
+| Frontend | The Vite build, a static site | GitHub Pages project site, https://gopalinternship-unibasel.github.io/ai-scientist/ , built and published by `.github/workflows/pages.yml` |
+| Backend | Database, sign-in, realtime and the five edge functions | One new Supabase cloud project (free plan, region Zurich, eu-central-2) |
+| AI | Chat and embeddings, reached through an OpenAI-compatible URL | A hosted AI provider. Which one is not decided; everything is set through function settings, see section 6 |
+| Checks | Daily test of the live site | `.github/workflows/smoke.yml` |
+
+Limits of the free plan that shape the setup: an edge function may run
+150 seconds of wall-clock time (background work counts) and 2 seconds of CPU
+per request. A run that is cut off is marked failed at once by a shutdown
+handler in `run-experiment` ("server time limit reached, press Retry"); the
+cleanup job (`cleanup_stale_runs`, every 5 minutes) is the fallback. Supabase's
+built-in mailer only delivers to the project's own team members, so "Confirm
+email" must be off and password-reset emails do not reach other people.
+
+### Settings
+
+Function settings go to the Supabase project as secrets. Non-secret ones can
+be put in `supabase\functions\.env.cloud` (not tracked) and loaded with
+`supabase secrets set --env-file supabase\functions\.env.cloud`. Key-like
+values are set by the owner in the dashboard (Edge Functions, Secrets) and
+never go into a file in this repository.
+
+| Setting | Where | Meaning |
+|---|---|---|
+| `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEYS`, `SUPABASE_SECRET_KEYS`, `SUPABASE_DB_URL` | Injected by Supabase | New projects get the key pair as JSON (the key is under `"default"`). The functions read `_shared/supabaseKeys.ts`: the old names `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` win when present (local stack), otherwise the new ones are used. Names starting with `SUPABASE_` cannot be set by hand. |
+| `AI_BASE_URL`, `AI_API_KEY` | Function secrets | OpenAI-compatible base URL without a trailing slash, and the bearer key (secret, set by the owner). |
+| `AI_MODEL`, `AI_MODEL_<ROLE>` | Function secrets | Default model and per-role chains (comma separated). Roles: PLAN, FAST, REASONING, GATE, DOMAIN, DISTILL, EVAL_PLAN, JUDGE. Use fast, small models for GATE, DOMAIN and FAST: their time budgets are 6, 5 and 20 seconds. |
+| `AI_STRUCTURED_OUTPUT`, `AI_MAX_TOKENS_PARAM`, `AI_MAX_TOKENS_CAP`, `AI_COMPACT_OUTPUT`, `AI_MIN_TIMEOUT_MS` | Function secrets | As in section 6. Hosted start values: `tools`, `max_tokens`, about 6000, `false`, `0`. |
+| `AI_REASONING_EFFORT` | Function secrets, optional | For example `low`. Sent as `reasoning_effort` on every chat request. Unset: nothing is sent. |
+| `AI_EMBED_MODEL`, `AI_EMBED_BASE_URL`, `AI_EMBED_API_KEY` | Function secrets | Embedding model and, if different from chat, its URL and key. Empty model: embeddings off, the app runs in its degraded mode. |
+| `AI_EMBED_DIMENSIONS` | Function secrets, optional | `true` asks the provider for 768-dimensional vectors; a whole number asks for that many. The database column is `vector(768)`, so any other number needs a migration of `plan_feedback.embedding` and the two match functions first. Vectors of the wrong size are rejected. |
+| `LIT_EMBED_MIN_SIMILARITY` (default 0.66), `LIT_EMBED_MARGIN` (0.15), `FEEDBACK_MIN_SIMILARITY` (0.55), `EXACT_EMBED_MIN` (0.78) | Function secrets, optional | Similarity thresholds, numbers between 0 and 1. The defaults were measured for the local embedding model; set them again when the model changes. A lower `LIT_EMBED_MIN_SIMILARITY` (about 0.5) keeps the related-work filter from dropping every paper while the values are not calibrated. |
+| `PLAN_REPAIR_ATTEMPTS` | Function secrets | `0` at launch: no second plan attempt, which keeps a run inside 150 seconds. |
+| `RUN_LIMIT_GLOBAL_PER_DAY`, `RUN_LIMIT_ANON_PER_DAY`, `RUN_LIMIT_USER_PER_DAY` | Function secrets | Daily caps on new AI runs: over all visitors, per visitor address without sign-in, per signed-in user. Start values 40, 3 and 10. A cap that is not set does not apply; when none is set the local rule (100 runs per hour per user or address) stays. Only runs that call the AI count: a cached plan is replayed free and is not counted; a refinement counts. A refused run gets HTTP 429 with a plain message. |
+| `SEMANTIC_SCHOLAR_API_KEY` | Function secrets, optional | As in section 10. |
+| `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `VITE_SUPABASE_PROJECT_ID` | GitHub repository variables | Public values of the Supabase project. The publishable key ships in the browser bundle by design. Variables win over `.env` in the build. |
+| `VITE_BASE_PATH` | Build setting (`pages.yml` sets `/ai-scientist/`) | Base path of the site. Unset: `/`. In Git Bash set `MSYS_NO_PATHCONV=1` before a local build with it, or the value is turned into a Windows path. |
+| `VITE_HOSTED_DEMO` | Build setting (`pages.yml` sets `true`) | Shows one line on the start page: a hosted demo with a daily limit, and the hypothesis goes to a hosted AI provider. Unset locally: no line. |
+| `SMOKE_HYPOTHESIS` | GitHub repository variable, optional | Exact text of one hypothesis that a real run has already planned. The weekly step of the smoke check replays it from the cache. |
+| `VITE_LOVABLE_OAUTH` | Not set | The Google button needs Lovable hosting. |
+
+The tracked `.env` holds placeholders. Real values come from
+`.env.development.local` (local stack, written by `start-local.ps1`) or from
+the GitHub variables (hosted build). Never commit a real key.
+
+### Order of steps
+
+Marked **owner** where only the repository owner can do it.
+
+1. Code and workflows are in the repository (this branch). Run the checks in section 7.
+2. **Owner:** create the AI provider key and keep it out of chat and files.
+3. **Owner:** create the Supabase project (name `ai-scientist`, region Zurich) with a database password only the owner knows. Note the project ref.
+4. **Owner:** in this folder run `supabase link --project-ref <ref>`, then `supabase db push --remote --dry-run` (23 migrations expected), then `supabase db push --remote`. Do not use `--include-seed` or `--include-roles`. If a migration fails with "must be owner of table messages", stop: two older migrations touch `realtime.messages` and need a follow-up migration plus `supabase migration repair`.
+5. Write the non-secret settings to `supabase\functions\.env.cloud` and run `supabase secrets set --env-file supabase\functions\.env.cloud`.
+6. **Owner:** in the dashboard (Edge Functions, Secrets) add `AI_API_KEY`, and `SEMANTIC_SCHOLAR_API_KEY` if wanted.
+7. `supabase functions deploy --use-api` deploys all five functions with `verify_jwt = false` from `supabase/config.toml` (each checks its caller in code). Check `supabase functions list`. Never run `supabase config push` with this file: it holds local URLs.
+8. **Owner (or with the owner's go-ahead in the browser):** Authentication, URL Configuration: Site URL `https://gopalinternship-unibasel.github.io/ai-scientist/`, redirect URL `https://gopalinternship-unibasel.github.io/ai-scientist/**`. Authentication, Sign In / Providers, Email: turn "Confirm email" off.
+9. Set the three `VITE_SUPABASE_*` repository variables (`gh variable set ...`, without echoing the key) and switch Pages to "GitHub Actions" (repository Settings, Pages).
+10. **Owner:** merge to `main`. `pages.yml` runs on the push; while the variables are missing it only prints a notice and publishes nothing.
+11. **Owner:** straight after the first deploy, before sharing the link, sign up at `/ai-scientist/auth` and press the claim-admin button on `/ai-scientist/admin`. The first account that asks becomes admin.
+12. Make one real run. Check: status done in under 150 seconds; `qc.related_filter.method` is `embedding` (if it says words only, the provider did not return vectors of the right size); the function logs show no wall-clock or CPU shutdown; the log line `forwarding_headers` shows which header carries the visitor address.
+13. Run `smoke.yml` by hand (Actions, Run workflow) and check the deep link, share link, refinement, PDF export and sign-in in the browser. Optionally set `SMOKE_HYPOTHESIS` to the text of step 12.
+14. **Owner:** keep the repository active. GitHub switches scheduled workflows off after 60 days without activity; the last step of `smoke.yml` enables the workflow again through the API on every run, and a push or the link in GitHub's email also works. Whether that call restarts the 60-day clock has not been verified.
+
+### Smoke check
+
+`smoke.yml` runs daily at 05:23 UTC and on demand. It reads only the public
+variables. It checks: the Pages root answers 200 and its first script loads;
+a deep link returns the app shell (status 404 by design of Pages); the Auth
+service is healthy; a REST query on `runs` returns a JSON array (a real
+database query); `GET run-experiment` returns numeric `limit`, `used` and
+`remaining`. On Mondays and on manual runs, when `SMOKE_HYPOTHESIS` is set, it
+posts that text and expects a cached plan. While the variables are missing
+the job ends with a notice.
+
+### If runs are cut off at 150 seconds
+
+Start with `PLAN_REPAIR_ATTEMPTS=0`, small fast models for the short roles,
+`AI_REASONING_EFFORT=low` and an `AI_MAX_TOKENS_CAP` of about 6000. Next step,
+not built: split `processRun` into stages (literature and novelty, plan,
+critique) that call `run-experiment` again with the run id and the secret key,
+so each stage gets its own 150 seconds and 2 seconds of CPU.
+`eval-harness` and full house-rule distillation cannot finish in one worker
+on the free plan; keep them to the admin and use `pilot_size=1`.
