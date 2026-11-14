@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.104.1";
 import { publicKey, serviceKey } from "../_shared/supabaseKeys.ts";
 import {
   DAY_MINUTES, decideRunLimit, hostedCapsActive, quotaFor, resolveRunCaps, RUN_KIND, type RunUsage,

@@ -8,7 +8,7 @@
 // Like feedbackPromptFragment, this block is framed as ADVISORY DATA so
 // imperative phrasing inside cannot hijack the planner.
 
-import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.104.1";
 
 type SbClient = SupabaseClient;
 

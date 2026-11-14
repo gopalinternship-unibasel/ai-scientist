@@ -14,7 +14,7 @@
 //   - no persistence (no runs row, no rate limit, no idempotency cache)
 //   - no post-plan critique / SKU verify (judge is the eval signal)
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.104.1";
 import { corsHeaders } from "../_shared/cors.ts";
 import { publicKey, serviceKey } from "../_shared/supabaseKeys.ts";
 import { callAIWithFallback } from "../_shared/ai-fallback.ts";

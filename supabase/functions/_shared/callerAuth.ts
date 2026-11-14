@@ -12,7 +12,7 @@
 // A JWT is only trusted after auth.getUser() validates it with the auth
 // server; its claims are never read unverified.
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.104.1";
 import { publicKey, serviceKey as serviceKeyValue } from "./supabaseKeys.ts";
 
 export interface Caller {

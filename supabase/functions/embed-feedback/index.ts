@@ -13,7 +13,7 @@
 // caller could trigger embedding work on another user's feedback).
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.104.1";
 import { corsHeaders } from "../_shared/cors.ts";
 import { serviceKey } from "../_shared/supabaseKeys.ts";
 import { embedText, embeddingsEnabled } from "../_shared/embeddings.ts";

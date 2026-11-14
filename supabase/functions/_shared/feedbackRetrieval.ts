@@ -13,7 +13,7 @@
 import { embedText } from "./embeddings.ts";
 import { fractionSetting } from "./thresholds.ts";
 
-import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.104.1";
 
 type SbClient = SupabaseClient;
 
