@@ -39,8 +39,13 @@
 //   AI_EMBED_API_KEY       embeddings key (defaults to AI_API_KEY)
 //   AI_EMBED_MODEL         embedding model; empty disables embeddings
 //   AI_EMBED_DIMENSIONS    "true" sends `dimensions: 768` (OpenAI
-//                          text-embedding-3-*, Gemini); leave unset for models
-//                          that are natively 768-d (nomic-embed-text)
+//                          text-embedding-3-*, Gemini); a whole number sends
+//                          that dimension instead (the database column is
+//                          vector(768), so any other value needs a migration
+//                          first); leave unset for models that are natively
+//                          768-d (nomic-embed-text)
+//   AI_REASONING_EFFORT    optional, e.g. "low": sent as `reasoning_effort` on
+//                          every chat request (models that think by default)
 //
 // When AI_BASE_URL points at the Lovable gateway and no AI_MODEL* override is
 // set, the original per-role Gemini/GPT-5 chains are used unchanged.
@@ -59,12 +64,16 @@ export interface AIConfig {
   maxTokensCap: number;
   minTimeoutMs: number;
   compact: boolean;
+  /** Sent as reasoning_effort on every chat request when set. */
+  reasoningEffort: string | null;
   chains: Record<AIRole, string[]>;
   embed: {
     baseUrl: string;
     apiKey: string | null;
     model: string | null;
     sendDimensions: boolean;
+    /** Dimension requested from the model and expected back. */
+    dimensions: number;
   };
 }
 
@@ -103,6 +112,17 @@ function isLocalUrl(url: string): boolean {
   return /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\]|host\.docker\.internal|ollama)(:\d+)?(\/|$)/i.test(url);
 }
 
+export const DEFAULT_EMBED_DIMENSIONS = 768;
+
+/** AI_EMBED_DIMENSIONS: "true" asks for 768, a whole number asks for that many, anything else sends nothing. */
+export function parseEmbedDimensions(v: string | undefined): { send: boolean; dimensions: number } {
+  const t = clean(v)?.toLowerCase() ?? "";
+  if (/^(1|true|yes)$/.test(t)) return { send: true, dimensions: DEFAULT_EMBED_DIMENSIONS };
+  const n = Number(t);
+  if (t && Number.isInteger(n) && n > 1) return { send: true, dimensions: n };
+  return { send: false, dimensions: DEFAULT_EMBED_DIMENSIONS };
+}
+
 /** Pure resolver — takes an env map so it can be unit-tested. */
 export function resolveAIConfig(env: Env): AIConfig {
   const baseUrl = (clean(env.AI_BASE_URL) ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
@@ -130,6 +150,7 @@ export function resolveAIConfig(env: Env): AIConfig {
 
   const embedBase = (clean(env.AI_EMBED_BASE_URL) ?? baseUrl).replace(/\/+$/, "");
   const embedModel = clean(env.AI_EMBED_MODEL) ?? null;
+  const embedDims = parseEmbedDimensions(env.AI_EMBED_DIMENSIONS);
 
   return {
     baseUrl,
@@ -139,12 +160,14 @@ export function resolveAIConfig(env: Env): AIConfig {
     maxTokensCap: Number.isFinite(cap) && cap > 0 ? Math.floor(cap) : 0,
     minTimeoutMs: Number.isFinite(minTimeout) && minTimeout > 0 ? minTimeout : 0,
     compact: /^(1|true|yes)$/i.test(clean(env.AI_COMPACT_OUTPUT) ?? ""),
+    reasoningEffort: clean(env.AI_REASONING_EFFORT)?.toLowerCase() ?? null,
     chains,
     embed: {
       baseUrl: embedBase,
       apiKey: clean(env.AI_EMBED_API_KEY) ?? apiKey,
       model: embedModel,
-      sendDimensions: /^(1|true|yes)$/i.test(clean(env.AI_EMBED_DIMENSIONS) ?? ""),
+      sendDimensions: embedDims.send,
+      dimensions: embedDims.dimensions,
     },
   };
 }
@@ -261,6 +284,7 @@ export function adaptChatBody(body: ChatBody, maxTokens: number | undefined, cfg
       delete out.tool_choice;
     }
   }
+  if (cfg.reasoningEffort && out.reasoning_effort === undefined) out.reasoning_effort = cfg.reasoningEffort;
   if (maxTokens && cfg.maxTokensParam !== "none") {
     out[cfg.maxTokensParam] = cfg.maxTokensCap ? Math.min(maxTokens, cfg.maxTokensCap) : maxTokens;
   }

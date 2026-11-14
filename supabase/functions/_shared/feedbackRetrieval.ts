@@ -11,6 +11,7 @@
 // without the cross-run boost.
 
 import { embedText } from "./embeddings.ts";
+import { fractionSetting } from "./thresholds.ts";
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
@@ -32,9 +33,9 @@ export interface FeedbackHint {
 // Cosine floor — below this we treat hits as noise. 0.55 was tuned for
 // Gemini text-embedding-004; nomic-embed-text scores unrelated biology texts
 // around 0.5-0.6, so the local env raises it (FEEDBACK_MIN_SIMILARITY=0.7).
+export const DEFAULT_FEEDBACK_MIN_SIMILARITY = 0.55;
 function minSimilarity(): number {
-  const raw = Number(Deno.env.get("FEEDBACK_MIN_SIMILARITY") ?? "");
-  return Number.isFinite(raw) && raw > 0 && raw < 1 ? raw : 0.55;
+  return fractionSetting(Deno.env.get("FEEDBACK_MIN_SIMILARITY"), DEFAULT_FEEDBACK_MIN_SIMILARITY);
 }
 const MAX_HINTS = 5;
 const FETCH_CANDIDATES = 20;   // ask RPC for more than we keep, then re-rank

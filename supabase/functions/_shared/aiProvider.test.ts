@@ -11,6 +11,7 @@ import {
   DEFAULT_LOCAL_MODEL,
   extractToolArgs,
   LOVABLE_CHAINS,
+  parseEmbedDimensions,
   promptChars,
   resolveAIConfig,
 } from "./aiProvider.ts";
@@ -62,7 +63,7 @@ Deno.test("hosted providers without a key are reported as unconfigured", () => {
 
 Deno.test("embedding config inherits chat base URL and key unless overridden", () => {
   const a = resolveAIConfig({ AI_BASE_URL: "https://api.openai.com/v1", AI_API_KEY: "k", AI_EMBED_MODEL: "text-embedding-3-small", AI_EMBED_DIMENSIONS: "true" });
-  assertEquals(a.embed, { baseUrl: "https://api.openai.com/v1", apiKey: "k", model: "text-embedding-3-small", sendDimensions: true });
+  assertEquals(a.embed, { baseUrl: "https://api.openai.com/v1", apiKey: "k", model: "text-embedding-3-small", sendDimensions: true, dimensions: 768 });
   const b = resolveAIConfig({ AI_API_KEY: "k", AI_EMBED_BASE_URL: "http://host.docker.internal:11434/v1", AI_EMBED_API_KEY: "ollama", AI_EMBED_MODEL: "nomic-embed-text" });
   assertEquals(b.embed.baseUrl, "http://host.docker.internal:11434/v1");
   assertEquals(b.embed.apiKey, "ollama");
@@ -200,4 +201,23 @@ Deno.test("compact mode caps free-text strings so a looping model has to close t
   // Without compact mode nothing is capped.
   const hosted = adapt(body, 100, resolveAIConfig({ AI_STRUCTURED_OUTPUT: "tools" }));
   assertEquals("maxLength" in hosted.tools[0].function.parameters.properties.approach, false);
+});
+
+Deno.test("AI_EMBED_DIMENSIONS: true asks for 768, a number asks for that many, junk sends nothing", () => {
+  assertEquals(parseEmbedDimensions(undefined), { send: false, dimensions: 768 });
+  assertEquals(parseEmbedDimensions("true"), { send: true, dimensions: 768 });
+  assertEquals(parseEmbedDimensions("768"), { send: true, dimensions: 768 });
+  assertEquals(parseEmbedDimensions("1536"), { send: true, dimensions: 1536 });
+  assertEquals(parseEmbedDimensions("0"), { send: false, dimensions: 768 });
+  assertEquals(parseEmbedDimensions("abc"), { send: false, dimensions: 768 });
+  assertEquals(resolveAIConfig({ AI_EMBED_DIMENSIONS: "512" }).embed.dimensions, 512);
+});
+
+Deno.test("AI_REASONING_EFFORT is added to the chat body only when set", () => {
+  assertEquals(resolveAIConfig({}).reasoningEffort, null);
+  assert(!("reasoning_effort" in adapt(toolBody, 300, resolveAIConfig({}))));
+  const cfg = resolveAIConfig({ AI_REASONING_EFFORT: " Low " });
+  assertEquals(cfg.reasoningEffort, "low");
+  assertEquals(adapt(toolBody, 300, cfg).reasoning_effort, "low");
+  assertEquals(adapt({ ...toolBody, reasoning_effort: "high" }, 300, cfg).reasoning_effort, "high");
 });

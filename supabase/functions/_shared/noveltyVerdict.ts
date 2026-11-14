@@ -23,6 +23,7 @@
 // Import-free apart from hypothesisTerms.ts (no Deno or browser APIs).
 
 import type { Concept } from "./hypothesisTerms.ts";
+import { denoSetting, fractionSetting } from "./thresholds.ts";
 import { anchorConcepts, mentions, textWords } from "./hypothesisTerms.ts";
 
 /** A retrieved paper with its relevance (relevanceRank.ts RankedPaper fits). */
@@ -63,6 +64,10 @@ export const EXACT_CORE_SHARE = 0.85;
  * 0.75.
  */
 export const EXACT_EMBED_MIN = 0.78;
+/** EXACT_EMBED_MIN, unless the EXACT_EMBED_MIN setting is a number between 0 and 1 (recalibrate it when the embedding model changes). */
+export function exactEmbedMin(): number {
+  return fractionSetting(denoSetting("EXACT_EMBED_MIN"), EXACT_EMBED_MIN);
+}
 /**
  * With fewer than two anchor concepts the core says little ("3D-printed" was
  * the whole core of the Dsup hypothesis, so any 3D-printing paper named it):
@@ -125,7 +130,7 @@ export function calibrateNovelty(
   } else if (out.signal === "exact_match") {
     const thinCore = anchorConcepts(concepts).length < 2;
     const qualifies = (p: ScoredPaper) =>
-      (p.embed_similarity === undefined || p.embed_similarity >= EXACT_EMBED_MIN)
+      (p.embed_similarity === undefined || p.embed_similarity >= exactEmbedMin())
       && (!thinCore || p.relevance >= EXACT_THIN_CORE_RELEVANCE);
     const best = candidates
       .map((p, i) => ({ i, share: qualifies(p) ? coreShare(concepts, p) : 0 }))

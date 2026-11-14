@@ -17,6 +17,7 @@
 import { fetchWithRetry } from "./fetch-with-retry.ts";
 import { aiConfig, aiTimeout } from "./aiProvider.ts";
 
+/** Default vector size: the plan_feedback.embedding column is vector(768). AI_EMBED_DIMENSIONS can change the expected size. */
 export const EMBEDDING_DIMS = 768;
 
 // Embedding inputs are capped so a long correction cannot blow past the
@@ -46,7 +47,7 @@ export async function embedTexts(texts: string[]): Promise<number[][] | null> {
         ...(cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {}),
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ model: cfg.model, input, ...(cfg.sendDimensions ? { dimensions: EMBEDDING_DIMS } : {}) }),
+      body: JSON.stringify({ model: cfg.model, input, ...(cfg.sendDimensions ? { dimensions: cfg.dimensions } : {}) }),
     }, { label: `embed-batch:${cfg.model}`, retries: 1, timeoutMs: aiTimeout(60_000) });
     if (!res.ok) {
       console.warn(`[embeddings] batch ${cfg.model} returned ${res.status}`);
@@ -56,7 +57,7 @@ export async function embedTexts(texts: string[]): Promise<number[][] | null> {
     const json = await res.json();
     const rows = Array.isArray(json?.data) ? [...json.data].sort((a, b) => (a?.index ?? 0) - (b?.index ?? 0)) : [];
     const vecs = rows.map((r) => r?.embedding);
-    if (vecs.length !== input.length || !vecs.every((v) => Array.isArray(v) && v.length === EMBEDDING_DIMS)) return null;
+    if (vecs.length !== input.length || !vecs.every((v) => Array.isArray(v) && v.length === cfg.dimensions)) return null;
     return vecs as number[][];
   } catch (e) {
     console.warn("[embeddings] batch request failed:", (e as Error).message);
@@ -90,7 +91,7 @@ export async function embedText(text: string, _apiKey?: string | null): Promise<
       body: JSON.stringify({
         model: cfg.model,
         input,
-        ...(cfg.sendDimensions ? { dimensions: EMBEDDING_DIMS } : {}),
+        ...(cfg.sendDimensions ? { dimensions: cfg.dimensions } : {}),
       }),
     }, { label: `embed:${cfg.model}`, retries: 2, timeoutMs: aiTimeout(30_000) });
     if (!res.ok) {
@@ -100,8 +101,8 @@ export async function embedText(text: string, _apiKey?: string | null): Promise<
     }
     const json = await res.json();
     const vec = json?.data?.[0]?.embedding;
-    if (!Array.isArray(vec) || vec.length !== EMBEDDING_DIMS || !vec.every((x) => typeof x === "number")) {
-      console.warn(`[embeddings] ${cfg.model} returned ${Array.isArray(vec) ? vec.length : "no"} dims, expected ${EMBEDDING_DIMS}`);
+    if (!Array.isArray(vec) || vec.length !== cfg.dimensions || !vec.every((x) => typeof x === "number")) {
+      console.warn(`[embeddings] ${cfg.model} returned ${Array.isArray(vec) ? vec.length : "no"} dims, expected ${cfg.dimensions}`);
       return null;
     }
     return vec as number[];

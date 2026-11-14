@@ -30,13 +30,13 @@
 // pass unchanged and the result says so (`available: false`).
 
 import { embedTexts } from "./embeddings.ts";
+import { denoSetting, fractionSetting } from "./thresholds.ts";
 
 export const DEFAULT_LIT_EMBED_MIN_SIMILARITY = 0.66;
 export const DEFAULT_LIT_EMBED_MARGIN = 0.15;
 
 function envNumber(name: string, fallback: number): number {
-  const raw = Number((globalThis as { Deno?: { env: { get(k: string): string | undefined } } }).Deno?.env.get(name) ?? "");
-  return Number.isFinite(raw) && raw > 0 && raw < 1 ? raw : fallback;
+  return fractionSetting(denoSetting(name), fallback);
 }
 
 export function litEmbedMinSimilarity(): number {
