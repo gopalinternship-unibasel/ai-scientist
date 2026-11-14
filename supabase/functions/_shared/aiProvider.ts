@@ -15,7 +15,11 @@
 //   AI_MODEL_<ROLE>        comma-separated model chain for one role, tried in
 //                          order (fallback chain). Roles: PLAN, FAST, REASONING,
 //                          GATE, DOMAIN, DISTILL, EVAL_PLAN, JUDGE
-//   AI_STRUCTURED_OUTPUT   "tools" (OpenAI tools + forced tool_choice, default)
+//   AI_STRUCTURED_OUTPUT   "tools" (OpenAI tools + forced tool_choice, default),
+//                          "tools_required" (only the wanted tool is sent, with
+//                          tool_choice "required"; for providers that accept
+//                          none/auto/required but not a named function, e.g.
+//                          Cloudflare Workers AI)
 //                          or "json_schema" (response_format json_schema; use
 //                          for providers that ignore tool_choice, e.g. Ollama)
 //   AI_MAX_TOKENS_PARAM    "max_tokens" (default), "max_completion_tokens"
@@ -53,7 +57,7 @@
 export type AIRole =
   | "PLAN" | "FAST" | "REASONING" | "GATE" | "DOMAIN" | "DISTILL" | "EVAL_PLAN" | "JUDGE";
 
-export type StructuredMode = "tools" | "json_schema";
+export type StructuredMode = "tools" | "tools_required" | "json_schema";
 export type MaxTokensParam = "max_tokens" | "max_completion_tokens" | "none";
 
 export interface AIConfig {
@@ -138,7 +142,7 @@ export function resolveAIConfig(env: Env): AIConfig {
   }
 
   const mode = clean(env.AI_STRUCTURED_OUTPUT)?.toLowerCase();
-  const structuredMode: StructuredMode = mode === "json_schema" ? "json_schema" : "tools";
+  const structuredMode: StructuredMode = mode === "json_schema" || mode === "tools_required" ? mode : "tools";
 
   const mtp = clean(env.AI_MAX_TOKENS_PARAM)?.toLowerCase();
   const maxTokensParam: MaxTokensParam = mtp === "none" || mtp === "max_completion_tokens"
@@ -231,7 +235,7 @@ export interface ChatBody {
   model?: string;
   messages?: { role: string; content: string }[];
   tools?: ChatTool[];
-  tool_choice?: { type?: string; function?: { name?: string } };
+  tool_choice?: string | { type?: string; function?: { name?: string } };
   response_format?: unknown;
   [key: string]: unknown;
 }
@@ -255,23 +259,39 @@ export function capArrays<T>(schema: T, maxItems: number, maxLength?: number): T
 
 const COMPACT_HINT = `Be concise: keep every text field to one or two short sentences (at most about 30 words) and every list to at most ${COMPACT_MAX_ITEMS} items. Keep exact numbers (concentrations, volumes, durations, costs).`;
 
+/** The function a request forces, or undefined when it forces none. */
+function forcedToolName(body: ChatBody): string | undefined {
+  const choice = body.tool_choice;
+  return typeof choice === "object" && choice ? choice.function?.name : undefined;
+}
+
 /**
  * Adapt an OpenAI-style request body to the configured provider:
  *  - json_schema mode turns a forced tool call into response_format
  *    json_schema (grammar-constrained JSON on Ollama, which ignores
  *    tool_choice);
+ *  - tools_required mode sends only the forced tool and tool_choice
+ *    "required" (providers that do not accept a named function);
  *  - max tokens are sent under the parameter name the provider accepts.
  */
 export function adaptChatBody(body: ChatBody, maxTokens: number | undefined, cfg: AIConfig = aiConfig()): ChatBody {
   const out: ChatBody = { ...body };
-  if (cfg.compact && Array.isArray(out.tools) && out.tool_choice?.function?.name) {
+  const forced = forcedToolName(out);
+  if (cfg.compact && Array.isArray(out.tools) && forced) {
     out.tools = out.tools.map((t) => t?.function?.parameters
       ? { ...t, function: { ...t.function, parameters: capArrays(t.function.parameters, COMPACT_MAX_ITEMS, COMPACT_MAX_CHARS) } }
       : t);
     out.messages = [...(out.messages ?? []), { role: "system", content: COMPACT_HINT }];
   }
-  if (cfg.structuredMode === "json_schema" && Array.isArray(out.tools) && out.tool_choice?.function?.name) {
-    const name: string = out.tool_choice.function.name;
+  if (cfg.structuredMode === "tools_required" && Array.isArray(out.tools) && forced) {
+    const only = out.tools.filter((t) => t?.function?.name === forced);
+    if (only.length === 1) {
+      out.tools = only;
+      out.tool_choice = "required";
+    }
+  }
+  if (cfg.structuredMode === "json_schema" && Array.isArray(out.tools) && forced) {
+    const name: string = forced;
     const tool = out.tools.find((t) => t?.function?.name === name);
     if (tool?.function?.parameters) {
       out.response_format = {

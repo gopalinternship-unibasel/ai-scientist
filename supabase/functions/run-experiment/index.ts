@@ -301,10 +301,12 @@ serve(async (req) => {
   const AI_API_KEY = aiApiKey();
   const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
-  // Log the forwarding headers once per worker: on the hosted platform it is
-  // not known which one carries the visitor's address (names only, no values
-  // of Authorization or apikey).
-  if (!loggedForwarding) {
+  // With LOG_FORWARDING_HEADERS=true, log the forwarding headers once per
+  // worker: on the hosted platform it is not known which one carries the
+  // visitor's address. The line holds that address (personal data), so the
+  // setting is meant for one check and is removed afterwards. No values of
+  // Authorization or apikey are logged.
+  if (!loggedForwarding && /^(1|true|yes)$/i.test(Deno.env.get("LOG_FORWARDING_HEADERS") ?? "")) {
     loggedForwarding = true;
     console.log(JSON.stringify({
       step: "forwarding_headers",

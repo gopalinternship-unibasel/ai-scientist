@@ -27,7 +27,17 @@ END $$;
 -- (owner_user_id IS NULL) — anonymous runs are still publicly viewable by ID
 -- (matching the existing public SELECT policy on runs), so subscribing is fine.
 
-ALTER TABLE IF EXISTS realtime.messages ENABLE ROW LEVEL SECURITY;
+-- On a hosted Supabase project row-level security is already on for realtime.messages and the
+-- table belongs to the platform, so "ALTER TABLE ... ENABLE ROW LEVEL SECURITY" stops with
+-- "must be owner of table messages" (seen 14 Nov 2026 on a new project). Enable it only where
+-- it is off (the local stack, after supabase/local-bootstrap.sql).
+DO $$
+BEGIN
+  IF to_regclass('realtime.messages') IS NOT NULL
+     AND NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'realtime.messages'::regclass) THEN
+    ALTER TABLE realtime.messages ENABLE ROW LEVEL SECURITY;
+  END IF;
+END $$;
 
 DROP POLICY IF EXISTS "Authenticated users can subscribe to their own run channels" ON realtime.messages;
 CREATE POLICY "Authenticated users can subscribe to their own run channels"

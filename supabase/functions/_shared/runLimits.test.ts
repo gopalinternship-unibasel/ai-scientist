@@ -58,3 +58,30 @@ Deno.test("quota remaining is the smaller of the identity and global rooms", () 
   assertEquals(quotaFor(caps, false, { identity: 1, global: 39 }).remaining, 1);
   assertEquals(quotaFor(caps, true, { identity: 0, global: 40 }).remaining, 0);
 });
+
+Deno.test("quota stays numeric for every partial combination of caps", () => {
+  const combos = [
+    { global: 5, anon: null, user: null },
+    { global: null, anon: 3, user: null },
+    { global: null, anon: null, user: 10 },
+    { global: 5, anon: 3, user: null },
+    { global: 5, anon: null, user: 10 },
+    { global: null, anon: 3, user: 10 },
+  ];
+  for (const c of combos) {
+    for (const signedIn of [false, true]) {
+      const q = quotaFor(c, signedIn, { identity: 2, global: 7 });
+      for (const v of [q.limit, q.used, q.remaining]) assert(Number.isFinite(v), JSON.stringify({ c, signedIn, q }));
+      assert(q.limit > 0, JSON.stringify({ c, signedIn, q }));
+      assertEquals(JSON.parse(JSON.stringify(q)).remaining, q.remaining);
+    }
+  }
+});
+
+Deno.test("quota for a caller no set cap applies to shows the local figure", () => {
+  // Only the visitor cap is set and the caller is signed in.
+  assertEquals(
+    quotaFor({ global: null, anon: 3, user: null }, true, { identity: 2, global: 7 }),
+    { limit: 100, used: 2, remaining: 98, window: "day" },
+  );
+});

@@ -92,6 +92,13 @@ export function quotaFor(caps: RunCaps, signedIn: boolean, usage: RunUsage): { l
   const left: number[] = [];
   if (identityLimit !== null) left.push(identityLimit - usage.identity);
   if (caps.global !== null) left.push(caps.global - usage.global);
+  if (left.length === 0) {
+    // Some cap is set, but none applies to this caller (for example only the
+    // visitor cap is set and the caller is signed in). Nothing stops them, so
+    // report the local figure: the numbers stay finite for the badge and the
+    // smoke check.
+    return { limit: LOCAL_PER_HOUR, used: usage.identity, remaining: Math.max(0, LOCAL_PER_HOUR - usage.identity), window: "day" };
+  }
   const remaining = Math.max(0, Math.min(...left));
   const limit = identityLimit ?? caps.global ?? 0;
   const used = identityLimit !== null ? usage.identity : usage.global;

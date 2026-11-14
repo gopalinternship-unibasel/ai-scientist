@@ -112,7 +112,7 @@ jobs:
             -H "apikey: $SUPABASE_KEY" -H "Content-Type: application/json" -d "$body" \
             "$SUPABASE_URL/functions/v1/run-experiment" || true
           grep -q '^event: run' sse.txt || { echo "::error::no run event"; head -c 600 sse.txt; exit 1; }
-          grep '^data:' sse.txt | head -1 | grep -q '"cached":true' \
+          grep -m1 '^data:' sse.txt | grep -q '"cached":true' \
             || { echo "::error::the plan was not served from the cache (a real run may have started)"; head -c 600 sse.txt; exit 1; }
           grep -q '^event: plan' sse.txt || { echo "::error::no plan event"; exit 1; }
           echo "cached plan replayed"

@@ -29,6 +29,8 @@ dist-ssr
 .env.development.local
 # - edge-function env (AI provider settings); template is .env.example
 supabase/functions/.env
+# - settings file for the hosted project (RUNNING.md, section 11)
+supabase/functions/.env.cloud
 # - generated test-user credentials for the local stack
 .local-test-user.json
 # - extra test users made by e2e checks

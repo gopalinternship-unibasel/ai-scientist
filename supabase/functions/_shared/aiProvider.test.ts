@@ -221,3 +221,46 @@ Deno.test("AI_REASONING_EFFORT is added to the chat body only when set", () => {
   assertEquals(adapt(toolBody, 300, cfg).reasoning_effort, "low");
   assertEquals(adapt({ ...toolBody, reasoning_effort: "high" }, 300, cfg).reasoning_effort, "high");
 });
+
+Deno.test("tools_required mode sends only the forced tool with tool_choice required", () => {
+  const cfg = resolveAIConfig({ AI_STRUCTURED_OUTPUT: "tools_required" });
+  assertEquals(cfg.structuredMode, "tools_required");
+  const body = {
+    model: "m",
+    messages: [{ role: "user", content: "hi" }],
+    tools: [
+      { type: "function", function: { name: "other", parameters: { type: "object", properties: {} } } },
+      { type: "function", function: { name: "decide", parameters: { type: "object", properties: { ok: { type: "boolean" } } } } },
+    ],
+    tool_choice: { type: "function", function: { name: "decide" } },
+  };
+  const out = adaptChatBody(body, 300, cfg);
+  assertEquals(out.tool_choice, "required");
+  assertEquals(out.tools?.length, 1);
+  assertEquals(out.tools?.[0].function?.name, "decide");
+  assert(!("response_format" in out));
+  // The request passed in is not changed.
+  assertEquals(body.tools.length, 2);
+  assertEquals(body.tool_choice, { type: "function", function: { name: "decide" } });
+});
+
+Deno.test("tools_required mode leaves a request alone when it forces no function", () => {
+  const cfg = resolveAIConfig({ AI_STRUCTURED_OUTPUT: "tools_required" });
+  const auto = { model: "m", messages: [], tools: [{ type: "function", function: { name: "a" } }], tool_choice: "auto" };
+  assertEquals(adaptChatBody(auto, undefined, cfg).tool_choice, "auto");
+  const plain = { model: "m", messages: [] };
+  assert(!("tool_choice" in adaptChatBody(plain, undefined, cfg)));
+  // A forced name that is not among the tools is passed through unchanged.
+  const missing = {
+    model: "m",
+    messages: [],
+    tools: [{ type: "function", function: { name: "a" } }],
+    tool_choice: { type: "function", function: { name: "b" } },
+  };
+  assertEquals(adaptChatBody(missing, undefined, cfg).tool_choice, missing.tool_choice);
+});
+
+Deno.test("an unknown AI_STRUCTURED_OUTPUT value falls back to tools", () => {
+  assertEquals(resolveAIConfig({ AI_STRUCTURED_OUTPUT: "something" }).structuredMode, "tools");
+  assertEquals(resolveAIConfig({ AI_STRUCTURED_OUTPUT: "TOOLS_REQUIRED" }).structuredMode, "tools_required");
+});

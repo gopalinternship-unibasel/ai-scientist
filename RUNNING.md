@@ -289,7 +289,7 @@ powershell -ExecutionPolicy Bypass -File scripts\start-local.ps1 -RestartFunctio
 | `AI_BASE_URL` | OpenAI-compatible base URL. Local default `http://host.docker.internal:11434/v1` (Ollama as seen from the edge-runtime container). |
 | `AI_API_KEY` | Bearer key (`LOVABLE_API_KEY` is still accepted). Ollama ignores it. |
 | `AI_MODEL` | Model for every role. `AI_MODEL_PLAN`, `_FAST`, `_REASONING`, `_GATE`, `_DOMAIN`, `_DISTILL`, `_EVAL_PLAN`, `_JUDGE` override one role, as a comma-separated fallback chain. |
-| `AI_STRUCTURED_OUTPUT` | `json_schema` for Ollama (grammar-constrained JSON), `tools` for providers that honour forced tool calls. |
+| `AI_STRUCTURED_OUTPUT` | `json_schema` for Ollama (grammar-constrained JSON), `tools` for providers that honour forced tool calls, `tools_required` for providers that accept `tool_choice` none, auto or required but not a named function (only the wanted tool is sent, with `required`). |
 | `AI_MAX_TOKENS_PARAM` | `max_tokens`, `max_completion_tokens` (OpenAI gpt-5 / o-series) or `none`. |
 | `AI_MAX_TOKENS_CAP` | Upper bound on every output budget (3072 locally). Prompt + output must fit the model's context window: 8192 tokens for the local `qwen2.5-7b-4threads`. |
 | `AI_COMPACT_OUTPUT` | `true` for small local models: lists capped at 5 items and text fields at 400 characters (both enforced by Ollama's JSON grammar, so a model stuck in a loop has to close the field), short answers requested, long prompt inputs (previous plan, plan under review) cut short. Set `false` for hosted models. |
@@ -637,7 +637,7 @@ optional, and without it the code behaves as it does locally.
 |---|---|---|
 | Frontend | The Vite build, a static site | GitHub Pages project site, https://gopalinternship-unibasel.github.io/ai-scientist/ , built and published by `.github/workflows/pages.yml` |
 | Backend | Database, sign-in, realtime and the five edge functions | One new Supabase cloud project (free plan, region Zurich, eu-central-2) |
-| AI | Chat and embeddings, reached through an OpenAI-compatible URL | A hosted AI provider. Which one is not decided; everything is set through function settings, see section 6 |
+| AI | Chat and embeddings, reached through an OpenAI-compatible URL | Cloudflare Workers AI on its free allowance (10,000 neurons a day for the whole Cloudflare account, no card). Everything is set through function settings, see section 6, so another provider is a change of settings |
 | Checks | Daily test of the live site | `.github/workflows/smoke.yml` |
 
 Limits of the free plan that shape the setup: an edge function may run
@@ -651,7 +651,7 @@ email" must be off and password-reset emails do not reach other people.
 ### Settings
 
 Function settings go to the Supabase project as secrets. Non-secret ones can
-be put in `supabase\functions\.env.cloud` (not tracked) and loaded with
+be put in `supabase\functions\.env.cloud` (ignored by git) and loaded with
 `supabase secrets set --env-file supabase\functions\.env.cloud`. Key-like
 values are set by the owner in the dashboard (Edge Functions, Secrets) and
 never go into a file in this repository.
@@ -659,16 +659,17 @@ never go into a file in this repository.
 | Setting | Where | Meaning |
 |---|---|---|
 | `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEYS`, `SUPABASE_SECRET_KEYS`, `SUPABASE_DB_URL` | Injected by Supabase | New projects get the key pair as JSON (the key is under `"default"`). The functions read `_shared/supabaseKeys.ts`: the old names `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` win when present (local stack), otherwise the new ones are used. Names starting with `SUPABASE_` cannot be set by hand. |
-| `AI_BASE_URL`, `AI_API_KEY` | Function secrets | OpenAI-compatible base URL without a trailing slash, and the bearer key (secret, set by the owner). |
-| `AI_MODEL`, `AI_MODEL_<ROLE>` | Function secrets | Default model and per-role chains (comma separated). Roles: PLAN, FAST, REASONING, GATE, DOMAIN, DISTILL, EVAL_PLAN, JUDGE. Use fast, small models for GATE, DOMAIN and FAST: their time budgets are 6, 5 and 20 seconds. |
-| `AI_STRUCTURED_OUTPUT`, `AI_MAX_TOKENS_PARAM`, `AI_MAX_TOKENS_CAP`, `AI_COMPACT_OUTPUT`, `AI_MIN_TIMEOUT_MS` | Function secrets | As in section 6. Hosted start values: `tools`, `max_tokens`, about 6000, `false`, `0`. |
+| `AI_BASE_URL`, `AI_API_KEY` | Function secrets | OpenAI-compatible base URL without a trailing slash, and the bearer key (secret, set by the owner). For Cloudflare Workers AI the URL is `https://api.cloudflare.com/client/v4/accounts/<account id>/ai/v1` and the key is a Workers AI API token (dashboard, Workers AI, Use REST API). |
+| `AI_MODEL`, `AI_MODEL_<ROLE>` | Function secrets | Default model and per-role chains (comma separated). Roles: PLAN, FAST, REASONING, GATE, DOMAIN, DISTILL, EVAL_PLAN, JUDGE. Use fast, small models for GATE, DOMAIN and FAST: their time budgets are 6, 5 and 20 seconds. Start values on Cloudflare: `AI_MODEL=@cf/zai-org/glm-4.7-flash` and `AI_MODEL_PLAN=@cf/zai-org/glm-4.7-flash,@cf/google/gemma-4-26b-a4b-it`. |
+| `AI_STRUCTURED_OUTPUT`, `AI_MAX_TOKENS_PARAM`, `AI_MAX_TOKENS_CAP`, `AI_COMPACT_OUTPUT`, `AI_MIN_TIMEOUT_MS` | Function secrets | As in section 6. Hosted start values: `tools_required` (Cloudflare documents `tool_choice` none, auto and required; use `tools` for a provider that accepts a named function), `max_tokens`, about 6000, `false`, `0`. |
 | `AI_REASONING_EFFORT` | Function secrets, optional | For example `low`. Sent as `reasoning_effort` on every chat request. Unset: nothing is sent. |
-| `AI_EMBED_MODEL`, `AI_EMBED_BASE_URL`, `AI_EMBED_API_KEY` | Function secrets | Embedding model and, if different from chat, its URL and key. Empty model: embeddings off, the app runs in its degraded mode. |
+| `AI_EMBED_MODEL`, `AI_EMBED_BASE_URL`, `AI_EMBED_API_KEY` | Function secrets | Embedding model and, if different from chat, its URL and key. Empty model: embeddings off, the app runs in its degraded mode. Start value on Cloudflare: `@cf/google/embeddinggemma-2`, which returns 768 numbers by itself, so `AI_EMBED_DIMENSIONS` stays unset. |
 | `AI_EMBED_DIMENSIONS` | Function secrets, optional | `true` asks the provider for 768-dimensional vectors; a whole number asks for that many. The database column is `vector(768)`, so any other number needs a migration of `plan_feedback.embedding` and the two match functions first. Vectors of the wrong size are rejected. |
-| `LIT_EMBED_MIN_SIMILARITY` (default 0.66), `LIT_EMBED_MARGIN` (0.15), `FEEDBACK_MIN_SIMILARITY` (0.55), `EXACT_EMBED_MIN` (0.78) | Function secrets, optional | Similarity thresholds, numbers between 0 and 1. The defaults were measured for the local embedding model; set them again when the model changes. A lower `LIT_EMBED_MIN_SIMILARITY` (about 0.5) keeps the related-work filter from dropping every paper while the values are not calibrated. |
+| `LIT_EMBED_MIN_SIMILARITY` (default 0.66), `LIT_EMBED_MARGIN` (0.15), `FEEDBACK_MIN_SIMILARITY` (0.55), `EXACT_EMBED_MIN` (0.78) | Function secrets, optional | Similarity thresholds, numbers between 0 and 1. The first, second and fourth default were measured for the local embedding model (nomic-embed-text), the feedback floor of 0.55 dates from Google's text-embedding-004; set them again when the model changes. A lower `LIT_EMBED_MIN_SIMILARITY` (about 0.5) keeps the related-work filter from dropping every paper while the values are not calibrated. |
 | `PLAN_REPAIR_ATTEMPTS` | Function secrets | `0` at launch: no second plan attempt, which keeps a run inside 150 seconds. |
-| `RUN_LIMIT_GLOBAL_PER_DAY`, `RUN_LIMIT_ANON_PER_DAY`, `RUN_LIMIT_USER_PER_DAY` | Function secrets | Daily caps on new AI runs: over all visitors, per visitor address without sign-in, per signed-in user. Start values 40, 3 and 10. A cap that is not set does not apply; when none is set the local rule (100 runs per hour per user or address) stays. Only runs that call the AI count: a cached plan is replayed free and is not counted; a refinement counts. A refused run gets HTTP 429 with a plain message. |
+| `RUN_LIMIT_GLOBAL_PER_DAY`, `RUN_LIMIT_ANON_PER_DAY`, `RUN_LIMIT_USER_PER_DAY` | Function secrets | Daily caps on new AI runs: over all visitors, per visitor address without sign-in, per signed-in user. Start values 20, 3 and 6: a run costs roughly 150 to 200 Cloudflare neurons, and the 10,000 a day are shared with the LifeOps demo. A cap that is not set does not apply; when none is set the local rule (100 runs per hour per user or address) stays. The check counts and then inserts, without a lock, so several requests that arrive in the same instant can overshoot a cap by a few runs. Only runs that call the AI count: a cached plan is replayed free and is not counted; a refinement counts. A refused run gets HTTP 429 with a plain message. |
 | `SEMANTIC_SCHOLAR_API_KEY` | Function secrets, optional | As in section 10. |
+| `LOG_FORWARDING_HEADERS` | Function secrets, optional | `true` logs the forwarding headers of the first request each worker sees, to find out which one carries the visitor address. The line holds that address, which is personal data: set it for one check and remove it again (`supabase secrets unset LOG_FORWARDING_HEADERS`). |
 | `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `VITE_SUPABASE_PROJECT_ID` | GitHub repository variables | Public values of the Supabase project. The publishable key ships in the browser bundle by design. Variables win over `.env` in the build. |
 | `VITE_BASE_PATH` | Build setting (`pages.yml` sets `/ai-scientist/`) | Base path of the site. Unset: `/`. In Git Bash set `MSYS_NO_PATHCONV=1` before a local build with it, or the value is turned into a Windows path. |
 | `VITE_HOSTED_DEMO` | Build setting (`pages.yml` sets `true`) | Shows one line on the start page: a hosted demo with a daily limit, and the hypothesis goes to a hosted AI provider. Unset locally: no line. |
@@ -686,7 +687,7 @@ Marked **owner** where only the repository owner can do it.
 1. Code and workflows are in the repository (this branch). Run the checks in section 7.
 2. **Owner:** create the AI provider key and keep it out of chat and files.
 3. **Owner:** create the Supabase project (name `ai-scientist`, region Zurich) with a database password only the owner knows. Note the project ref.
-4. **Owner:** in this folder run `supabase link --project-ref <ref>`, then `supabase db push --remote --dry-run` (23 migrations expected), then `supabase db push --remote`. Do not use `--include-seed` or `--include-roles`. If a migration fails with "must be owner of table messages", stop: two older migrations touch `realtime.messages` and need a follow-up migration plus `supabase migration repair`.
+4. **Owner:** in this folder run `supabase link --project-ref <ref>`, then `supabase db push --remote --dry-run` (23 migrations expected), then `supabase db push --remote`. Do not use `--include-seed` or `--include-roles`. The CLI skips migrations while `supabase/config.toml` says `[db.migrations] enabled = false` (the local stack applies them itself); set `SUPABASE_DB_MIGRATIONS_ENABLED=true` in the shell for this command. Migration `20260425210859` turns row-level security on for `realtime.messages` only where it is off, because a hosted project owns that table and has it on already (the plain statement was refused there with "must be owner of table messages"). All 23 migrations applied to a new project on 14 Nov 2026.
 5. Write the non-secret settings to `supabase\functions\.env.cloud` and run `supabase secrets set --env-file supabase\functions\.env.cloud`.
 6. **Owner:** in the dashboard (Edge Functions, Secrets) add `AI_API_KEY`, and `SEMANTIC_SCHOLAR_API_KEY` if wanted.
 7. `supabase functions deploy --use-api` deploys all five functions with `verify_jwt = false` from `supabase/config.toml` (each checks its caller in code). Check `supabase functions list`. Never run `supabase config push` with this file: it holds local URLs.
@@ -694,7 +695,7 @@ Marked **owner** where only the repository owner can do it.
 9. Set the three `VITE_SUPABASE_*` repository variables (`gh variable set ...`, without echoing the key) and switch Pages to "GitHub Actions" (repository Settings, Pages).
 10. **Owner:** merge to `main`. `pages.yml` runs on the push; while the variables are missing it only prints a notice and publishes nothing.
 11. **Owner:** straight after the first deploy, before sharing the link, sign up at `/ai-scientist/auth` and press the claim-admin button on `/ai-scientist/admin`. The first account that asks becomes admin.
-12. Make one real run. Check: status done in under 150 seconds; `qc.related_filter.method` is `embedding` (if it says words only, the provider did not return vectors of the right size); the function logs show no wall-clock or CPU shutdown; the log line `forwarding_headers` shows which header carries the visitor address.
+12. Make one real run. Check: status done in under 150 seconds; `qc.related_filter.method` is `embedding` (if it says words only, the provider did not return vectors of the right size); the function logs show no wall-clock or CPU shutdown. To see which header carries the visitor address, set `LOG_FORWARDING_HEADERS=true` for this one run, read the log line `forwarding_headers`, and unset it again.
 13. Run `smoke.yml` by hand (Actions, Run workflow) and check the deep link, share link, refinement, PDF export and sign-in in the browser. Optionally set `SMOKE_HYPOTHESIS` to the text of step 12.
 14. **Owner:** keep the repository active. GitHub switches scheduled workflows off after 60 days without activity; the last step of `smoke.yml` enables the workflow again through the API on every run, and a push or the link in GitHub's email also works. Whether that call restarts the 60-day clock has not been verified.
 
@@ -706,8 +707,9 @@ a deep link returns the app shell (status 404 by design of Pages); the Auth
 service is healthy; a REST query on `runs` returns a JSON array (a real
 database query); `GET run-experiment` returns numeric `limit`, `used` and
 `remaining`. On Mondays and on manual runs, when `SMOKE_HYPOTHESIS` is set, it
-posts that text and expects a cached plan. While the variables are missing
-the job ends with a notice.
+posts that text and expects a cached plan; each such replay adds one row to
+`runs` (owner token `smoke-check`), because a replay always gets its own row.
+While the variables are missing the job ends with a notice.
 
 ### If runs are cut off at 150 seconds
 

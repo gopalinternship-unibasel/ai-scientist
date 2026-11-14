@@ -1,7 +1,9 @@
 // Similarity thresholds that depend on the embedding model. Each one can be
-// set through an environment setting; the defaults are the values measured for
-// the local model (nomic-embed-text). A setting is used only when it is a
-// number strictly between 0 and 1.
+// set through an environment setting. The defaults for the related-work
+// filter and the exact-match floor (0.66, 0.15, 0.78) were measured for the
+// local model (nomic-embed-text); the feedback floor (0.55) dates from
+// Google's text-embedding-004. A setting is used only when it is a number
+// strictly between 0 and 1.
 
 export function fractionSetting(raw: string | undefined, fallback: number): number {
   const t = raw?.trim();

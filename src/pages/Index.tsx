@@ -41,8 +41,11 @@ const Index = () => {
             case "error": {
               const isRateLimit = /limited to|limit of|daily limit|per hour|per day|sign in/i.test(e.message);
               if (isRateLimit) {
+                // Only the message for visitors without an account says that
+                // signing in helps; the daily and per-user limits do not.
+                const signInHelps = /sign in/i.test(e.message);
                 toast.error(e.message, {
-                  action: { label: "Sign in", onClick: () => navigate("/auth") },
+                  ...(signInHelps ? { action: { label: "Sign in", onClick: () => navigate("/auth") } } : {}),
                   duration: 8000,
                 });
               } else if (e.kind === "VALIDATION") {
