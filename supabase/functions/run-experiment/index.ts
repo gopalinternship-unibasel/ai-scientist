@@ -1,5 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { publicKey, serviceKey } from "../_shared/supabaseKeys.ts";
+import {
+  DAY_MINUTES, decideRunLimit, hostedCapsActive, quotaFor, resolveRunCaps, RUN_KIND, type RunUsage,
+} from "../_shared/runLimits.ts";
 
 import { corsHeaders } from "../_shared/cors.ts";
 import { fetchWithRetry } from "../_shared/fetch-with-retry.ts";
@@ -215,6 +219,58 @@ async function checkRateLimit(
   return { ok: true, remaining: max - used - 1, used: used + 1, limit: max };
 }
 
+let loggedForwarding = false;
+
+// Runs whose background work is in flight in this worker. When the platform
+// shuts the worker down (wall-clock or CPU limit) a run would otherwise stay
+// in qc or plan until cleanup_stale_runs fails it, 10 to 20 minutes later.
+const runsInFlight = new Map<string, SupabaseClient>();
+
+const SHUTDOWN_MESSAGE = "server time limit reached, press Retry";
+
+async function failRunsInFlight(reason: string | undefined) {
+  const entries = [...runsInFlight.entries()];
+  if (entries.length === 0) return;
+  console.error(JSON.stringify({ step: "worker_shutdown", reason: reason ?? null, runs: entries.map(([id]) => id) }));
+  await Promise.allSettled(entries.map(([id, client]) =>
+    client.from("runs")
+      .update({ status: "failed", error: encodeError("TIMEOUT", SHUTDOWN_MESSAGE) })
+      .eq("id", id)
+      .in("status", ["pending", "qc", "plan"])
+  ));
+}
+
+addEventListener("beforeunload", (ev) => {
+  const detail = (ev as unknown as { detail?: { reason?: string } }).detail;
+  void failRunsInFlight(detail?.reason);
+});
+
+// Count of rate_limits rows of one kind in the last `windowMinutes`, for one
+// identifier or (identifier null) for everyone.
+async function countRuns(
+  supabase: SupabaseClient,
+  identifier: string | null,
+  windowMinutes: number,
+): Promise<number> {
+  const since = new Date(Date.now() - windowMinutes * 60_000).toISOString();
+  let q = supabase
+    .from("rate_limits")
+    .select("*", { count: "exact", head: true })
+    .eq("kind", RUN_KIND)
+    .gte("created_at", since);
+  if (identifier) q = q.eq("identifier", identifier);
+  const { count } = await q;
+  return count ?? 0;
+}
+
+async function runUsage(supabase: SupabaseClient, identifier: string): Promise<RunUsage> {
+  const [identity, global] = await Promise.all([
+    countRuns(supabase, identifier, DAY_MINUTES),
+    countRuns(supabase, null, DAY_MINUTES),
+  ]);
+  return { identity, global };
+}
+
 function rateHeaders(rl: { used: number; limit: number; remaining: number }) {
   return {
     "X-RateLimit-Limit": String(rl.limit),
@@ -237,12 +293,27 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-  const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
+  const SERVICE_KEY = serviceKey();
+  const ANON_KEY = publicKey();
+  const runCaps = resolveRunCaps(Deno.env.toObject());
   // AI provider key (AI_API_KEY, or the legacy LOVABLE_API_KEY). Local
   // Ollama needs no real key; see _shared/aiProvider.ts.
   const AI_API_KEY = aiApiKey();
   const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
+
+  // Log the forwarding headers once per worker: on the hosted platform it is
+  // not known which one carries the visitor's address (names only, no values
+  // of Authorization or apikey).
+  if (!loggedForwarding) {
+    loggedForwarding = true;
+    console.log(JSON.stringify({
+      step: "forwarding_headers",
+      "cf-connecting-ip": req.headers.get("cf-connecting-ip"),
+      "x-real-ip": req.headers.get("x-real-ip"),
+      "x-forwarded-for": req.headers.get("x-forwarded-for"),
+      chosen: clientIp(req),
+    }));
+  }
 
   // GET /run-experiment → return current quota for this caller without consuming one.
   if (req.method === "GET") {
@@ -260,19 +331,17 @@ serve(async (req) => {
     }
     const ip = clientIp(req);
     const ident = userId ? `user:${userId}` : `ip:${ip}`;
-    const limit = userId ? 100 : 100;
-    const since = new Date(Date.now() - 60 * 60_000).toISOString();
-    const { count } = await supabase
-      .from("rate_limits")
-      .select("*", { count: "exact", head: true })
-      .eq("identifier", ident).eq("kind", "run").gte("created_at", since);
-    const used = count ?? 0;
+    // Hosted caps: runs per rolling day. Without caps: the local 100 per hour.
+    const usage = hostedCapsActive(runCaps)
+      ? await runUsage(supabase, ident)
+      : { identity: await countRuns(supabase, ident, 60), global: 0 };
+    const quota = quotaFor(runCaps, !!userId, usage);
     return new Response(JSON.stringify({
-      limit, used, remaining: Math.max(0, limit - used), authenticated: !!userId,
+      limit: quota.limit, used: quota.used, remaining: quota.remaining, window: quota.window, authenticated: !!userId,
     }), {
       headers: {
         ...corsHeaders, "Content-Type": "application/json",
-        ...rateHeaders({ limit, used, remaining: Math.max(0, limit - used) }),
+        ...rateHeaders(quota),
       },
     });
   }
@@ -382,22 +451,26 @@ serve(async (req) => {
       }
     }
 
-    // Rate limit: 100 runs / hour for both signed-in users and anon IPs.
-    // Rate limit: 100 runs / hour for both signed-in users and anon IPs.
+    // Rate limit. Local default: 100 runs / hour for both signed-in users and
+    // anon IPs, checked here. When the hosted daily caps are set
+    // (RUN_LIMIT_*_PER_DAY) the check moves below the cache lookup instead,
+    // so a cached replay costs nothing and is not counted.
     const ip = clientIp(req);
     const rlIdent = userId ? `user:${userId}` : `ip:${ip}`;
-    const rl = await checkRateLimit(supabase, rlIdent, "run", 60, 100);
-    if (!rl.ok) {
-      return new Response(JSON.stringify({
-        error: userId
-          ? "You've reached the limit of 100 experiment runs per hour. Please try again later."
-          : "Anonymous users are limited to 100 runs per hour. Sign in to keep your run history.",
-      }), {
-        status: 429,
-        headers: {
-          ...corsHeaders, "Content-Type": "application/json", ...rateHeaders(rl),
-        },
-      });
+    if (!hostedCapsActive(runCaps)) {
+      const rl = await checkRateLimit(supabase, rlIdent, RUN_KIND, 60, 100);
+      if (!rl.ok) {
+        return new Response(JSON.stringify({
+          error: userId
+            ? "You've reached the limit of 100 experiment runs per hour. Please try again later."
+            : "Anonymous users are limited to 100 runs per hour. Sign in to keep your run history.",
+        }), {
+          status: 429,
+          headers: {
+            ...corsHeaders, "Content-Type": "application/json", ...rateHeaders(rl),
+          },
+        });
+      }
     }
 
     // Look up parent run (for refinement) and compute next version.
@@ -527,6 +600,21 @@ serve(async (req) => {
       }
     } else if (cacheRow) {
       console.warn(JSON.stringify({ step: "cache_entry_rejected", id: cacheRow.id, reason: "hash does not match its hypothesis" }));
+    }
+
+    // Hosted daily caps: only a run that will call the AI is counted (a
+    // refinement is; a cached replay is not).
+    if (hostedCapsActive(runCaps) && !cached) {
+      const usage = await runUsage(supabase, rlIdent);
+      const decision = decideRunLimit(runCaps, !!userId, usage);
+      if (!decision.ok) {
+        const quota = quotaFor(runCaps, !!userId, usage);
+        return new Response(JSON.stringify({ error: decision.message, reason: decision.reason }), {
+          status: 429,
+          headers: { ...corsHeaders, "Content-Type": "application/json", ...rateHeaders({ ...quota, remaining: 0 }) },
+        });
+      }
+      await supabase.from("rate_limits").insert({ identifier: rlIdent, kind: RUN_KIND });
     }
 
     // Create run row (always create new row for ownership / share semantics, even when reusing data)
@@ -1218,7 +1306,9 @@ serve(async (req) => {
             }
           };
 
-          const background = processRun();
+          const startedRunId = runId;
+          if (startedRunId) runsInFlight.set(startedRunId, supabase);
+          const background = processRun().finally(() => { if (startedRunId) runsInFlight.delete(startedRunId); });
           const waitUntil = (globalThis as { EdgeRuntime?: { waitUntil?: (promise: Promise<unknown>) => void } })
             .EdgeRuntime?.waitUntil;
           if (waitUntil) waitUntil(background);
