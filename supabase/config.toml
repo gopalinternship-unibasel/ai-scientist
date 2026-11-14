@@ -90,8 +90,9 @@ backend = "postgres"
 
 # Edge functions. The browser calls run-experiment and embed-feedback
 # anonymously (anon key only), so they opt out of JWT verification and
-# authorise inside the function. distill-house-rules and eval-harness keep the
-# default (JWT required) and additionally check for a moderator/admin role.
+# authorise inside the function. distill-house-rules and eval-harness also
+# opt out below (see "Hosted deployment"); they check the JWT and the
+# moderator/admin role in code.
 [functions.run-experiment]
 verify_jwt = false
 
@@ -99,4 +100,14 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.backfill-feedback-embeddings]
+verify_jwt = false
+
+# Hosted deployment: the platform's JWT check is switched off for these two
+# functions because both check the caller's JWT and role in code. (The other
+# three already do their own caller check.) Never run `supabase config push`
+# with this file: it holds local-only values.
+[functions.distill-house-rules]
+verify_jwt = false
+
+[functions.eval-harness]
 verify_jwt = false

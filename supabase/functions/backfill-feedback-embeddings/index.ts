@@ -11,6 +11,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { corsHeaders } from "../_shared/cors.ts";
+import { serviceKey } from "../_shared/supabaseKeys.ts";
 import { embedText, embeddingsEnabled } from "../_shared/embeddings.ts";
 import { identifyCaller } from "../_shared/callerAuth.ts";
 
@@ -32,7 +33,7 @@ serve(async (req) => {
     const limit = Math.max(1, Math.min(MAX_BATCH, isFinite(limitParam) ? limitParam : DEFAULT_BATCH));
 
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-    const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const SERVICE_KEY = serviceKey();
     if (!embeddingsEnabled()) {
       return new Response(JSON.stringify({ error: "Embeddings not configured (set AI_EMBED_MODEL)" }), {
         status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" },

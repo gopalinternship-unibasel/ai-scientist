@@ -13,6 +13,7 @@
 // server; its claims are never read unverified.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { publicKey, serviceKey as serviceKeyValue } from "./supabaseKeys.ts";
 
 export interface Caller {
   kind: "service" | "user" | "anon";
@@ -35,8 +36,10 @@ export function bearer(req: Request): string | null {
 
 export async function identifyCaller(req: Request): Promise<Caller> {
   const url = Deno.env.get("SUPABASE_URL")!;
-  const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  // A missing key means "not configured": the caller is then treated as anonymous.
+  const orEmpty = (read: () => string): string => { try { return read(); } catch { return ""; } };
+  const anonKey = orEmpty(publicKey);
+  const serviceKey = orEmpty(serviceKeyValue);
   const token = bearer(req);
   if (!token) return { kind: "anon", userId: null, isModerator: false };
   if (serviceKey && constantTimeEqual(token, serviceKey)) return { kind: "service", userId: null, isModerator: true };
