@@ -217,8 +217,8 @@ export function findCatalogIssues(
 // shown as verified. Each pair was checked on 10 Nov 2026 with a PubMed
 // Central search for the number together with the line's name: 838-8,704
 // full-text papers per pair, against 33 for the QA's wrong "CCL-22" with
-// Caco-2 (script check-atcc-pubmed.py in _e2e/ai-research-assistant-fix/round4/
-// on Gopal's PC).
+// Caco-2 (script check-atcc-pubmed.py in _e2e/ai-research-assistant-fix/round4/,
+// kept outside this repository).
 export interface CellLineEntry {
   /** ATCC catalogue number. */
   atcc: string;

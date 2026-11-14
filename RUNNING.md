@@ -15,18 +15,17 @@ guide runs the whole system on one Windows PC instead:
   change away (see "Switching the AI provider").
 
 Follow the steps in order. Every command is for **PowerShell**, run from
-the project folder (`C:\Users\gopal\Downloads\cv-project-fixes\ai-research-assistant`
-on Gopal's PC).
+the project folder.
 
 ## 1. Prerequisites
 
 | Tool | Version used | Notes |
 |---|---|---|
 | Docker Desktop | 4.73 (engine 29.4) | Must be running. Give it at least 8 GB RAM. |
-| Supabase CLI | 3.0.0 | On Gopal's PC it is `C:\Users\gopal\tools\supabase\supabase.exe` (not on PATH; the scripts find it there). Elsewhere: put `supabase` on PATH or set `$env:SUPABASE_CLI` to the full path. |
+| Supabase CLI | 3.0.0 | On the development PC it is `%USERPROFILE%\tools\supabase\supabase.exe` (not on PATH; the scripts find it there). Elsewhere: put `supabase` on PATH or set `$env:SUPABASE_CLI` to the full path. |
 | Node.js | 20 or newer (24 used) | Runs Vite and the helper scripts. |
 | bun | 1.3 | Installs dependencies (`bun install`; do not use `npm ci`). |
-| Ollama | any recent | OpenAI-compatible API on `http://localhost:11434`. On Gopal's PC it is the shared Docker container `cvfix-ollama`. |
+| Ollama | any recent | OpenAI-compatible API on `http://localhost:11434`. On the development PC it is the shared Docker container `cvfix-ollama`. |
 
 Ollama models (once):
 
@@ -257,7 +256,7 @@ anon key. `embed-feedback` works only for the feedback's owner (or a moderator/a
 role, for example from PowerShell:
 
 ```powershell
-$svc = (& C:\Users\gopal\tools\supabase\supabase.exe status -o env | Select-String '^SERVICE_ROLE_KEY=').ToString().Split('=',2)[1].Trim('"')
+$svc = (& "$env:USERPROFILE\tools\supabase\supabase.exe" status -o env | Select-String '^SERVICE_ROLE_KEY=').ToString().Split('=',2)[1].Trim('"')
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:54321/functions/v1/backfill-feedback-embeddings -Headers @{ Authorization = "Bearer $svc" }
 ```
 
@@ -313,8 +312,8 @@ The default local model is `qwen2.5-7b-4threads`. It was chosen on 10 Nov
 2026 on what the two candidates got right, not on speed. Both were given
 the app's own gate, novelty and planner prompts with the same retrieved
 papers (harness `model-compare.ts`, raw outputs `compare-3b.json` and
-`compare-7b.json` in `_e2e/ai-research-assistant-fix/round4/` on Gopal's
-PC), the 3B model's six QA round-3 runs through the app were added, and
+`compare-7b.json` in `_e2e/ai-research-assistant-fix/round4/`, a folder kept outside this
+repository), the 3B model's six QA round-3 runs through the app were added, and
 every plan was scored by the current automated checks
 (`round5/evaluate-compare.ts`, output `evaluate-compare.out.json`):
 
@@ -375,7 +374,7 @@ failing plans (`supabase/functions/_shared/planGuards.test.ts` for round 1,
 novelty verdict check are tested in `novelty.test.ts`, the critique clean-up in `critiqueGuards.test.ts`. The access rules of
 migration `20261110090000` are not covered by these unit tests; they were
 checked against the running stack with the scripts in
-`_e2e/ai-research-assistant-fix/round3/` on Gopal's PC (`01-feedback-security.mjs`).
+`_e2e/ai-research-assistant-fix/round3/`, a folder kept outside this repository (`01-feedback-security.mjs`).
 
 Builds: `bun run build:dev` builds against the local stack
 (`.env.development.local`); plain `bun run build` uses the committed `.env`,
@@ -585,7 +584,7 @@ which still points at the deleted hosted project.
   the component tests fail with "localStorage is not defined"); use
   `bun run test`, as `.github/workflows/ci.yml` now does.
 
-## 10. What only Gopal can do
+## 10. What only the repository owner can do
 
 - Provide a hosted API key (OpenAI, Gemini, Hugging Face or Lovable) if he
   wants plans in about a minute instead of hours; put it only in the

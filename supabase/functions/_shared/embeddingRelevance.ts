@@ -14,7 +14,7 @@
 // nomic-embed-text expects task prefixes: "search_query: " for the
 // hypothesis and "search_document: " for the papers. Its cosines are
 // compressed: for the QA's six hypotheses (probe embed-probe.ts in
-// _e2e/ai-research-assistant-fix/round4/ on Gopal's PC, 10 Nov 2026) every
+// _e2e/ai-research-assistant-fix/round4/, kept outside this repository, 10 Nov 2026) every
 // retrieved biology paper scored 0.68-0.88, on-topic ones 0.71-0.88, and
 // the QA's three irrelevant NMN papers (titles only, as the run stored
 // them) 0.70, 0.65 and 0.51 against an

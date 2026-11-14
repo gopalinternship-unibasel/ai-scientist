@@ -99,7 +99,7 @@ function Find-SupabaseCli {
 Write-Step 'Checking prerequisites'
 $docker = Invoke-Native -Exe 'docker' -Arguments @('info', '--format', '{{.ServerVersion}}')
 if ($docker.Code -ne 0) {
-  throw 'Docker is not running. Start Docker Desktop first (on Gopal''s PC only with: powershell -ExecutionPolicy Bypass -File C:\Users\gopal\Downloads\start-docker-desktop.ps1), then run this script again.'
+  throw 'Docker is not running. Start Docker Desktop first, then run this script again.'
 }
 $Supabase = Find-SupabaseCli
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) { throw 'Node.js is not on PATH (Node 20+ needed).' }
