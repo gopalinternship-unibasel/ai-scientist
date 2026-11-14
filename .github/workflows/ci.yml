@@ -36,6 +36,11 @@ jobs:
   edge-functions:
     name: Edge functions (Deno test)
     runs-on: ubuntu-latest
+    # The functions are plain Deno code with URL imports, as on the Supabase edge runtime. With
+    # the frontend's package.json in the folder, Deno 2 expects an installed node_modules for
+    # "@types/node" and stops ("Did you forget to run `deno install`?").
+    env:
+      DENO_NO_PACKAGE_JSON: "1"
     steps:
       - uses: actions/checkout@v4
 
