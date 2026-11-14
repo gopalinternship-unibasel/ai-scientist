@@ -6,6 +6,8 @@ export interface RateLimitInfo {
   used: number;
   remaining: number;
   authenticated: boolean;
+  /** "hour" for the local rule, "day" for the hosted daily caps (absent in older servers). */
+  window?: "hour" | "day";
 }
 
 const URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/run-experiment`;

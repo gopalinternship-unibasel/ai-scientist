@@ -1,0 +1,125 @@
+name: Smoke check
+
+# Daily check of the live site. It uses only repository variables (the public
+# Supabase URL and publishable key) and makes no AI call, except the optional
+# weekly replay of one cached plan. The queries also keep the free Supabase
+# project active. While the variables are not set, the job ends with a notice.
+
+on:
+  schedule:
+    - cron: "23 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  smoke:
+    name: Live site
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+      SUPABASE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+      SMOKE_HYPOTHESIS: ${{ vars.SMOKE_HYPOTHESIS }}
+      EVENT: ${{ github.event_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - id: cfg
+        name: Check settings
+        run: |
+          if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_KEY" ]; then
+            SITE="https://${GITHUB_REPOSITORY_OWNER,,}.github.io/${GITHUB_REPOSITORY#*/}"
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "site=$SITE" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Smoke check skipped: the repository variables VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY are not set yet."
+          fi
+
+      - name: Site root loads and its first script answers
+        if: steps.cfg.outputs.ready == 'true'
+        env:
+          SITE: ${{ steps.cfg.outputs.site }}
+        run: |
+          set -euo pipefail
+          code=$(curl -sS -o root.html -w '%{http_code}' --retry 2 "$SITE/")
+          [ "$code" = "200" ] || { echo "::error::$SITE/ answered $code"; exit 1; }
+          grep -q 'id="root"' root.html || { echo "::error::root page has no id=root"; exit 1; }
+          path=$(grep -o '/[A-Za-z0-9._-]*/assets/[^"]*\.js' root.html | head -1 || true)
+          [ -n "$path" ] || { echo "::error::no script under /assets/ in the root page"; exit 1; }
+          host=$(echo "$SITE" | sed -E 's#(https://[^/]+).*#\1#')
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --retry 2 "$host$path")
+          [ "$code" = "200" ] || { echo "::error::$host$path answered $code"; exit 1; }
+          echo "root and $path are fine"
+
+      - name: Deep link falls back to the app shell
+        if: steps.cfg.outputs.ready == 'true'
+        env:
+          SITE: ${{ steps.cfg.outputs.site }}
+        run: |
+          set -euo pipefail
+          # GitHub Pages serves 404.html with status 404 for unknown paths: expected.
+          code=$(curl -sS -o deep.html -w '%{http_code}' --retry 2 "$SITE/runs/00000000-0000-0000-0000-000000000000")
+          echo "deep link status: $code"
+          grep -q 'id="root"' deep.html || { echo "::error::deep link body has no id=root"; exit 1; }
+
+      - name: Auth service is healthy
+        if: steps.cfg.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --retry 2 -H "apikey: $SUPABASE_KEY" "$SUPABASE_URL/auth/v1/health")
+          [ "$code" = "200" ] || { echo "::error::auth health answered $code"; exit 1; }
+
+      - name: Database answers a real query
+        if: steps.cfg.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          code=$(curl -sS -o rest.json -w '%{http_code}' --retry 2 -H "apikey: $SUPABASE_KEY" "$SUPABASE_URL/rest/v1/runs?select=id&limit=1")
+          [ "$code" = "200" ] || { echo "::error::REST query answered $code"; exit 1; }
+          jq -e 'type == "array"' rest.json > /dev/null || { echo "::error::REST answer is not a JSON array"; exit 1; }
+
+      - name: run-experiment reports its quota
+        if: steps.cfg.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          code=$(curl -sS -o quota.json -w '%{http_code}' --retry 2 -H "apikey: $SUPABASE_KEY" "$SUPABASE_URL/functions/v1/run-experiment")
+          [ "$code" = "200" ] || { echo "::error::run-experiment quota answered $code"; exit 1; }
+          jq -e '(.limit|type=="number") and (.used|type=="number") and (.remaining|type=="number")' quota.json > /dev/null \
+            || { echo "::error::quota answer has no numeric limit, used and remaining"; cat quota.json; exit 1; }
+          echo "quota: $(cat quota.json)"
+
+      # Mondays and manual runs only. Replays one plan that a real run made
+      # earlier (variable SMOKE_HYPOTHESIS holds its exact text). A cached
+      # plan costs no AI call; if the cache entry was retired (for example after
+      # a pipeline version change) this starts one real run and the step fails
+      # once, then the new plan is the cache entry.
+      - name: Cached plan replays
+        if: steps.cfg.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          if [ -z "$SMOKE_HYPOTHESIS" ]; then
+            echo "::notice::Cached-plan replay skipped: the repository variable SMOKE_HYPOTHESIS is not set."
+            exit 0
+          fi
+          if [ "$EVENT" = "schedule" ] && [ "$(date -u +%u)" != "1" ]; then
+            echo "Weekly step: not a Monday."
+            exit 0
+          fi
+          body=$(jq -n --arg h "$SMOKE_HYPOTHESIS" '{hypothesis: $h, owner_token: "smoke-check"}')
+          curl -sS --max-time 60 -o sse.txt -X POST \
+            -H "apikey: $SUPABASE_KEY" -H "Content-Type: application/json" -d "$body" \
+            "$SUPABASE_URL/functions/v1/run-experiment" || true
+          grep -q '^event: run' sse.txt || { echo "::error::no run event"; head -c 600 sse.txt; exit 1; }
+          grep '^data:' sse.txt | head -1 | grep -q '"cached":true' \
+            || { echo "::error::the plan was not served from the cache (a real run may have started)"; head -c 600 sse.txt; exit 1; }
+          grep -q '^event: plan' sse.txt || { echo "::error::no plan event"; exit 1; }
+          echo "cached plan replayed"
+
+      # GitHub switches scheduled workflows off after 60 days without
+      # repository activity. Enabling the workflow again from inside it keeps
+      # the schedule going. It runs even when a check failed.
+      - name: Keep the schedule enabled
+        if: always()
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/smoke.yml/enable"

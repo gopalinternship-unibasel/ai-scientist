@@ -11,6 +11,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { lovable } from "@/integrations/lovable";
 import { googleSignInAvailable } from "@/lib/authOptions";
+import { appUrl } from "@/lib/appUrl";
 
 const Auth = () => {
   const { user, loading } = useAuth();
@@ -27,7 +28,7 @@ const Auth = () => {
   const onGoogle = async () => {
     setBusy(true);
     const result = await lovable.auth.signInWithOAuth("google", {
-      redirect_uri: `${window.location.origin}/my-runs`,
+      redirect_uri: appUrl("/my-runs"),
     });
     if (result.error) {
       toast.error("Could not start Google sign-in. Please try again.");
@@ -57,7 +58,7 @@ const Auth = () => {
       email,
       password,
       options: {
-        emailRedirectTo: `${window.location.origin}/my-runs`,
+        emailRedirectTo: appUrl("/my-runs"),
         data: name ? { full_name: name } : undefined,
       },
     });
@@ -82,7 +83,7 @@ const Auth = () => {
     }
     setBusy(true);
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/reset-password`,
+      redirectTo: appUrl("/reset-password"),
     });
     setBusy(false);
     if (error) {

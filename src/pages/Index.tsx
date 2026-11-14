@@ -8,6 +8,7 @@ import { GenerationProgress } from "@/components/GenerationProgress";
 import { RateLimitBadge } from "@/components/RateLimitBadge";
 import { startRunStream } from "@/lib/runStream";
 import { getOwnerToken } from "@/lib/owner";
+import { HOSTED_NOTICE, hostedDemo } from "@/lib/hosted";
 import { trackRun } from "@/hooks/useBackgroundRunNotifier";
 
 const Index = () => {
@@ -38,7 +39,7 @@ const Index = () => {
               navigate(`/runs/${e.id}`);
               break;
             case "error": {
-              const isRateLimit = /limited to|per hour|sign in/i.test(e.message);
+              const isRateLimit = /limited to|limit of|daily limit|per hour|per day|sign in/i.test(e.message);
               if (isRateLimit) {
                 toast.error(e.message, {
                   action: { label: "Sign in", onClick: () => navigate("/auth") },
@@ -107,6 +108,11 @@ const Index = () => {
               operational plan covering protocol, materials, budget, timeline, and validation that a
               real lab could pick up Monday and start running by Friday.
             </p>
+            {hostedDemo() && (
+              <p className="mt-3 max-w-2xl text-sm text-muted-foreground" data-testid="hosted-notice">
+                {HOSTED_NOTICE}
+              </p>
+            )}
           </section>
         )}
 

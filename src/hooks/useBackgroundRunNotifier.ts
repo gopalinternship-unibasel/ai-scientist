@@ -5,6 +5,7 @@ import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { appPathname } from "@/lib/appUrl";
 
 const STORAGE_KEY = "ai-scientist:tracking-runs";
 
@@ -65,7 +66,7 @@ export function useBackgroundRunNotifier() {
           if (!tracked) return;
 
           // Don't toast if the user is already on the run page.
-          if (window.location.pathname === `/runs/${row.id}`) {
+          if (appPathname() === `/runs/${row.id}`) {
             untrackRun(row.id);
             return;
           }

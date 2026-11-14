@@ -26,7 +26,7 @@ export const RateLimitBadge = ({ refreshKey, className }: Props) => {
       className,
     )}>
       <Gauge className="h-3 w-3" />
-      {info.used}/{info.limit} runs · 1 h
+      {info.used}/{info.limit} runs · {info.window === "day" ? "1 day" : "1 h"}
       {!info.authenticated && info.remaining <= 5 && (
         <span className="ml-1 text-foreground/70 normal-case tracking-normal">
           (sign in for more)

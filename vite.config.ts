@@ -12,6 +12,8 @@ export default defineConfig(({ mode }) => ({
       overlay: false,
     },
   },
+  // Base path of the site: "/" locally, "/ai-scientist/" on the GitHub Pages project site.
+  base: process.env.VITE_BASE_PATH ?? "/",
   plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
   resolve: {
     alias: {

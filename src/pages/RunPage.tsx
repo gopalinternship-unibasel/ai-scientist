@@ -19,6 +19,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { untrackRun, trackRun } from "@/hooks/useBackgroundRunNotifier";
 import { startRunStream } from "@/lib/runStream";
 import { getOwnerToken } from "@/lib/owner";
+import { appUrl } from "@/lib/appUrl";
 import { parseRunError, hintForKind, isRetryable } from "@/lib/runErrors";
 import { canGiveFeedback, canRefineRun } from "@/lib/runAccess";
 import { refinementBase } from "@/lib/versionBase";
@@ -249,7 +250,7 @@ const RunPage = () => {
       }
       setRun({ ...run, share_token: token });
     }
-    const url = `${window.location.origin}/runs/${run.id}?t=${token}`;
+    const url = appUrl(`/runs/${run.id}?t=${token}`);
     try {
       await navigator.clipboard.writeText(url);
     } catch {
