@@ -264,3 +264,23 @@ Deno.test("an unknown AI_STRUCTURED_OUTPUT value falls back to tools", () => {
   assertEquals(resolveAIConfig({ AI_STRUCTURED_OUTPUT: "something" }).structuredMode, "tools");
   assertEquals(resolveAIConfig({ AI_STRUCTURED_OUTPUT: "TOOLS_REQUIRED" }).structuredMode, "tools_required");
 });
+
+Deno.test("AI_EXTRA_BODY adds its fields to every chat request without overwriting", () => {
+  const cfg = resolveAIConfig({ AI_EXTRA_BODY: '{"chat_template_kwargs":{"enable_thinking":false},"model":"other","temperature":0.9}' });
+  const out = adaptChatBody({ model: "m", messages: [{ role: "user", content: "hi" }], temperature: 0.2 }, 100, cfg);
+  assertEquals(out.chat_template_kwargs, { enable_thinking: false });
+  // Fields the request already has keep their value.
+  assertEquals(out.model, "m");
+  assertEquals(out.temperature, 0.2);
+  // Without the setting nothing is added.
+  assert(!("chat_template_kwargs" in adaptChatBody({ model: "m", messages: [] }, 100, resolveAIConfig({}))));
+});
+
+Deno.test("AI_EXTRA_BODY must be a JSON object, anything else is ignored", () => {
+  assertEquals(resolveAIConfig({}).extraBody, null);
+  assertEquals(resolveAIConfig({ AI_EXTRA_BODY: "  " }).extraBody, null);
+  assertEquals(resolveAIConfig({ AI_EXTRA_BODY: "not json" }).extraBody, null);
+  assertEquals(resolveAIConfig({ AI_EXTRA_BODY: "[1,2]" }).extraBody, null);
+  assertEquals(resolveAIConfig({ AI_EXTRA_BODY: '"text"' }).extraBody, null);
+  assertEquals(resolveAIConfig({ AI_EXTRA_BODY: '{"a":1}' }).extraBody, { a: 1 });
+});

@@ -50,6 +50,13 @@
 //                          768-d (nomic-embed-text)
 //   AI_REASONING_EFFORT    optional, e.g. "low": sent as `reasoning_effort` on
 //                          every chat request (models that think by default)
+//   AI_EXTRA_BODY          optional JSON object merged into every chat request,
+//                          for switches only one provider knows. On Cloudflare
+//                          Workers AI {"chat_template_kwargs":{"enable_thinking":false}}
+//                          turns the model's thinking off (measured 17 Nov 2026:
+//                          about 1.2 s instead of 3 to 6 s for a short answer;
+//                          `reasoning_effort` did not shorten it there). A key
+//                          the request already has is not overwritten.
 //
 // When AI_BASE_URL points at the Lovable gateway and no AI_MODEL* override is
 // set, the original per-role Gemini/GPT-5 chains are used unchanged.
@@ -70,6 +77,8 @@ export interface AIConfig {
   compact: boolean;
   /** Sent as reasoning_effort on every chat request when set. */
   reasoningEffort: string | null;
+  /** Extra request-body fields for every chat request (AI_EXTRA_BODY), or null. */
+  extraBody: Record<string, unknown> | null;
   chains: Record<AIRole, string[]>;
   embed: {
     baseUrl: string;
@@ -127,6 +136,18 @@ export function parseEmbedDimensions(v: string | undefined): { send: boolean; di
   return { send: false, dimensions: DEFAULT_EMBED_DIMENSIONS };
 }
 
+/** AI_EXTRA_BODY: a JSON object, or null when unset or not an object. */
+export function parseExtraBody(v: string | undefined): Record<string, unknown> | null {
+  const t = clean(v);
+  if (!t) return null;
+  try {
+    const parsed = JSON.parse(t);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Pure resolver — takes an env map so it can be unit-tested. */
 export function resolveAIConfig(env: Env): AIConfig {
   const baseUrl = (clean(env.AI_BASE_URL) ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
@@ -165,6 +186,7 @@ export function resolveAIConfig(env: Env): AIConfig {
     minTimeoutMs: Number.isFinite(minTimeout) && minTimeout > 0 ? minTimeout : 0,
     compact: /^(1|true|yes)$/i.test(clean(env.AI_COMPACT_OUTPUT) ?? ""),
     reasoningEffort: clean(env.AI_REASONING_EFFORT)?.toLowerCase() ?? null,
+    extraBody: parseExtraBody(env.AI_EXTRA_BODY),
     chains,
     embed: {
       baseUrl: embedBase,
@@ -305,6 +327,11 @@ export function adaptChatBody(body: ChatBody, maxTokens: number | undefined, cfg
     }
   }
   if (cfg.reasoningEffort && out.reasoning_effort === undefined) out.reasoning_effort = cfg.reasoningEffort;
+  if (cfg.extraBody) {
+    for (const [key, value] of Object.entries(cfg.extraBody)) {
+      if (out[key] === undefined) out[key] = value;
+    }
+  }
   if (maxTokens && cfg.maxTokensParam !== "none") {
     out[cfg.maxTokensParam] = cfg.maxTokensCap ? Math.min(maxTokens, cfg.maxTokensCap) : maxTokens;
   }
