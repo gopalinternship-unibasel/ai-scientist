@@ -39,6 +39,11 @@
 //                          are cut short (fewer prompt tokens for a CPU to
 //                          process, and room for the answer). Leave unset for
 //                          hosted models.
+//   AI_COMPACT_MAX_ITEMS   longest list in compact mode (default 5, allowed 3 to 20).
+//                          A hosted model that is fast enough can be given more
+//                          room, e.g. 8: with 5 a plan often lists fewer
+//                          materials than its protocol uses, which the plan
+//                          checks then flag
 //   AI_EMBED_BASE_URL      embeddings base URL (defaults to AI_BASE_URL)
 //   AI_EMBED_API_KEY       embeddings key (defaults to AI_API_KEY)
 //   AI_EMBED_MODEL         embedding model; empty disables embeddings
@@ -75,6 +80,8 @@ export interface AIConfig {
   maxTokensCap: number;
   minTimeoutMs: number;
   compact: boolean;
+  /** Longest list a compact-mode structured output may contain. */
+  compactMaxItems: number;
   /** Sent as reasoning_effort on every chat request when set. */
   reasoningEffort: string | null;
   /** Extra request-body fields for every chat request (AI_EXTRA_BODY), or null. */
@@ -185,6 +192,7 @@ export function resolveAIConfig(env: Env): AIConfig {
     maxTokensCap: Number.isFinite(cap) && cap > 0 ? Math.floor(cap) : 0,
     minTimeoutMs: Number.isFinite(minTimeout) && minTimeout > 0 ? minTimeout : 0,
     compact: /^(1|true|yes)$/i.test(clean(env.AI_COMPACT_OUTPUT) ?? ""),
+    compactMaxItems: parseCompactMaxItems(env.AI_COMPACT_MAX_ITEMS),
     reasoningEffort: clean(env.AI_REASONING_EFFORT)?.toLowerCase() ?? null,
     extraBody: parseExtraBody(env.AI_EXTRA_BODY),
     chains,
@@ -224,8 +232,16 @@ export function aiTimeout(ms: number): number {
   return Math.max(ms, aiConfig().minTimeoutMs);
 }
 
-/** Longest list a compact-mode structured output may contain. */
+/** Longest list a compact-mode structured output may contain (default; AI_COMPACT_MAX_ITEMS changes it). */
 export const COMPACT_MAX_ITEMS = 5;
+
+/** AI_COMPACT_MAX_ITEMS: a whole number from 3 to 20, otherwise the default. */
+export function parseCompactMaxItems(v: string | undefined): number {
+  const t = v?.trim() ?? "";
+  if (!/^\d+$/.test(t)) return COMPACT_MAX_ITEMS;
+  const n = Number(t);
+  return n >= 3 && n <= 20 ? n : COMPACT_MAX_ITEMS;
+}
 
 /**
  * Longest text field (characters) a compact-mode structured output may
@@ -279,7 +295,8 @@ export function capArrays<T>(schema: T, maxItems: number, maxLength?: number): T
   return out as T;
 }
 
-const COMPACT_HINT = `Be concise: keep every text field to one or two short sentences (at most about 30 words) and every list to at most ${COMPACT_MAX_ITEMS} items. Keep exact numbers (concentrations, volumes, durations, costs).`;
+const compactHint = (maxItems: number) =>
+  `Be concise: keep every text field to one or two short sentences (at most about 30 words) and every list to at most ${maxItems} items. Keep exact numbers (concentrations, volumes, durations, costs).`;
 
 /** The function a request forces, or undefined when it forces none. */
 function forcedToolName(body: ChatBody): string | undefined {
@@ -301,9 +318,9 @@ export function adaptChatBody(body: ChatBody, maxTokens: number | undefined, cfg
   const forced = forcedToolName(out);
   if (cfg.compact && Array.isArray(out.tools) && forced) {
     out.tools = out.tools.map((t) => t?.function?.parameters
-      ? { ...t, function: { ...t.function, parameters: capArrays(t.function.parameters, COMPACT_MAX_ITEMS, COMPACT_MAX_CHARS) } }
+      ? { ...t, function: { ...t.function, parameters: capArrays(t.function.parameters, cfg.compactMaxItems, COMPACT_MAX_CHARS) } }
       : t);
-    out.messages = [...(out.messages ?? []), { role: "system", content: COMPACT_HINT }];
+    out.messages = [...(out.messages ?? []), { role: "system", content: compactHint(cfg.compactMaxItems) }];
   }
   if (cfg.structuredMode === "tools_required" && Array.isArray(out.tools) && forced) {
     const only = out.tools.filter((t) => t?.function?.name === forced);

@@ -284,3 +284,23 @@ Deno.test("AI_EXTRA_BODY must be a JSON object, anything else is ignored", () =>
   assertEquals(resolveAIConfig({ AI_EXTRA_BODY: '"text"' }).extraBody, null);
   assertEquals(resolveAIConfig({ AI_EXTRA_BODY: '{"a":1}' }).extraBody, { a: 1 });
 });
+
+Deno.test("AI_COMPACT_MAX_ITEMS sets the list cap of compact mode; out-of-range values keep 5", () => {
+  assertEquals(resolveAIConfig({}).compactMaxItems, 5);
+  assertEquals(resolveAIConfig({ AI_COMPACT_MAX_ITEMS: "8" }).compactMaxItems, 8);
+  for (const bad of ["2", "21", "8.5", "abc", "", "-4"]) {
+    assertEquals(resolveAIConfig({ AI_COMPACT_MAX_ITEMS: bad }).compactMaxItems, 5, bad);
+  }
+  const body = {
+    model: "m",
+    messages: [{ role: "user", content: "x" }],
+    tools: [{ type: "function", function: { name: "submit", parameters: { type: "object", properties: { steps: { type: "array", items: { type: "string" } } } } } }],
+    tool_choice: { type: "function", function: { name: "submit" } },
+  };
+  const cfg = resolveAIConfig({ AI_COMPACT_OUTPUT: "true", AI_COMPACT_MAX_ITEMS: "8" });
+  const out = adaptChatBody(body, 100, cfg);
+  // deno-lint-ignore no-explicit-any
+  assertEquals((out.tools?.[0].function?.parameters as any).properties.steps.maxItems, 8);
+  const hint = out.messages?.[out.messages.length - 1].content ?? "";
+  assert(hint.includes("at most 8 items"), hint);
+});

@@ -21,12 +21,12 @@ safety/feasibility checks, and a structured AI critique.**
 
 </div>
 
-> **The hosted demo is offline.** It ran on a Lovable Cloud project that no
-> longer exists, so `ai-scientist.lovable.app` no longer works.
-> [`RUNNING.md`](./RUNNING.md) runs the whole system on one PC (local
-> Supabase stack, local or hosted model). Section 11, "Live deployment",
-> describes the hosted setup (GitHub Pages and a Supabase cloud project) and
-> the steps only the owner can do.
+> **Live demo:** <https://gopalinternship-unibasel.github.io/ai-scientist/> (GitHub Pages frontend, a
+> Supabase cloud project for the database, sign-in and edge functions, and Cloudflare Workers AI on
+> its free daily allowance). New plans are limited per day; a plan takes about a minute. The
+> original Lovable-hosted demo (`ai-scientist.lovable.app`) no longer exists.
+> [`RUNNING.md`](./RUNNING.md) runs the whole system on one PC; its section 11, "Live deployment",
+> describes the hosted setup.
 
 ---
 
