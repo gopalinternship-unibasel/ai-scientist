@@ -299,8 +299,8 @@ Deno.test("AI_COMPACT_MAX_ITEMS sets the list cap of compact mode; out-of-range 
   };
   const cfg = resolveAIConfig({ AI_COMPACT_OUTPUT: "true", AI_COMPACT_MAX_ITEMS: "8" });
   const out = adaptChatBody(body, 100, cfg);
-  // deno-lint-ignore no-explicit-any
-  assertEquals((out.tools?.[0].function?.parameters as any).properties.steps.maxItems, 8);
+  const params = out.tools?.[0].function?.parameters as { properties: { steps: { maxItems: number } } };
+  assertEquals(params.properties.steps.maxItems, 8);
   const hint = out.messages?.[out.messages.length - 1].content ?? "";
   assert(hint.includes("at most 8 items"), hint);
 });
