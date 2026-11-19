@@ -10,6 +10,7 @@ import { LiteratureQCCard } from "@/components/LiteratureQCCard";
 import { ExperimentPlanView } from "@/components/ExperimentPlanView";
 import { SolicitationBanner } from "@/components/SolicitationBanner";
 import { GenerationProgress, describeProgress, type RunProgress } from "@/components/GenerationProgress";
+import { critiqueStillRunning } from "@/lib/critiqueStatus";
 import { PlanCritiqueCard } from "@/components/PlanCritiqueCard";
 import { RefineDialog } from "@/components/RefineDialog";
 import { VersionSwitcher, type VersionEntry } from "@/components/VersionSwitcher";
@@ -546,9 +547,15 @@ const RunPage = () => {
                 </ErrorBoundary>
               )}
               {run.status === "done" && !run.critique && run.progress?.stage === "critique" && (
-                <p data-testid="critique-pending" className="no-print font-mono text-[11px] text-muted-foreground">
-                  {describeProgress(run.progress)}…
-                </p>
+                critiqueStillRunning(run.progress) ? (
+                  <p data-testid="critique-pending" className="no-print font-mono text-[11px] text-muted-foreground">
+                    {describeProgress(run.progress)}…
+                  </p>
+                ) : (
+                  <p data-testid="critique-unavailable" className="no-print font-mono text-[11px] text-muted-foreground">
+                    The independent review did not finish for this run (server time limit). The plan above is complete.
+                  </p>
+                )
               )}
               {run.critique && (
                 <ErrorBoundary label="the peer review">

@@ -228,20 +228,32 @@ const runsInFlight = new Map<string, SupabaseClient>();
 
 const SHUTDOWN_MESSAGE = "server time limit reached, press Retry";
 
+// Set when the runtime announces shutdown. A run whose plan is already saved
+// then skips the review instead of starting a call the worker cannot finish.
+let shuttingDown = false;
+
 async function failRunsInFlight(reason: string | undefined) {
   const entries = [...runsInFlight.entries()];
   if (entries.length === 0) return;
   console.error(JSON.stringify({ step: "worker_shutdown", reason: reason ?? null, runs: entries.map(([id]) => id) }));
-  await Promise.allSettled(entries.map(([id, client]) =>
+  await Promise.allSettled(entries.flatMap(([id, client]) => [
     client.from("runs")
       .update({ status: "failed", error: encodeError("TIMEOUT", SHUTDOWN_MESSAGE) })
       .eq("id", id)
-      .in("status", ["pending", "qc", "plan"])
-  ));
+      .in("status", ["pending", "qc", "plan"]),
+    // A finished plan whose review is cut off: record that the review ended,
+    // so the run page stops showing it as in progress (run ff8e17c0).
+    client.from("runs")
+      .update({ progress: { stage: "complete", critique: false, at: new Date().toISOString() } })
+      .eq("id", id)
+      .eq("status", "done")
+      .is("critique", null),
+  ]));
 }
 
 addEventListener("beforeunload", (ev) => {
   const detail = (ev as unknown as { detail?: { reason?: string } }).detail;
+  shuttingDown = true;
   void failRunsInFlight(detail?.reason);
 });
 
@@ -1263,6 +1275,7 @@ serve(async (req) => {
                 .eq("id", runId);
             }
 
+            if (shuttingDown) throw new Error("review skipped: the worker is shutting down");
             setProgress({ stage: "critique" });
             // The critic reviews the plan, not the checks' record: with
             // plan.verification in the prompt it raised the already-corrected
@@ -1284,10 +1297,17 @@ serve(async (req) => {
             if (critique) {
               await supabase.from("runs").update({ critique }).eq("id", runId);
             }
-            setProgress({ stage: "complete", critique: !!critique });
+            // Awaited: the worker may stop right after processRun returns, and
+            // a lost write left run e0c4c46a (17 Nov) at stage "critique".
+            await supabase.from("runs")
+              .update({ progress: { stage: "complete", critique: !!critique, at: new Date().toISOString() } })
+              .eq("id", runId);
           } catch (e) {
             console.error("critique failed", e);
-            setProgress({ stage: "complete", critique: false });
+            await supabase.from("runs")
+              .update({ progress: { stage: "complete", critique: false, at: new Date().toISOString() } })
+              .eq("id", runId)
+              .then(() => {}, () => {});
           }
 
             return;
